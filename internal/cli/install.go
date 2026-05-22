@@ -157,16 +157,16 @@ func runInstall(args []string, stdout io.Writer, stderr io.Writer, syncMode bool
 	}
 
 	for _, candidate := range candidates {
+		if len(candidate.Harnesses) == 0 {
+			fmt.Fprintf(stdout, "- %s: skipped, no compatible active harnesses\n", candidate.Skill.Name)
+			continue
+		}
+
 		missing := missingRequiredTools(candidate.Skill.Requirements)
 		candidate.Missing = missing
 		if len(missing) > 0 && !opts.allowMissingRequirements {
 			blocked++
 			fmt.Fprintf(stdout, "- %s: blocked, missing required tools: %s\n", candidate.Skill.Name, strings.Join(missing, ", "))
-			continue
-		}
-
-		if len(candidate.Harnesses) == 0 {
-			fmt.Fprintf(stdout, "- %s: skipped, no compatible active harnesses\n", candidate.Skill.Name)
 			continue
 		}
 
@@ -559,9 +559,13 @@ func readCatalog(path string) (catalog, error) {
 			}
 		case "tools":
 			if section == "requirements" {
-				items, next := readToolRequirements(lines, i)
-				i = next
-				current.Requirements.Tools = items
+				if strings.HasPrefix(value, "[") && strings.HasSuffix(value, "]") {
+					current.Requirements.Tools = toolRequirementsFromNames(parseInlineList(value))
+				} else {
+					items, next := readToolRequirements(lines, i)
+					i = next
+					current.Requirements.Tools = items
+				}
 			}
 		}
 	}
@@ -643,6 +647,17 @@ func readToolRequirements(lines []string, index int) ([]toolRequirement, int) {
 			current = &toolRequirement{Name: unquote(strings.TrimSpace(strings.TrimPrefix(trimmed, "- name:")))}
 			continue
 		}
+		if strings.HasPrefix(trimmed, "- ") {
+			if current != nil {
+				tools = append(tools, *current)
+				current = nil
+			}
+			tools = append(tools, toolRequirement{
+				Name:     unquote(strings.TrimSpace(strings.TrimPrefix(trimmed, "- "))),
+				Required: true,
+			})
+			continue
+		}
 		if current == nil {
 			continue
 		}
@@ -667,6 +682,14 @@ func parseInlineList(value string) []string {
 		items = append(items, unquote(strings.TrimSpace(item)))
 	}
 	return items
+}
+
+func toolRequirementsFromNames(names []string) []toolRequirement {
+	requirements := make([]toolRequirement, 0, len(names))
+	for _, name := range names {
+		requirements = append(requirements, toolRequirement{Name: name, Required: true})
+	}
+	return requirements
 }
 
 func stripComment(line string) string {

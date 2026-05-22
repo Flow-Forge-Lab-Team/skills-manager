@@ -275,6 +275,84 @@ skills:
 	}
 }
 
+func TestInstallDoesNotBlockForIncompatibleHarnessRequirements(t *testing.T) {
+	home := t.TempDir()
+	project := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+
+	writeFile(t, filepath.Join(project, ".skills", "project.yaml"), `version: 1
+name: demo
+categories: [Engineering]
+harnesses: [codex]
+`)
+	writeFile(t, filepath.Join(home, "library", "catalog.yaml"), `version: 1
+skills:
+  - name: claude-only
+    categories: [Engineering]
+    compatibility:
+      mode: exclusive
+      harness: claude
+    requirements:
+      tools:
+        - name: definitely-missing-skills-manager-tool
+          required: true
+`)
+	writeFile(t, filepath.Join(home, "library", "claude-only", "SKILL.md"), "claude\n")
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := Run([]string{"install", "--project", project}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("Run returned %d, want 0\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "no compatible active harnesses") {
+		t.Fatalf("stdout = %q, want incompatible harness skip", stdout.String())
+	}
+}
+
+func TestInstallBlocksInlineAndStringListToolRequirements(t *testing.T) {
+	home := t.TempDir()
+	project := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+
+	writeFile(t, filepath.Join(project, ".skills", "project.yaml"), `version: 1
+name: demo
+categories: [Engineering]
+harnesses: [codex]
+`)
+	writeFile(t, filepath.Join(home, "library", "catalog.yaml"), `version: 1
+skills:
+  - name: inline
+    categories: [Engineering]
+    compatibility:
+      mode: portable
+    requirements:
+      tools: [definitely-missing-inline-tool]
+  - name: string-list
+    categories: [Engineering]
+    compatibility:
+      mode: portable
+    requirements:
+      tools:
+        - definitely-missing-list-tool
+`)
+	writeFile(t, filepath.Join(home, "library", "inline", "SKILL.md"), "inline\n")
+	writeFile(t, filepath.Join(home, "library", "string-list", "SKILL.md"), "list\n")
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := Run([]string{"install", "--project", project}, &stdout, &stderr)
+	if code != 3 {
+		t.Fatalf("Run returned %d, want 3\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "definitely-missing-inline-tool") {
+		t.Fatalf("stdout = %q, want inline missing tool", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "definitely-missing-list-tool") {
+		t.Fatalf("stdout = %q, want list missing tool", stdout.String())
+	}
+}
+
 func writeFile(t *testing.T, path string, content string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
