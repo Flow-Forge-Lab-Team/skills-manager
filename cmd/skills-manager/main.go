@@ -3,7 +3,7 @@ package main
 import (
 	"os"
 
-	"github.com/greg/skills-manager/internal/cli"
+	"github.com/Flow-Forge-Lab-Team/skills-manager/internal/cli"
 )
 
 func main() {

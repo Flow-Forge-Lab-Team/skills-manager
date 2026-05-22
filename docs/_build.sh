@@ -32,12 +32,21 @@ rewrite_links() {
   # don't appear as href targets.
   local file="$1"
   for d in "${docs[@]}" INDEX; do
-    sed -i '' "s|href=\"${d}.md\"|href=\"${d}.html\"|g" "$file"
-    sed -i '' "s|href=\"./${d}.md\"|href=\"${d}.html\"|g" "$file"
+    edit_in_place "s|href=\"${d}.md\"|href=\"${d}.html\"|g" "$file"
+    edit_in_place "s|href=\"./${d}.md\"|href=\"${d}.html\"|g" "$file"
   done
   # README at repo root.
-  sed -i '' "s|href=\"../README.md\"|href=\"../README.html\"|g" "$file"
-  sed -i '' "s|href=\"README.md\"|href=\"README.html\"|g" "$file"
+  edit_in_place "s|href=\"../README.md\"|href=\"../README.html\"|g" "$file"
+  edit_in_place "s|href=\"README.md\"|href=\"README.html\"|g" "$file"
+}
+
+edit_in_place() {
+  local expr="$1"
+  local file="$2"
+  local tmp
+  tmp=$(mktemp)
+  sed "$expr" "$file" > "$tmp"
+  mv "$tmp" "$file"
 }
 
 build_doc() {
@@ -56,7 +65,7 @@ build_doc() {
     -o "${key}.html"
 
   rewrite_links "${key}.html"
-  sed -i '' "s|href=\"${key}.html\">view source (.md)|href=\"${key}.md\">view source (.md)|g" "${key}.html"
+  edit_in_place "s|href=\"${key}.html\">view source (.md)|href=\"${key}.md\">view source (.md)|g" "${key}.html"
   printf "  ✓ %s.html\n" "$key"
 }
 
@@ -71,7 +80,7 @@ pandoc INDEX.md \
   -o index.html
 
 rewrite_links index.html
-sed -i '' 's|href="INDEX.html">view source (.md)|href="INDEX.md">view source (.md)|g' index.html
+edit_in_place 's|href="INDEX.html">view source (.md)|href="INDEX.md">view source (.md)|g' index.html
 printf "  ✓ index.html\n"
 
 for d in "${docs[@]}"; do
@@ -90,32 +99,30 @@ pandoc ../README.md \
 
 # Rewrite README links: docs/X.md → docs/X.html
 for d in "${docs[@]}" INDEX; do
-  sed -i '' "s|href=\"docs/${d}.md\"|href=\"docs/${d}.html\"|g" ../README.html
+  edit_in_place "s|href=\"docs/${d}.md\"|href=\"docs/${d}.html\"|g" ../README.html
 done
 
 # Fix README's brand link + nav links: README sits one level above docs/.
 # Template uses relative paths assuming we're inside docs/. README needs docs/ prefix.
-sed -i '' \
-  -e 's|href="index.html"|href="docs/index.html"|g' \
-  -e 's|href="VISION.html"|href="docs/VISION.html"|g' \
-  -e 's|href="ARCHITECTURE.html"|href="docs/ARCHITECTURE.html"|g' \
-  -e 's|href="ROADMAP.html"|href="docs/ROADMAP.html"|g' \
-  -e 's|href="DATA_MODEL.html"|href="docs/DATA_MODEL.html"|g' \
-  -e 's|href="CLI_REFERENCE.html"|href="docs/CLI_REFERENCE.html"|g' \
-  -e 's|href="TAXONOMY.html"|href="docs/TAXONOMY.html"|g' \
-  -e 's|href="COMPATIBILITY.html"|href="docs/COMPATIBILITY.html"|g' \
-  -e 's|href="INGEST_FLOW.html"|href="docs/INGEST_FLOW.html"|g' \
-  -e 's|href="UPDATE_FLOW.html"|href="docs/UPDATE_FLOW.html"|g' \
-  -e 's|href="BUNDLED_SKILLS.html"|href="docs/BUNDLED_SKILLS.html"|g' \
-  -e 's|href="SCHEDULING.html"|href="docs/SCHEDULING.html"|g' \
-  -e 's|href="CROSS_MACHINE.html"|href="docs/CROSS_MACHINE.html"|g' \
-  -e 's|href="../mockup.html"|href="mockup.html"|g' \
-  -e 's|href="../README.html"|href="README.html"|g' \
-  -e 's|href="../README.md"|href="README.html"|g' \
-  -e 's|href="styles.css"|href="docs/styles.css"|g' \
-  ../README.html
+edit_in_place 's|href="index.html"|href="docs/index.html"|g' ../README.html
+edit_in_place 's|href="VISION.html"|href="docs/VISION.html"|g' ../README.html
+edit_in_place 's|href="ARCHITECTURE.html"|href="docs/ARCHITECTURE.html"|g' ../README.html
+edit_in_place 's|href="ROADMAP.html"|href="docs/ROADMAP.html"|g' ../README.html
+edit_in_place 's|href="DATA_MODEL.html"|href="docs/DATA_MODEL.html"|g' ../README.html
+edit_in_place 's|href="CLI_REFERENCE.html"|href="docs/CLI_REFERENCE.html"|g' ../README.html
+edit_in_place 's|href="TAXONOMY.html"|href="docs/TAXONOMY.html"|g' ../README.html
+edit_in_place 's|href="COMPATIBILITY.html"|href="docs/COMPATIBILITY.html"|g' ../README.html
+edit_in_place 's|href="INGEST_FLOW.html"|href="docs/INGEST_FLOW.html"|g' ../README.html
+edit_in_place 's|href="UPDATE_FLOW.html"|href="docs/UPDATE_FLOW.html"|g' ../README.html
+edit_in_place 's|href="BUNDLED_SKILLS.html"|href="docs/BUNDLED_SKILLS.html"|g' ../README.html
+edit_in_place 's|href="SCHEDULING.html"|href="docs/SCHEDULING.html"|g' ../README.html
+edit_in_place 's|href="CROSS_MACHINE.html"|href="docs/CROSS_MACHINE.html"|g' ../README.html
+edit_in_place 's|href="../mockup.html"|href="mockup.html"|g' ../README.html
+edit_in_place 's|href="../README.html"|href="README.html"|g' ../README.html
+edit_in_place 's|href="../README.md"|href="README.html"|g' ../README.html
+edit_in_place 's|href="styles.css"|href="docs/styles.css"|g' ../README.html
 
-sed -i '' 's|href="README.html">view source (.md)|href="README.md">view source (.md)|g' ../README.html
+edit_in_place 's|href="README.html">view source (.md)|href="README.md">view source (.md)|g' ../README.html
 
 printf "  ✓ ../README.html\n"
 echo "Done."
