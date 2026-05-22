@@ -156,6 +156,14 @@ func runInstall(args []string, stdout io.Writer, stderr io.Writer, syncMode bool
 		fmt.Fprintln(stdout, "Installing skills:")
 	}
 
+	desired := desiredManagedPaths(candidates)
+	if syncMode && opts.dryRun {
+		for _, rel := range staleManagedPaths(managed, desired) {
+			fmt.Fprintf(stdout, "- remove stale %s\n", rel)
+		}
+	}
+
+	partial := false
 	for _, candidate := range candidates {
 		if len(candidate.Harnesses) == 0 {
 			fmt.Fprintf(stdout, "- %s: skipped, no compatible active harnesses\n", candidate.Skill.Name)
@@ -213,6 +221,16 @@ func runInstall(args []string, stdout io.Writer, stderr io.Writer, syncMode bool
 	}
 
 	if !opts.dryRun {
+		if syncMode {
+			prunePartial, err := pruneStaleManaged(projectPath, managed, desired, preserved, files, stdout)
+			if err != nil {
+				fmt.Fprintf(stderr, "prune stale installs: %v\n", err)
+				return 3
+			}
+			if prunePartial {
+				partial = true
+			}
+		}
 		manifest.ManagedPaths = sortedKeys(managed)
 		manifest.PreservedPaths = sortedKeys(preserved)
 		manifest.Files = files
@@ -228,6 +246,9 @@ func runInstall(args []string, stdout io.Writer, stderr io.Writer, syncMode bool
 			return 4
 		}
 		return 3
+	}
+	if partial {
+		return 4
 	}
 	return 0
 }
@@ -777,6 +798,57 @@ func targetBases(harnesses []string) []string {
 	}
 	sort.Strings(bases)
 	return bases
+}
+
+func desiredManagedPaths(candidates []installCandidate) map[string]bool {
+	desired := map[string]bool{}
+	for _, candidate := range candidates {
+		for _, targetBase := range targetBases(candidate.Harnesses) {
+			relTarget := filepath.ToSlash(filepath.Join(targetBase, candidate.Skill.Name))
+			desired[relTarget] = true
+		}
+	}
+	return desired
+}
+
+func staleManagedPaths(managed map[string]bool, desired map[string]bool) []string {
+	var stale []string
+	for rel := range managed {
+		if !desired[rel] {
+			stale = append(stale, rel)
+		}
+	}
+	sort.Strings(stale)
+	return stale
+}
+
+func pruneStaleManaged(projectPath string, managed map[string]bool, desired map[string]bool, preserved map[string]bool, files map[string]string, stdout io.Writer) (bool, error) {
+	partial := false
+	for _, rel := range staleManagedPaths(managed, desired) {
+		target := filepath.Join(projectPath, filepath.FromSlash(rel))
+		expected := files[rel]
+		if expected != "" {
+			actual, err := fingerprintDir(target)
+			if err == nil && actual != expected {
+				delete(managed, rel)
+				preserved[rel] = true
+				partial = true
+				fmt.Fprintf(stdout, "- preserve stale %s (manager-owned copy has local edits)\n", rel)
+				continue
+			}
+			if err != nil && !errors.Is(err, os.ErrNotExist) {
+				return partial, fmt.Errorf("fingerprint %s: %w", rel, err)
+			}
+		}
+		if err := os.RemoveAll(target); err != nil {
+			return partial, fmt.Errorf("remove %s: %w", rel, err)
+		}
+		pruneEmptyParents(projectPath, filepath.Dir(target))
+		delete(managed, rel)
+		delete(files, rel)
+		fmt.Fprintf(stdout, "- removed stale %s\n", rel)
+	}
+	return partial, nil
 }
 
 func missingRequiredTools(req requirements) []string {

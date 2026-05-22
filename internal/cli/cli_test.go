@@ -171,6 +171,78 @@ skills:
 	}
 }
 
+func TestSyncPrunesStaleManagedInstallsWhenCompatibilityNarrows(t *testing.T) {
+	home := t.TempDir()
+	project := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+
+	writeFile(t, filepath.Join(project, ".skills", "project.yaml"), `version: 1
+name: demo
+categories: [Engineering]
+harnesses: [claude, codex]
+`)
+	writeFile(t, filepath.Join(home, "library", "catalog.yaml"), `version: 1
+skills:
+  - name: review
+    categories: [Engineering]
+    compatibility:
+      mode: portable
+    requirements:
+      tools: []
+`)
+	writeFile(t, filepath.Join(home, "library", "review", "SKILL.md"), "review\n")
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := Run([]string{"install", "--project", project}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("install returned %d, want 0\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+	}
+	if _, err := os.Stat(filepath.Join(project, ".codex", "skills", "review", "SKILL.md")); err != nil {
+		t.Fatalf("expected initial codex copy: %v", err)
+	}
+
+	writeFile(t, filepath.Join(home, "library", "catalog.yaml"), `version: 1
+skills:
+  - name: review
+    categories: [Engineering]
+    compatibility:
+      mode: exclusive
+      harness: claude
+    requirements:
+      tools: []
+`)
+
+	stdout.Reset()
+	stderr.Reset()
+	code = Run([]string{"sync", "--project", project}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("sync returned %d, want 0\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+	}
+	if _, err := os.Stat(filepath.Join(project, ".codex", "skills", "review")); !os.IsNotExist(err) {
+		t.Fatalf("expected stale codex copy to be removed, got err %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(project, ".claude", "skills", "review", "SKILL.md")); err != nil {
+		t.Fatalf("expected compatible claude copy to remain: %v", err)
+	}
+
+	manifestPath := filepath.Join(home, "manifests", projectSlug(project)+".json")
+	data, err := os.ReadFile(manifestPath)
+	if err != nil {
+		t.Fatalf("read manifest: %v", err)
+	}
+	var manifest installManifest
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		t.Fatalf("unmarshal manifest: %v", err)
+	}
+	if got, want := manifest.ManagedPaths, []string{".claude/skills/review"}; strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("managed paths = %#v, want %#v", got, want)
+	}
+	if _, ok := manifest.Files[".codex/skills/review"]; ok {
+		t.Fatalf("stale codex fingerprint still recorded: %#v", manifest.Files)
+	}
+}
+
 func TestUninstallPreservesLocallyEditedManagedTargets(t *testing.T) {
 	home := t.TempDir()
 	project := t.TempDir()
