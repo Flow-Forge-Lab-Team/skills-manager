@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Vision — skills-manager</title>
+<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/styles/atom-one-dark.min.css">
+<script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/highlight.min.js"></script>
+<script>document.addEventListener('DOMContentLoaded', () => {
+  // Pandoc emits class="sourceCode <lang>"; normalize to language-<lang> for hljs.
+  document.querySelectorAll('pre code.sourceCode').forEach(el => {
+    const lang = [...el.classList].find(c => c !== 'sourceCode');
+    if (lang) {
+      el.classList.add('language-' + lang);
+      hljs.highlightElement(el);
+    }
+  });
+});</script>
+</head>
+<body>
+<div class="app">
+  <nav class="sidebar">
+    <a href="index.html" class="brand">
+      <span class="brand-logo">s</span>
+      <span class="brand-name">skills-manager</span>
+    </a>
+    <div class="nav-section">Foundation</div>
+    <a href="VISION.html" class="nav-item active">Vision</a>
+    <a href="ARCHITECTURE.html" class="nav-item">Architecture</a>
+    <a href="ROADMAP.html" class="nav-item">Roadmap</a>
+    <a href="DATA_MODEL.html" class="nav-item">Data model</a>
+    <div class="nav-section">Surface</div>
+    <a href="CLI_REFERENCE.html" class="nav-item">CLI reference</a>
+    <a href="TAXONOMY.html" class="nav-item">Taxonomy</a>
+    <div class="nav-section">Subsystems</div>
+    <a href="COMPATIBILITY.html" class="nav-item">Compatibility</a>
+    <a href="INGEST_FLOW.html" class="nav-item">Ingest flow</a>
+    <a href="UPDATE_FLOW.html" class="nav-item">Update flow</a>
+    <a href="BUNDLED_SKILLS.html" class="nav-item">Bundled skills</a>
+    <a href="SCHEDULING.html" class="nav-item">Scheduling</a>
+    <a href="CROSS_MACHINE.html" class="nav-item">Cross-machine sync</a>
+    <div class="nav-section">Out-of-band</div>
+    <a href="../mockup.html" class="nav-item">UI mockup ↗</a>
+    <a href="../README.html" class="nav-item">README</a>
+  </nav>
+  <main class="content">
+    <div class="doc-meta">
+      <span class="crumb"><a href="index.html">docs</a></span>
+      <span class="sep">/</span>
+      <span class="crumb">VISION.md</span>
+    </div>
+<h1 id="vision">Vision</h1>
+<h2 id="the-problem">The problem</h2>
+<p>In 2026, AI coding agents finally converged on a shared skill format
+(<a href="https://agentskills.io/">SKILL.md, the agentskills.io open
+standard</a>). Claude Code, Codex CLI, Grok Build, Antigravity, Gemini
+CLI, Hermes, OpenClaw, and others now all read the same
+<code>SKILL.md</code> files — different expected locations, but the same
+content.</p>
+<p>This solved the <em>format</em> problem. It did not solve the
+<em>management</em> problem.</p>
+<p>Today, a typical developer has:</p>
+<ul>
+<li>Skills in <code>~/.claude/skills/</code>,
+<code>~/.codex/skills/</code>, <code>~/.grok/skills/</code>,
+<code>~/.hermes/skills/</code>, <code>~/.openclaw/skills/</code>,
+<code>~/.gemini/antigravity/skills/</code></li>
+<li>Project-level copies in <code>.claude/skills/</code>,
+<code>.codex/skills/</code>, <code>.agents/skills/</code>, bare
+<code>skills/</code></li>
+<li>Plugins via marketplaces
+(<code>~/.claude/plugins/marketplaces/</code>) auto-pulling skills</li>
+<li>Skills authored inline by agents during sessions</li>
+<li>Skills written by hand and dropped in</li>
+<li>Skills from random GitHub repos</li>
+</ul>
+<p>There is no tool that:</p>
+<ul>
+<li>Tracks what you have, where, and where it came from</li>
+<li>Tells you when upstream skills have updated (and what changed)</li>
+<li>Auto-suggests which skills belong in a project based on what the
+project is</li>
+<li>Keeps your library consistent across machines</li>
+<li>Handles the case where a skill is <em>intentionally</em>
+harness-specific vs accidentally non-portable</li>
+</ul>
+<p>Existing skills-manager projects (xingkongliang, iamzhihuix,
+umutbozdag, ECC) solve the distribution layer reasonably well, but none
+address update tracking, project-aware matching, usage analytics, or
+compatibility-aware install.</p>
+<h2 id="the-solution">The solution</h2>
+<p>A local-first CLI (with optional web UI) that:</p>
+<ol type="1">
+<li>Maintains <strong>one canonical library</strong> of skills, with
+origin metadata for every skill</li>
+<li><strong>Installs skills into the right places</strong> for each
+harness you use, via copy or symlink</li>
+<li><strong>Auto-detects new skills</strong> appearing in any harness's
+skill directory (handles the case where Hermes auto-creates a skill or
+Claude writes one for you mid-session)</li>
+<li><strong>Matches skills to projects</strong> based on categories +
+tags (with filesystem auto-detection of the stack)</li>
+<li><strong>Tracks upstream sources</strong> and shows raw diffs, safety
+flags, and optional AI summaries when updates are available</li>
+<li><strong>Respects compatibility and execution intent</strong> —
+harness support plus required model/tool capabilities, local binaries,
+MCP servers, scripts, and credentials</li>
+<li><strong>Syncs across machines</strong> via git, with drift
+detection</li>
+<li><strong>Reversibly</strong> — copy mode default, manifest tracking,
+clean uninstall</li>
+</ol>
+<h2 id="who-its-for">Who it's for</h2>
+<p><strong>Primary audience: power users with multiple
+harnesses.</strong> People running Claude Code + Codex + Grok or any 2+
+of the SKILL.md-compatible agents who currently maintain skills in
+duplicate. They feel the pain directly.</p>
+<p><strong>Secondary audience: teams.</strong> A project's
+<code>.skills/project.yaml</code> is committed to the repo, so cloning
+the repo + running <code>skills-manager install</code> reproduces the
+original author's skill setup.</p>
+<p><strong>Tertiary audience: skill authors.</strong> The manager gives
+them version tracking, usage analytics, and a clear path to publish
+updates.</p>
+<p>Not for:</p>
+<ul>
+<li>Users on a single harness who never feel the cross-tool pain</li>
+<li>Users who don't author or customize skills (a marketplace UI would
+serve them better)</li>
+</ul>
+<h2 id="differentiation-vs-existing-tools">Differentiation vs existing
+tools</h2>
+<table>
+<thead>
+<tr>
+<th>Capability</th>
+<th>Existing tools</th>
+<th>skills-manager</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Distribution to multiple harnesses</td>
+<td>Yes (Tauri desktops)</td>
+<td>Yes (CLI + symlink/copy)</td>
+</tr>
+<tr>
+<td>Origin tracking + update detection</td>
+<td>No</td>
+<td><strong>Yes</strong></td>
+</tr>
+<tr>
+<td>Update review</td>
+<td>No</td>
+<td><strong>Yes</strong> (raw diff + safety flags; AI summary
+optional)</td>
+</tr>
+<tr>
+<td>Project-aware matching</td>
+<td>No</td>
+<td><strong>Yes</strong> (categories + tags + filesystem detection)</td>
+</tr>
+<tr>
+<td>Usage analytics</td>
+<td>No</td>
+<td><strong>Yes</strong> (OTEL integration where available)</td>
+</tr>
+<tr>
+<td>Compatibility + requirements model</td>
+<td>No</td>
+<td><strong>Yes</strong></td>
+</tr>
+<tr>
+<td>Auto-detection of new skills</td>
+<td>No</td>
+<td><strong>Yes</strong> (scan first; watcher optional later)</td>
+</tr>
+<tr>
+<td>Bundled "manager skills" (port, ingest, summary)</td>
+<td>No</td>
+<td><strong>Yes</strong></td>
+</tr>
+<tr>
+<td>Cross-machine git sync</td>
+<td>Some via SQLite</td>
+<td><strong>Yes</strong> (git-native library)</td>
+</tr>
+<tr>
+<td>CLI-first</td>
+<td>No (desktop-first)</td>
+<td><strong>Yes</strong></td>
+</tr>
+<tr>
+<td>Web UI</td>
+<td>Yes (Tauri)</td>
+<td>Deferred local triage surface (<code>serve</code> command)</td>
+</tr>
+</tbody>
+</table>
+<h2 id="non-goals">Non-goals</h2>
+<p>To keep scope honest:</p>
+<ul>
+<li><strong>Not a skill marketplace.</strong> We integrate with
+marketplaces; we don't host one.</li>
+<li><strong>Not a skill authoring IDE.</strong> We provide a
+<code>skills-author</code> bundled skill that guides authoring in
+whatever agent the user prefers; we don't build a custom editor.</li>
+<li><strong>Not a model provider.</strong> AI summaries run via the
+user's explicitly-configured local provider credentials, or via a
+higher-friction agent handoff fallback. The manager never uses harness
+OAuth tokens directly.</li>
+<li><strong>Not a replacement for harness CLIs.</strong> It augments
+them; it doesn't wrap them.</li>
+<li><strong>No subscription, no cloud backend.</strong> Local-first. The
+only v1 cloud touch points are marketplace polls (HTTP) and
+user-configured git remotes.</li>
+<li><strong>No closed-marketplace integrations in v1.</strong> Public
+APIs and public registries first; closed marketplaces require
+partnerships.</li>
+</ul>
+<h2 id="guiding-principles">Guiding principles</h2>
+<ol type="1">
+<li><strong>The CLI is the canonical surface.</strong> Every capability
+is a command. The web UI is a viewer.</li>
+<li><strong>State is local and inspectable.</strong> SQLite + flat
+files. No black-box cloud state.</li>
+<li><strong>Reversible by default.</strong> Copy mode, manifests, clean
+uninstall, no permanent surgery.</li>
+<li><strong>Honest about costs and trust.</strong> Token-spending
+features are opt-in with cost surfaced; model-generated summaries are
+advisory, never the only review artifact.</li>
+<li><strong>LLM-agnostic.</strong> Run the user's choice; never lock to
+one provider.</li>
+<li><strong>Execution requirements are first-class.</strong> Don't
+assume that harness compatibility means runtime readiness; record and
+check required tools, MCP servers, scripts, credentials, and model/tool
+capabilities.</li>
+<li><strong>Open and inspectable.</strong> Bundled skills are markdown
+files in the repo; community can improve them via PR.</li>
+</ol>
+<h2 id="what-success-looks-like">What success looks like</h2>
+<p>A user with 200+ skills across 5+ harnesses and 10+ projects can:</p>
+<ul>
+<li>See at a glance which skills are used where, with usage
+frequency</li>
+<li>Get notified when a skill they use has an update, with raw diff,
+safety flags, and an optional AI summary in under a minute of
+attention</li>
+<li>Open a new project, run <code>skills-manager init</code>, preview
+the likely skills, and install the selected set in 30 seconds</li>
+<li>Walk away from the tool any time and find their existing skill setup
+intact</li>
+<li>Share a project with a teammate who runs the same command and gets
+the same setup</li>
+<li>Move between laptop and desktop with <code>git pull</code> and have
+an identical library</li>
+</ul>
+<p>If the user opens the manager weekly and finds it useful, the product
+is working. If they have to babysit it, it's failed.</p>
+    <footer class="doc-footer">
+      <span>skills-manager · design doc</span>
+      <span><a href="VISION.md">view source (.md)</a></span>
+    </footer>
+  </main>
+</div>
+</body>
+</html>

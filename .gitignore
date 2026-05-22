@@ -1,0 +1,10 @@
+.DS_Store
+
+# Build outputs
+/bin/
+/dist/
+/coverage.out
+
+# Local state
+/.skills-manager/
+/.claude/

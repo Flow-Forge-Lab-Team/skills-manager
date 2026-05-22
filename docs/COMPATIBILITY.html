@@ -1,0 +1,531 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Compatibility — skills-manager</title>
+<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/styles/atom-one-dark.min.css">
+<script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/highlight.min.js"></script>
+<script>document.addEventListener('DOMContentLoaded', () => {
+  // Pandoc emits class="sourceCode <lang>"; normalize to language-<lang> for hljs.
+  document.querySelectorAll('pre code.sourceCode').forEach(el => {
+    const lang = [...el.classList].find(c => c !== 'sourceCode');
+    if (lang) {
+      el.classList.add('language-' + lang);
+      hljs.highlightElement(el);
+    }
+  });
+});</script>
+</head>
+<body>
+<div class="app">
+  <nav class="sidebar">
+    <a href="index.html" class="brand">
+      <span class="brand-logo">s</span>
+      <span class="brand-name">skills-manager</span>
+    </a>
+    <div class="nav-section">Foundation</div>
+    <a href="VISION.html" class="nav-item">Vision</a>
+    <a href="ARCHITECTURE.html" class="nav-item">Architecture</a>
+    <a href="ROADMAP.html" class="nav-item">Roadmap</a>
+    <a href="DATA_MODEL.html" class="nav-item">Data model</a>
+    <div class="nav-section">Surface</div>
+    <a href="CLI_REFERENCE.html" class="nav-item">CLI reference</a>
+    <a href="TAXONOMY.html" class="nav-item">Taxonomy</a>
+    <div class="nav-section">Subsystems</div>
+    <a href="COMPATIBILITY.html" class="nav-item active">Compatibility</a>
+    <a href="INGEST_FLOW.html" class="nav-item">Ingest flow</a>
+    <a href="UPDATE_FLOW.html" class="nav-item">Update flow</a>
+    <a href="BUNDLED_SKILLS.html" class="nav-item">Bundled skills</a>
+    <a href="SCHEDULING.html" class="nav-item">Scheduling</a>
+    <a href="CROSS_MACHINE.html" class="nav-item">Cross-machine sync</a>
+    <div class="nav-section">Out-of-band</div>
+    <a href="../mockup.html" class="nav-item">UI mockup ↗</a>
+    <a href="../README.html" class="nav-item">README</a>
+  </nav>
+  <main class="content">
+    <div class="doc-meta">
+      <span class="crumb"><a href="index.html">docs</a></span>
+      <span class="sep">/</span>
+      <span class="crumb">COMPATIBILITY.md</span>
+    </div>
+<h1 id="compatibility">Compatibility</h1>
+<p>How skills declare which harnesses they work in, what they require at
+runtime, and how the manager respects intent.</p>
+<p>Compatibility has two layers:</p>
+<ol type="1">
+<li><strong>Harness support</strong>: where the skill text can be
+installed and interpreted.</li>
+<li><strong>Execution requirements</strong>: what the skill assumes when
+it runs, including model/tool capability, local binaries, MCP servers,
+scripts, and credentials.</li>
+</ol>
+<p>A skill can be harness-portable but not runtime-ready on a machine.
+The manager must represent both facts.</p>
+<h2 id="the-three-states">The three states</h2>
+<p>Every skill in the library is in one of three compatibility
+states:</p>
+<table>
+<thead>
+<tr>
+<th>State</th>
+<th>Declaration</th>
+<th>What it means</th>
+<th>Install behavior</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Portable</strong></td>
+<td>No declaration (default)</td>
+<td>Could work anywhere; compat checked at install</td>
+<td>Install into every active harness; auto-detect any concerning
+patterns and warn</td>
+</tr>
+<tr>
+<td><strong>Compatible</strong></td>
+<td><code>compatible: [harness, ...]</code> in frontmatter</td>
+<td>Works in this specific list, possibly extendable later</td>
+<td>Install only into listed harnesses; never extend without user
+action</td>
+</tr>
+<tr>
+<td><strong>Exclusive</strong></td>
+<td><code>exclusive: &lt;harness&gt;</code> in frontmatter</td>
+<td>Intentionally for one harness, by design</td>
+<td>Install only into the declared harness; never appear in selection
+for others</td>
+</tr>
+</tbody>
+</table>
+<h2 id="why-three-states-not-two">Why three states (not two)</h2>
+<p>The naive design is just "portable" vs "incompatible." But that
+misses:</p>
+<ul>
+<li>Skills that <strong>could</strong> work elsewhere with porting, but
+aren't ported yet (Compatible covers this)</li>
+<li>Skills that are <strong>deliberately</strong> single-harness
+(gstack's plan-mode-aware skills, Cursor's glob-driven rules) — these
+aren't "incompatible," they're correct as they are</li>
+</ul>
+<p>The three-state model makes user intent first-class. The manager
+respects it instead of inferring it. It is not the whole compatibility
+story; execution requirements below cover model and local runtime
+assumptions.</p>
+<h2 id="declaration-syntax">Declaration syntax</h2>
+<p>In <code>SKILL.md</code> frontmatter:</p>
+<h3 id="state-1-portable-default--no-declaration">State 1: Portable
+(default — no declaration)</h3>
+<div class="sourceCode" id="cb1"><pre
+class="sourceCode yaml"><code class="sourceCode yaml"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="pp">---</span></span>
+<span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="fu">name</span><span class="kw">:</span><span class="at"> pdf</span></span>
+<span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a><span class="fu">description</span><span class="kw">:</span><span class="at"> PDF manipulation toolkit for extracting text and tables...</span></span>
+<span id="cb1-4"><a href="#cb1-4" aria-hidden="true" tabindex="-1"></a><span class="pp">---</span></span></code></pre></div>
+<p>No <code>compatible:</code> or <code>exclusive:</code> field. The
+manager will install it everywhere and run compatibility detection.</p>
+<h3 id="state-2-compatible-explicit-list">State 2: Compatible (explicit
+list)</h3>
+<div class="sourceCode" id="cb2"><pre
+class="sourceCode yaml"><code class="sourceCode yaml"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="pp">---</span></span>
+<span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a><span class="fu">name</span><span class="kw">:</span><span class="at"> linear-feature</span></span>
+<span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a><span class="fu">description</span><span class="kw">:</span><span class="at"> Full orchestrator for completing Linear issues</span></span>
+<span id="cb2-4"><a href="#cb2-4" aria-hidden="true" tabindex="-1"></a><span class="fu">compatible</span><span class="kw">:</span><span class="at"> </span><span class="kw">[</span><span class="at">claude</span><span class="kw">,</span><span class="at"> codex</span><span class="kw">,</span><span class="at"> grok</span><span class="kw">]</span></span>
+<span id="cb2-5"><a href="#cb2-5" aria-hidden="true" tabindex="-1"></a><span class="pp">---</span></span></code></pre></div>
+<p>Installs only in claude, codex, grok. The user can edit this list to
+expand or contract.</p>
+<h3 id="state-3-exclusive-single-harness-by-intent">State 3: Exclusive
+(single-harness by intent)</h3>
+<div class="sourceCode" id="cb3"><pre
+class="sourceCode yaml"><code class="sourceCode yaml"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="pp">---</span></span>
+<span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a><span class="fu">name</span><span class="kw">:</span><span class="at"> qa</span></span>
+<span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a><span class="fu">description</span><span class="kw">:</span><span class="at"> Systematically QA test a web application and fix bugs found</span></span>
+<span id="cb3-4"><a href="#cb3-4" aria-hidden="true" tabindex="-1"></a><span class="fu">exclusive</span><span class="kw">:</span><span class="at"> claude</span></span>
+<span id="cb3-5"><a href="#cb3-5" aria-hidden="true" tabindex="-1"></a><span class="fu">reason</span><span class="kw">:</span><span class="at"> </span><span class="st">&quot;Uses AskUserQuestion and gstack preamble + Plan Mode references&quot;</span></span>
+<span id="cb3-6"><a href="#cb3-6" aria-hidden="true" tabindex="-1"></a><span class="pp">---</span></span></code></pre></div>
+<p>Installs only in claude. The <code>reason</code> field is human
+documentation; the manager doesn't parse it but surfaces it in
+<code>skills-manager show</code>.</p>
+<h2 id="sidecar-storage">Sidecar storage</h2>
+<p>The skill's own <code>SKILL.md</code> is the source of truth for
+compatibility declarations. The manager also caches the parsed state in
+<code>.skill-meta.yaml</code> for fast queries:</p>
+<div class="sourceCode" id="cb4"><pre
+class="sourceCode yaml"><code class="sourceCode yaml"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a><span class="fu">compatibility</span><span class="kw">:</span></span>
+<span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a><span class="at">  </span><span class="fu">declared</span><span class="kw">:</span></span>
+<span id="cb4-3"><a href="#cb4-3" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="fu">mode</span><span class="kw">:</span><span class="at"> exclusive</span><span class="co">            # portable | compatible | exclusive</span></span>
+<span id="cb4-4"><a href="#cb4-4" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="fu">harness</span><span class="kw">:</span><span class="at"> claude</span><span class="co">            # only set for exclusive</span></span>
+<span id="cb4-5"><a href="#cb4-5" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="fu">harnesses</span><span class="kw">:</span><span class="at"> </span><span class="ch">~</span><span class="co">               # only set for compatible</span></span>
+<span id="cb4-6"><a href="#cb4-6" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="fu">reason</span><span class="kw">:</span><span class="at"> </span><span class="st">&quot;Uses AskUserQuestion + gstack preamble&quot;</span></span>
+<span id="cb4-7"><a href="#cb4-7" aria-hidden="true" tabindex="-1"></a><span class="at">  </span><span class="fu">detected</span><span class="kw">:</span></span>
+<span id="cb4-8"><a href="#cb4-8" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="fu">claude</span><span class="kw">:</span><span class="at">      </span><span class="kw">{</span><span class="fu">confidence</span><span class="kw">:</span><span class="at"> high</span><span class="kw">}</span></span>
+<span id="cb4-9"><a href="#cb4-9" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="fu">codex</span><span class="kw">:</span><span class="at">       </span><span class="kw">{</span><span class="fu">confidence</span><span class="kw">:</span><span class="at"> low</span><span class="kw">,</span><span class="at">  </span><span class="fu">reasons</span><span class="kw">:</span><span class="at"> </span><span class="kw">[</span><span class="st">&quot;uses AskUserQuestion&quot;</span><span class="kw">]}</span></span>
+<span id="cb4-10"><a href="#cb4-10" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="fu">grok</span><span class="kw">:</span><span class="at">        </span><span class="kw">{</span><span class="fu">confidence</span><span class="kw">:</span><span class="at"> low</span><span class="kw">,</span><span class="at">  </span><span class="fu">reasons</span><span class="kw">:</span><span class="at"> </span><span class="kw">[</span><span class="st">&quot;uses AskUserQuestion&quot;</span><span class="kw">]}</span></span>
+<span id="cb4-11"><a href="#cb4-11" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="fu">hermes</span><span class="kw">:</span><span class="at">      </span><span class="kw">{</span><span class="fu">confidence</span><span class="kw">:</span><span class="at"> none</span><span class="kw">,</span><span class="at"> </span><span class="fu">reasons</span><span class="kw">:</span><span class="at"> </span><span class="kw">[</span><span class="st">&quot;multiple Claude-only tools&quot;</span><span class="kw">]}</span></span>
+<span id="cb4-12"><a href="#cb4-12" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="fu">antigravity</span><span class="kw">:</span><span class="at"> </span><span class="kw">{</span><span class="fu">confidence</span><span class="kw">:</span><span class="at"> medium</span><span class="kw">,</span><span class="at"> </span><span class="fu">reasons</span><span class="kw">:</span><span class="at"> </span><span class="kw">[</span><span class="st">&quot;MCP UUID format&quot;</span><span class="kw">]}</span></span>
+<span id="cb4-13"><a href="#cb4-13" aria-hidden="true" tabindex="-1"></a><span class="at">  </span><span class="fu">matrix_updated</span><span class="kw">:</span><span class="at"> 2026-05-22T14:30:00Z</span></span></code></pre></div>
+<p>The <code>declared</code> block always wins; <code>detected</code> is
+informational (shown in <code>skills-manager show</code>).</p>
+<h2 id="execution-requirements">Execution requirements</h2>
+<p>Harness support answers "where can this be installed?" Requirements
+answer "will it work here?"</p>
+<p>Requirements are stored in <code>.skill-meta.yaml</code> and may also
+be inferred from skill content:</p>
+<div class="sourceCode" id="cb5"><pre
+class="sourceCode yaml"><code class="sourceCode yaml"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a><span class="fu">requirements</span><span class="kw">:</span></span>
+<span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a><span class="at">  </span><span class="fu">model</span><span class="kw">:</span></span>
+<span id="cb5-3"><a href="#cb5-3" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="fu">tool_use</span><span class="kw">:</span><span class="at"> required</span><span class="co">              # required | optional | none</span></span>
+<span id="cb5-4"><a href="#cb5-4" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="fu">min_context_tokens</span><span class="kw">:</span><span class="at"> </span><span class="dv">32000</span><span class="co">       # optional, advisory</span></span>
+<span id="cb5-5"><a href="#cb5-5" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="fu">reasoning</span><span class="kw">:</span><span class="at"> medium</span><span class="co">               # none | low | medium | high, advisory</span></span>
+<span id="cb5-6"><a href="#cb5-6" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="fu">notes</span><span class="kw">:</span><span class="at"> </span><span class="st">&quot;Needs reliable tool-call planning across Linear and GitHub&quot;</span></span>
+<span id="cb5-7"><a href="#cb5-7" aria-hidden="true" tabindex="-1"></a><span class="at">  </span><span class="fu">tools</span><span class="kw">:</span></span>
+<span id="cb5-8"><a href="#cb5-8" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="kw">-</span><span class="at"> </span><span class="fu">name</span><span class="kw">:</span><span class="at"> gh</span></span>
+<span id="cb5-9"><a href="#cb5-9" aria-hidden="true" tabindex="-1"></a><span class="at">      </span><span class="fu">required</span><span class="kw">:</span><span class="at"> </span><span class="ch">true</span></span>
+<span id="cb5-10"><a href="#cb5-10" aria-hidden="true" tabindex="-1"></a><span class="at">      </span><span class="fu">check</span><span class="kw">:</span><span class="at"> </span><span class="st">&quot;gh auth status&quot;</span></span>
+<span id="cb5-11"><a href="#cb5-11" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="kw">-</span><span class="at"> </span><span class="fu">name</span><span class="kw">:</span><span class="at"> rg</span></span>
+<span id="cb5-12"><a href="#cb5-12" aria-hidden="true" tabindex="-1"></a><span class="at">      </span><span class="fu">required</span><span class="kw">:</span><span class="at"> </span><span class="ch">true</span></span>
+<span id="cb5-13"><a href="#cb5-13" aria-hidden="true" tabindex="-1"></a><span class="at">      </span><span class="fu">check</span><span class="kw">:</span><span class="at"> </span><span class="st">&quot;rg --version&quot;</span></span>
+<span id="cb5-14"><a href="#cb5-14" aria-hidden="true" tabindex="-1"></a><span class="at">  </span><span class="fu">mcp_servers</span><span class="kw">:</span></span>
+<span id="cb5-15"><a href="#cb5-15" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="kw">-</span><span class="at"> </span><span class="fu">name</span><span class="kw">:</span><span class="at"> linear</span></span>
+<span id="cb5-16"><a href="#cb5-16" aria-hidden="true" tabindex="-1"></a><span class="at">      </span><span class="fu">required</span><span class="kw">:</span><span class="at"> </span><span class="ch">true</span></span>
+<span id="cb5-17"><a href="#cb5-17" aria-hidden="true" tabindex="-1"></a><span class="at">      </span><span class="fu">config_hint</span><span class="kw">:</span><span class="at"> </span><span class="st">&quot;Install the Linear connector/app before use&quot;</span></span>
+<span id="cb5-18"><a href="#cb5-18" aria-hidden="true" tabindex="-1"></a><span class="at">  </span><span class="fu">scripts</span><span class="kw">:</span></span>
+<span id="cb5-19"><a href="#cb5-19" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="fu">allow_auto_run</span><span class="kw">:</span><span class="at"> </span><span class="ch">false</span></span>
+<span id="cb5-20"><a href="#cb5-20" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="fu">required_runtimes</span><span class="kw">:</span><span class="at"> </span><span class="kw">[</span><span class="at">node</span><span class="kw">]</span></span>
+<span id="cb5-21"><a href="#cb5-21" aria-hidden="true" tabindex="-1"></a><span class="at">  </span><span class="fu">credentials</span><span class="kw">:</span></span>
+<span id="cb5-22"><a href="#cb5-22" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="kw">-</span><span class="at"> </span><span class="fu">name</span><span class="kw">:</span><span class="at"> github</span></span>
+<span id="cb5-23"><a href="#cb5-23" aria-hidden="true" tabindex="-1"></a><span class="at">      </span><span class="fu">source</span><span class="kw">:</span><span class="at"> gh</span></span>
+<span id="cb5-24"><a href="#cb5-24" aria-hidden="true" tabindex="-1"></a><span class="at">      </span><span class="fu">required</span><span class="kw">:</span><span class="at"> </span><span class="ch">true</span></span></code></pre></div>
+<p><code>skills-manager doctor</code> validates requirements on the
+current machine. Missing required dependencies block auto-install by
+default and are shown in dry-run output. Missing optional dependencies
+produce warnings.</p>
+<p>The manager does not try to certify subjective model quality. Model
+fields are coarse capability hints, not a promise that every model
+behind a harness will follow the skill well.</p>
+<h2 id="auto-detection-of-incompatibility-patterns">Auto-detection of
+incompatibility patterns</h2>
+<p>When a skill is added without a declaration, the manager scans the
+body for known harness-specific patterns and either:</p>
+<ul>
+<li>Auto-classifies as exclusive (high confidence)</li>
+<li>Asks the user (medium confidence)</li>
+<li>Leaves portable + adds notes (low confidence)</li>
+</ul>
+<h3 id="pattern-library">Pattern library</h3>
+<table>
+<thead>
+<tr>
+<th>Pattern</th>
+<th>Indicates harness</th>
+<th>Confidence</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>the Skill tool</code>,
+<code>Agent tool with subagent_type</code></td>
+<td>Claude</td>
+<td>high</td>
+</tr>
+<tr>
+<td><code>AskUserQuestion</code>, <code>ExitPlanMode</code>,
+<code>Plan Mode</code></td>
+<td>Claude</td>
+<td>high</td>
+</tr>
+<tr>
+<td><code>mcp__[hex-uuid]__*</code> (machine-local MCP)</td>
+<td>Claude/Codex</td>
+<td>medium (warn, not block)</td>
+</tr>
+<tr>
+<td><code>$ARGUMENTS</code> (slash command syntax)</td>
+<td>Claude/Codex</td>
+<td>low (varies)</td>
+</tr>
+<tr>
+<td>Bash via <code>!</code> prefix</td>
+<td>Claude</td>
+<td>high</td>
+</tr>
+<tr>
+<td><code>AGENTS.md</code>, <code>agents.md</code> references</td>
+<td>Codex/Cursor/Copilot</td>
+<td>low (most generic)</td>
+</tr>
+<tr>
+<td><code>.cursor/rules/</code>, <code>globs:</code> frontmatter</td>
+<td>Cursor</td>
+<td>high</td>
+</tr>
+<tr>
+<td><code>~/.hermes/</code> references, <code>/memory</code>
+directives</td>
+<td>Hermes</td>
+<td>high</td>
+</tr>
+<tr>
+<td><code>~/.openclaw/</code> references</td>
+<td>OpenClaw</td>
+<td>high</td>
+</tr>
+<tr>
+<td>Claude Code hook configs (PreToolUse, PostToolUse)</td>
+<td>Claude</td>
+<td>high</td>
+</tr>
+<tr>
+<td>Cursor <code>globs:</code></td>
+<td>Cursor</td>
+<td>high</td>
+</tr>
+</tbody>
+</table>
+<p>Pattern matchers live in the manager repo
+(<code>detectors/compatibility/*.yaml</code>) and are PR-friendly.</p>
+<p>Requirement detectors live alongside them
+(<code>detectors/requirements/*.yaml</code>). Examples:</p>
+<table>
+<thead>
+<tr>
+<th>Pattern</th>
+<th>Requirement inferred</th>
+<th>Confidence</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>gh pr</code>, <code>gh api</code>,
+<code>GitHub CLI</code></td>
+<td>tool: <code>gh</code></td>
+<td>high</td>
+</tr>
+<tr>
+<td><code>rg </code>, <code>ripgrep</code></td>
+<td>tool: <code>rg</code></td>
+<td>medium</td>
+</tr>
+<tr>
+<td><code>ffmpeg</code></td>
+<td>tool: <code>ffmpeg</code></td>
+<td>high</td>
+</tr>
+<tr>
+<td><code>mcp__linear__</code>, <code>Linear connector</code></td>
+<td>MCP server: <code>linear</code></td>
+<td>high</td>
+</tr>
+<tr>
+<td><code>python-docx</code>, <code>openpyxl</code></td>
+<td>runtime/library note</td>
+<td>medium</td>
+</tr>
+<tr>
+<td>"use the browser tool"</td>
+<td>model/tool_use: required</td>
+<td>medium</td>
+</tr>
+</tbody>
+</table>
+<h3 id="auto-classification-rule">Auto-classification rule</h3>
+<pre><code>if patterns_for(harness_X).confidence == high AND no patterns for other harnesses:
+    suggest exclusive: harness_X
+elif multiple harness-specific patterns detected:
+    suggest compatible: [&lt;list of harnesses with at-least-medium signal&gt;]
+elif weak patterns only:
+    leave portable, log notes</code></pre>
+<p>The user can always override.</p>
+<h2 id="behavior-matrix">Behavior matrix</h2>
+<table>
+<thead>
+<tr>
+<th>Skill state</th>
+<th>Active project harnesses</th>
+<th>What happens at install</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>portable</code></td>
+<td>claude, codex, grok</td>
+<td>Install in all 3; run compat detection in background</td>
+</tr>
+<tr>
+<td><code>portable</code> (with detected Claude-only patterns)</td>
+<td>claude, codex</td>
+<td>Install in claude; warn for codex with option to port</td>
+</tr>
+<tr>
+<td><code>compatible: [claude, codex]</code></td>
+<td>claude, codex, grok</td>
+<td>Install in claude + codex; grok skipped silently</td>
+</tr>
+<tr>
+<td><code>compatible: [claude, codex]</code></td>
+<td>claude only</td>
+<td>Install in claude</td>
+</tr>
+<tr>
+<td><code>exclusive: claude</code></td>
+<td>claude, codex, grok</td>
+<td>Install in claude only; codex/grok don't even see this skill in
+selection</td>
+</tr>
+<tr>
+<td><code>exclusive: claude</code></td>
+<td>codex, grok (no claude)</td>
+<td>Skill doesn't apply; not surfaced in matches</td>
+</tr>
+</tbody>
+</table>
+<h2 id="project-side-filtering">Project-side filtering</h2>
+<p>The matcher (see <code>TAXONOMY.md</code>) respects
+compatibility:</p>
+<div class="sourceCode" id="cb7"><pre
+class="sourceCode python"><code class="sourceCode python"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> matches(skill, project):</span>
+<span id="cb7-2"><a href="#cb7-2" aria-hidden="true" tabindex="-1"></a>    <span class="cf">if</span> <span class="kw">not</span> (skill.categories <span class="op">&amp;</span> project.categories):</span>
+<span id="cb7-3"><a href="#cb7-3" aria-hidden="true" tabindex="-1"></a>        <span class="cf">return</span> <span class="va">False</span></span>
+<span id="cb7-4"><a href="#cb7-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-5"><a href="#cb7-5" aria-hidden="true" tabindex="-1"></a>    <span class="cf">if</span> skill.compatibility.mode <span class="op">==</span> <span class="st">&quot;exclusive&quot;</span>:</span>
+<span id="cb7-6"><a href="#cb7-6" aria-hidden="true" tabindex="-1"></a>        <span class="cf">if</span> skill.compatibility.harness <span class="kw">not</span> <span class="kw">in</span> project.harnesses:</span>
+<span id="cb7-7"><a href="#cb7-7" aria-hidden="true" tabindex="-1"></a>            <span class="cf">return</span> <span class="va">False</span></span>
+<span id="cb7-8"><a href="#cb7-8" aria-hidden="true" tabindex="-1"></a>    <span class="cf">elif</span> skill.compatibility.mode <span class="op">==</span> <span class="st">&quot;compatible&quot;</span>:</span>
+<span id="cb7-9"><a href="#cb7-9" aria-hidden="true" tabindex="-1"></a>        <span class="cf">if</span> <span class="kw">not</span> (<span class="bu">set</span>(skill.compatibility.harnesses) <span class="op">&amp;</span> project.harnesses):</span>
+<span id="cb7-10"><a href="#cb7-10" aria-hidden="true" tabindex="-1"></a>            <span class="cf">return</span> <span class="va">False</span></span>
+<span id="cb7-11"><a href="#cb7-11" aria-hidden="true" tabindex="-1"></a>    <span class="co"># portable: passes through</span></span>
+<span id="cb7-12"><a href="#cb7-12" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-13"><a href="#cb7-13" aria-hidden="true" tabindex="-1"></a>    <span class="cf">if</span> <span class="kw">not</span> requirements_available(skill.requirements, project.machine):</span>
+<span id="cb7-14"><a href="#cb7-14" aria-hidden="true" tabindex="-1"></a>        <span class="cf">return</span> <span class="st">&quot;warning&quot;</span>  <span class="co"># surfaced in dry-run; blocks only required missing deps</span></span>
+<span id="cb7-15"><a href="#cb7-15" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-16"><a href="#cb7-16" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> <span class="va">True</span></span></code></pre></div>
+<p>A project with only <code>codex</code> won't surface
+<code>exclusive: claude</code> skills at all. The user doesn't see them.
+No "incompatibility warning noise."</p>
+<p>Requirement warnings are different from harness compatibility. A
+<code>compatible: [claude, codex]</code> skill can still warn that
+<code>gh</code> is missing or the Linear MCP server is not configured on
+this machine.</p>
+<h2 id="changing-compatibility-intent">Changing compatibility
+intent</h2>
+<p>Users can change a skill's compatibility via CLI:</p>
+<pre><code>skills-manager set qa --compatibility exclusive --harness claude
+skills-manager set qa --compatibility compatible --harnesses claude,codex
+skills-manager set qa --compatibility portable</code></pre>
+<p>This rewrites the skill's <code>SKILL.md</code> frontmatter AND
+updates <code>.skill-meta.yaml</code>. The change is committed to the
+library on next sync.</p>
+<p>Side effects:</p>
+<ul>
+<li>Going <strong>more restrictive</strong> (portable → exclusive):
+triggers uninstall from harnesses that no longer apply (with
+confirmation)</li>
+<li>Going <strong>more permissive</strong> (exclusive → portable):
+triggers compatibility detection, may install in new harnesses on next
+<code>install</code>/<code>sync</code></li>
+</ul>
+<h2 id="variants--porting-without-losing-the-original">Variants —
+porting without losing the original</h2>
+<p>When a skill is portable-with-caveats, the manager can store
+<strong>variants</strong>: a ported version per target harness, kept
+alongside the canonical.</p>
+<p>Layout:</p>
+<pre><code>~/.skills-manager/library/code-reviewer/
+├── SKILL.md                    # canonical (original Hermes version)
+├── SKILL.claude.md             # ported for claude
+├── SKILL.antigravity.md        # ported for antigravity
+├── .skill-meta.yaml
+└── .variants.yaml</code></pre>
+<p><code>.variants.yaml</code>:</p>
+<div class="sourceCode" id="cb10"><pre
+class="sourceCode yaml"><code class="sourceCode yaml"><span id="cb10-1"><a href="#cb10-1" aria-hidden="true" tabindex="-1"></a><span class="fu">version</span><span class="kw">:</span><span class="at"> </span><span class="dv">1</span></span>
+<span id="cb10-2"><a href="#cb10-2" aria-hidden="true" tabindex="-1"></a><span class="fu">default</span><span class="kw">:</span><span class="at"> SKILL.md</span></span>
+<span id="cb10-3"><a href="#cb10-3" aria-hidden="true" tabindex="-1"></a><span class="fu">overrides</span><span class="kw">:</span></span>
+<span id="cb10-4"><a href="#cb10-4" aria-hidden="true" tabindex="-1"></a><span class="at">  </span><span class="fu">claude</span><span class="kw">:</span><span class="at"> SKILL.claude.md</span></span>
+<span id="cb10-5"><a href="#cb10-5" aria-hidden="true" tabindex="-1"></a><span class="at">  </span><span class="fu">antigravity</span><span class="kw">:</span><span class="at"> SKILL.antigravity.md</span></span>
+<span id="cb10-6"><a href="#cb10-6" aria-hidden="true" tabindex="-1"></a><span class="fu">canonical_fingerprint</span><span class="kw">:</span><span class="at"> a7f3...</span></span>
+<span id="cb10-7"><a href="#cb10-7" aria-hidden="true" tabindex="-1"></a><span class="fu">last_ported</span><span class="kw">:</span><span class="at"> 2026-05-22T14:30:00Z</span></span>
+<span id="cb10-8"><a href="#cb10-8" aria-hidden="true" tabindex="-1"></a><span class="fu">ported_by</span><span class="kw">:</span><span class="at"> skills-port</span></span></code></pre></div>
+<p>At install time, the manager picks the right file:</p>
+<ul>
+<li>claude harness → <code>SKILL.claude.md</code></li>
+<li>antigravity harness → <code>SKILL.antigravity.md</code></li>
+<li>everyone else → <code>SKILL.md</code> (canonical)</li>
+</ul>
+<h2 id="generating-variants">Generating variants</h2>
+<p>The bundled <code>skills-port</code> skill (see
+<code>BUNDLED_SKILLS.md</code>) generates variants. The user invokes it
+via their agent:</p>
+<pre><code>$ skills-manager port code-reviewer --to claude,antigravity
+
+# Manager generates prompt + context.
+# Preferred: configured local LLM provider runs skills-port.
+# Fallback: user pastes into Claude/Codex/whatever and runs the bundled skill.
+# The model rewrites the skill for each target harness.
+# Manager saves output as SKILL.claude.md, SKILL.antigravity.md.</code></pre>
+<h2 id="drift-between-canonical-and-variants">Drift between canonical
+and variants</h2>
+<p>When the canonical SKILL.md updates upstream, its variants are now
+potentially stale. The manager detects this via fingerprint comparison
+and flags it:</p>
+<pre><code>$ skills-manager doctor
+
+⚠ code-reviewer: canonical SKILL.md changed (fingerprint a7f3 → b2e1)
+   Variants may be stale:
+     SKILL.claude.md      (last ported 2026-05-22)
+     SKILL.antigravity.md (last ported 2026-05-22)
+   
+   To refresh: skills-manager port code-reviewer --to claude,antigravity</code></pre>
+<p>Stale variants still install (better than nothing) but show as drift
+in the dashboard.</p>
+<h2 id="things-the-compatibility-system-does-not-do">Things the
+compatibility system does NOT do</h2>
+<ul>
+<li>Does not execute skill content to check compatibility (pure static
+analysis)</li>
+<li>Does not call any LLM for detection unless the user explicitly
+invokes <code>skills-compat-check</code> through a configured provider
+or handoff fallback</li>
+<li>Does not block installation of declared-compatible skills (respects
+user's declaration even if patterns suggest otherwise)</li>
+<li>Does not auto-port without user invocation (porting requires their
+agent to run)</li>
+<li>Does not guarantee that a specific model will follow a skill well;
+it records coarse capability requirements only</li>
+<li>Does not pretend to handle every edge case — it's heuristic,
+surfaces uncertainty, and respects user override</li>
+</ul>
+<h2 id="reference-card">Reference card</h2>
+<p>Add this to your skill's frontmatter:</p>
+<div class="sourceCode" id="cb13"><pre
+class="sourceCode yaml"><code class="sourceCode yaml"><span id="cb13-1"><a href="#cb13-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Works anywhere — the default</span></span>
+<span id="cb13-2"><a href="#cb13-2" aria-hidden="true" tabindex="-1"></a><span class="co"># (no declaration)</span></span>
+<span id="cb13-3"><a href="#cb13-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb13-4"><a href="#cb13-4" aria-hidden="true" tabindex="-1"></a><span class="co"># Works in specific harnesses</span></span>
+<span id="cb13-5"><a href="#cb13-5" aria-hidden="true" tabindex="-1"></a><span class="fu">compatible</span><span class="kw">:</span><span class="at"> </span><span class="kw">[</span><span class="at">claude</span><span class="kw">,</span><span class="at"> codex</span><span class="kw">,</span><span class="at"> grok</span><span class="kw">]</span></span>
+<span id="cb13-6"><a href="#cb13-6" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb13-7"><a href="#cb13-7" aria-hidden="true" tabindex="-1"></a><span class="co"># Built for one harness on purpose</span></span>
+<span id="cb13-8"><a href="#cb13-8" aria-hidden="true" tabindex="-1"></a><span class="fu">exclusive</span><span class="kw">:</span><span class="at"> claude</span></span>
+<span id="cb13-9"><a href="#cb13-9" aria-hidden="true" tabindex="-1"></a><span class="fu">reason</span><span class="kw">:</span><span class="at"> </span><span class="st">&quot;Uses Plan Mode + AskUserQuestion&quot;</span></span>
+<span id="cb13-10"><a href="#cb13-10" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb13-11"><a href="#cb13-11" aria-hidden="true" tabindex="-1"></a><span class="co"># Runtime assumptions</span></span>
+<span id="cb13-12"><a href="#cb13-12" aria-hidden="true" tabindex="-1"></a><span class="fu">requirements</span><span class="kw">:</span></span>
+<span id="cb13-13"><a href="#cb13-13" aria-hidden="true" tabindex="-1"></a><span class="at">  </span><span class="fu">model</span><span class="kw">:</span></span>
+<span id="cb13-14"><a href="#cb13-14" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="fu">tool_use</span><span class="kw">:</span><span class="at"> required</span></span>
+<span id="cb13-15"><a href="#cb13-15" aria-hidden="true" tabindex="-1"></a><span class="at">  </span><span class="fu">tools</span><span class="kw">:</span></span>
+<span id="cb13-16"><a href="#cb13-16" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="kw">-</span><span class="at"> </span><span class="fu">name</span><span class="kw">:</span><span class="at"> gh</span></span>
+<span id="cb13-17"><a href="#cb13-17" aria-hidden="true" tabindex="-1"></a><span class="at">      </span><span class="fu">required</span><span class="kw">:</span><span class="at"> </span><span class="ch">true</span></span>
+<span id="cb13-18"><a href="#cb13-18" aria-hidden="true" tabindex="-1"></a><span class="at">  </span><span class="fu">mcp_servers</span><span class="kw">:</span></span>
+<span id="cb13-19"><a href="#cb13-19" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="kw">-</span><span class="at"> </span><span class="fu">name</span><span class="kw">:</span><span class="at"> linear</span></span>
+<span id="cb13-20"><a href="#cb13-20" aria-hidden="true" tabindex="-1"></a><span class="at">      </span><span class="fu">required</span><span class="kw">:</span><span class="at"> </span><span class="ch">true</span></span></code></pre></div>
+<p>That's the core user-facing surface. The manager can infer parts of
+it, but users and skill authors can override it when the heuristics are
+wrong.</p>
+    <footer class="doc-footer">
+      <span>skills-manager · design doc</span>
+      <span><a href="COMPATIBILITY.md">view source (.md)</a></span>
+    </footer>
+  </main>
+</div>
+</body>
+</html>

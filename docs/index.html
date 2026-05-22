@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Design docs index — skills-manager</title>
+<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/styles/atom-one-dark.min.css">
+<script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/highlight.min.js"></script>
+<script>document.addEventListener('DOMContentLoaded', () => {
+  // Pandoc emits class="sourceCode <lang>"; normalize to language-<lang> for hljs.
+  document.querySelectorAll('pre code.sourceCode').forEach(el => {
+    const lang = [...el.classList].find(c => c !== 'sourceCode');
+    if (lang) {
+      el.classList.add('language-' + lang);
+      hljs.highlightElement(el);
+    }
+  });
+});</script>
+</head>
+<body>
+<div class="app">
+  <nav class="sidebar">
+    <a href="index.html" class="brand">
+      <span class="brand-logo">s</span>
+      <span class="brand-name">skills-manager</span>
+    </a>
+    <div class="nav-section">Foundation</div>
+    <a href="VISION.html" class="nav-item">Vision</a>
+    <a href="ARCHITECTURE.html" class="nav-item">Architecture</a>
+    <a href="ROADMAP.html" class="nav-item">Roadmap</a>
+    <a href="DATA_MODEL.html" class="nav-item">Data model</a>
+    <div class="nav-section">Surface</div>
+    <a href="CLI_REFERENCE.html" class="nav-item">CLI reference</a>
+    <a href="TAXONOMY.html" class="nav-item">Taxonomy</a>
+    <div class="nav-section">Subsystems</div>
+    <a href="COMPATIBILITY.html" class="nav-item">Compatibility</a>
+    <a href="INGEST_FLOW.html" class="nav-item">Ingest flow</a>
+    <a href="UPDATE_FLOW.html" class="nav-item">Update flow</a>
+    <a href="BUNDLED_SKILLS.html" class="nav-item">Bundled skills</a>
+    <a href="SCHEDULING.html" class="nav-item">Scheduling</a>
+    <a href="CROSS_MACHINE.html" class="nav-item">Cross-machine sync</a>
+    <div class="nav-section">Out-of-band</div>
+    <a href="../mockup.html" class="nav-item">UI mockup ↗</a>
+    <a href="../README.html" class="nav-item">README</a>
+  </nav>
+  <main class="content">
+    <div class="doc-meta">
+      <span class="crumb"><a href="index.html">docs</a></span>
+      <span class="sep">/</span>
+      <span class="crumb">INDEX.md</span>
+    </div>
+<h1 id="design-docs-index">Design docs index</h1>
+<p>Read in this order. The first four (★) are the foundation; the rest
+cover specific subsystems.</p>
+<h2 id="source-of-truth">Source of truth</h2>
+<p>The Markdown files are canonical. The adjacent <code>.html</code>
+files are generated for human browsing by running:</p>
+<div class="sourceCode" id="cb1"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="ex">./docs/_build.sh</span></span></code></pre></div>
+<p>Do not hand-edit the generated HTML except to change the shared
+template or styles.</p>
+<h2 id="foundation">Foundation</h2>
+<ul>
+<li>★ <a href="VISION.html">VISION.md</a> — problem, solution, who it's
+for, differentiation, non-goals</li>
+<li>★ <a href="ARCHITECTURE.html">ARCHITECTURE.md</a> — CLI-first system
+shape, components, principles</li>
+<li>★ <a href="ROADMAP.html">ROADMAP.md</a> — v0.1 / v0.2 / v0.3 / v1.0
+staging</li>
+<li>★ <a href="DATA_MODEL.html">DATA_MODEL.md</a> — file formats, schemas,
+on-disk layout</li>
+</ul>
+<h2 id="surface">Surface</h2>
+<ul>
+<li><a href="CLI_REFERENCE.html">CLI_REFERENCE.md</a> — every command,
+flag, exit code</li>
+<li><a href="TAXONOMY.html">TAXONOMY.md</a> — 10 categories + flat tags +
+matching algorithm</li>
+</ul>
+<h2 id="subsystems">Subsystems</h2>
+<ul>
+<li><a href="COMPATIBILITY.html">COMPATIBILITY.md</a> — compatibility +
+execution requirements, variants</li>
+<li><a href="INGEST_FLOW.html">INGEST_FLOW.md</a> — adding skills (5
+sources, scan-first ingest, optional watcher)</li>
+<li><a href="UPDATE_FLOW.html">UPDATE_FLOW.md</a> — origin tracking,
+polling, diff + AI summary</li>
+<li><a href="BUNDLED_SKILLS.html">BUNDLED_SKILLS.md</a> — manager skills
+(port, ingest, summary, etc.)</li>
+<li><a href="SCHEDULING.html">SCHEDULING.md</a> — local OS scheduling;
+cloud scheduling deferred</li>
+<li><a href="CROSS_MACHINE.html">CROSS_MACHINE.md</a> — git-based library
+sync, drift detection</li>
+</ul>
+<h2 id="out-of-band">Out-of-band</h2>
+<ul>
+<li><a href="../mockup.html">/mockup.html</a> — clickable UI mockup
+(open in browser)</li>
+</ul>
+    <footer class="doc-footer">
+      <span>skills-manager · design doc</span>
+      <span><a href="INDEX.md">view source (.md)</a></span>
+    </footer>
+  </main>
+</div>
+</body>
+</html>

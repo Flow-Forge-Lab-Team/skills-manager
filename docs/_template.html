@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>$pagetitle$ — skills-manager</title>
+<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/styles/atom-one-dark.min.css">
+<script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/highlight.min.js"></script>
+<script>document.addEventListener('DOMContentLoaded', () => {
+  // Pandoc emits class="sourceCode <lang>"; normalize to language-<lang> for hljs.
+  document.querySelectorAll('pre code.sourceCode').forEach(el => {
+    const lang = [...el.classList].find(c => c !== 'sourceCode');
+    if (lang) {
+      el.classList.add('language-' + lang);
+      hljs.highlightElement(el);
+    }
+  });
+});</script>
+</head>
+<body>
+<div class="app">
+  <nav class="sidebar">
+    <a href="index.html" class="brand">
+      <span class="brand-logo">s</span>
+      <span class="brand-name">skills-manager</span>
+    </a>
+    <div class="nav-section">Foundation</div>
+    <a href="VISION.html" class="nav-item$if(active-vision)$ active$endif$">Vision</a>
+    <a href="ARCHITECTURE.html" class="nav-item$if(active-architecture)$ active$endif$">Architecture</a>
+    <a href="ROADMAP.html" class="nav-item$if(active-roadmap)$ active$endif$">Roadmap</a>
+    <a href="DATA_MODEL.html" class="nav-item$if(active-data_model)$ active$endif$">Data model</a>
+    <div class="nav-section">Surface</div>
+    <a href="CLI_REFERENCE.html" class="nav-item$if(active-cli_reference)$ active$endif$">CLI reference</a>
+    <a href="TAXONOMY.html" class="nav-item$if(active-taxonomy)$ active$endif$">Taxonomy</a>
+    <div class="nav-section">Subsystems</div>
+    <a href="COMPATIBILITY.html" class="nav-item$if(active-compatibility)$ active$endif$">Compatibility</a>
+    <a href="INGEST_FLOW.html" class="nav-item$if(active-ingest_flow)$ active$endif$">Ingest flow</a>
+    <a href="UPDATE_FLOW.html" class="nav-item$if(active-update_flow)$ active$endif$">Update flow</a>
+    <a href="BUNDLED_SKILLS.html" class="nav-item$if(active-bundled_skills)$ active$endif$">Bundled skills</a>
+    <a href="SCHEDULING.html" class="nav-item$if(active-scheduling)$ active$endif$">Scheduling</a>
+    <a href="CROSS_MACHINE.html" class="nav-item$if(active-cross_machine)$ active$endif$">Cross-machine sync</a>
+    <div class="nav-section">Out-of-band</div>
+    <a href="../mockup.html" class="nav-item">UI mockup ↗</a>
+    <a href="../README.html" class="nav-item">README</a>
+  </nav>
+  <main class="content">
+    <div class="doc-meta">
+      <span class="crumb"><a href="index.html">docs</a></span>
+      <span class="sep">/</span>
+      <span class="crumb">$source-name$</span>
+    </div>
+$body$
+    <footer class="doc-footer">
+      <span>skills-manager · design doc</span>
+      <span><a href="$source-name$">view source (.md)</a></span>
+    </footer>
+  </main>
+</div>
+</body>
+</html>

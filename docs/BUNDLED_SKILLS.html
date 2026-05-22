@@ -1,0 +1,404 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bundled skills — skills-manager</title>
+<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/styles/atom-one-dark.min.css">
+<script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/highlight.min.js"></script>
+<script>document.addEventListener('DOMContentLoaded', () => {
+  // Pandoc emits class="sourceCode <lang>"; normalize to language-<lang> for hljs.
+  document.querySelectorAll('pre code.sourceCode').forEach(el => {
+    const lang = [...el.classList].find(c => c !== 'sourceCode');
+    if (lang) {
+      el.classList.add('language-' + lang);
+      hljs.highlightElement(el);
+    }
+  });
+});</script>
+</head>
+<body>
+<div class="app">
+  <nav class="sidebar">
+    <a href="index.html" class="brand">
+      <span class="brand-logo">s</span>
+      <span class="brand-name">skills-manager</span>
+    </a>
+    <div class="nav-section">Foundation</div>
+    <a href="VISION.html" class="nav-item">Vision</a>
+    <a href="ARCHITECTURE.html" class="nav-item">Architecture</a>
+    <a href="ROADMAP.html" class="nav-item">Roadmap</a>
+    <a href="DATA_MODEL.html" class="nav-item">Data model</a>
+    <div class="nav-section">Surface</div>
+    <a href="CLI_REFERENCE.html" class="nav-item">CLI reference</a>
+    <a href="TAXONOMY.html" class="nav-item">Taxonomy</a>
+    <div class="nav-section">Subsystems</div>
+    <a href="COMPATIBILITY.html" class="nav-item">Compatibility</a>
+    <a href="INGEST_FLOW.html" class="nav-item">Ingest flow</a>
+    <a href="UPDATE_FLOW.html" class="nav-item">Update flow</a>
+    <a href="BUNDLED_SKILLS.html" class="nav-item active">Bundled skills</a>
+    <a href="SCHEDULING.html" class="nav-item">Scheduling</a>
+    <a href="CROSS_MACHINE.html" class="nav-item">Cross-machine sync</a>
+    <div class="nav-section">Out-of-band</div>
+    <a href="../mockup.html" class="nav-item">UI mockup ↗</a>
+    <a href="../README.html" class="nav-item">README</a>
+  </nav>
+  <main class="content">
+    <div class="doc-meta">
+      <span class="crumb"><a href="index.html">docs</a></span>
+      <span class="sep">/</span>
+      <span class="crumb">BUNDLED_SKILLS.md</span>
+    </div>
+<h1 id="bundled-skills">Bundled Skills</h1>
+<p>The manager ships skills that handle its own LLM-heavy operations.
+These skills can run through an explicitly configured local LLM
+provider, or through a manual agent handoff fallback.</p>
+<h2 id="why-bundled-skills-exist">Why bundled skills exist</h2>
+<p>Two architectural pressures point to this design:</p>
+<ol type="1">
+<li><strong>The manager should not depend on one model
+provider.</strong> Users choose the provider and credentials; the
+manager validates output.</li>
+<li><strong>Clipboard handoff should not be the daily path.</strong> It
+remains useful as a fallback, but configured local providers are the
+lower-friction route.</li>
+</ol>
+<p>The pattern: the manager generates a prompt + context, runs the
+bundled skill through a configured provider or writes a handoff file,
+then validates and stores the result.</p>
+<p>The bundled skills ARE the manager's intelligence layer. They live in
+the manager's git repo as plain markdown files. Community can improve
+them via PR without rebuilding code.</p>
+<h2 id="the-five-bundled-skills-v02">The five bundled skills (v0.2)</h2>
+<table>
+<thead>
+<tr>
+<th>Skill</th>
+<th>When invoked</th>
+<th>What it produces</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>skills-ingest</code></td>
+<td>New skill enters the library</td>
+<td>Categories, tags, compatibility, requirements</td>
+</tr>
+<tr>
+<td><code>skills-compat-check</code></td>
+<td>User asks to verify compatibility</td>
+<td>Harness + requirement assessment</td>
+</tr>
+<tr>
+<td><code>skills-diff-summary</code></td>
+<td>Update available, user wants AI summary</td>
+<td>Plain-English diff explanation + hostile-instruction notes</td>
+</tr>
+<tr>
+<td><code>skills-port</code> (v1.0)</td>
+<td>User asks to port a skill</td>
+<td>Cross-harness rewritten variant</td>
+</tr>
+<tr>
+<td><code>skills-author</code> (v1.0)</td>
+<td>User wants to write a new skill</td>
+<td>Step-by-step authoring guide</td>
+</tr>
+</tbody>
+</table>
+<p>Each has its own SKILL.md in
+<code>~/.skills-manager/bundled-skills/&lt;name&gt;/</code>.</p>
+<h2 id="how-theyre-installed">How they're installed</h2>
+<p>Bundled skills are manager internals first. They are embedded in the
+manager binary and invoked directly by the CLI when a local provider is
+configured.</p>
+<p>They are installed into user harnesses only if the user enables agent
+handoff support:</p>
+<pre><code>~/.skills-manager/bundled-skills/skills-ingest/
+                                    └── SKILL.md
+
+→ symlink/copy to →
+
+~/.claude/skills/skills-ingest/SKILL.md
+~/.codex/skills/skills-ingest/SKILL.md
+~/.grok/skills/skills-ingest/SKILL.md
+(etc., for whichever harnesses are active)</code></pre>
+<p>When installed into a harness, they must be namespaced and hidden
+from normal activation as much as the harness allows:</p>
+<ul>
+<li>name prefix: <code>skills-manager-*</code></li>
+<li>category/tag: <code>manager-internal</code></li>
+<li>descriptions that activate only for explicit skills-manager
+maintenance tasks</li>
+<li>filtered from normal <code>skills-manager list</code> output</li>
+</ul>
+<p>The goal is to avoid polluting the user's ordinary agent context or
+accidentally triggering manager helper skills during normal coding.</p>
+<p>The bundled skills are tagged with <code>bundled-skill</code> and
+<code>manager-internal</code> so they don't pollute the user's library
+views.</p>
+<h2 id="invocation-patterns">Invocation patterns</h2>
+<h3 id="pattern-1-user-initiated-via-slash-command">Pattern 1:
+User-initiated (via slash command)</h3>
+<p>The user types <code>/skills-port qa --to codex,grok</code> in their
+agent. The skill activates, reads its instructions, asks the user (or
+finds in the agent's context) which skill to port and to which
+harnesses, produces the output.</p>
+<h3 id="pattern-2-manager-initiated-via-configured-provider">Pattern 2:
+Manager-initiated (via configured provider)</h3>
+<p>The CLI generates a prompt + context and calls the configured
+provider:</p>
+<pre><code>$ skills-manager summarize pdf --auto
+
+✓ Prepared skills-diff-summary invocation.
+✓ Calling configured provider.
+✓ Output validated against schema.
+✓ Saved summary to ~/.skills-manager/summaries/pdf-v1.4.2-to-v1.5.0.md</code></pre>
+<h3 id="pattern-3-manager-initiated-handoff-fallback">Pattern 3:
+Manager-initiated (handoff fallback)</h3>
+<p>If the user has no provider configured, the CLI writes a prompt
+file:</p>
+<pre><code>$ skills-manager summarize pdf --handoff
+
+✓ Wrote prompt to /tmp/skills-manager/pdf-summary-prompt.md
+  Run it in your agent, then import with:
+  skills-manager summarize pdf --from &lt;agent-output.md&gt;</code></pre>
+<h2 id="bundled-skill-structure">Bundled skill structure</h2>
+<p>Each bundled skill follows the standard SKILL.md format with a few
+conventions:</p>
+<div class="sourceCode" id="cb4"><pre
+class="sourceCode yaml"><code class="sourceCode yaml"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a><span class="pp">---</span></span>
+<span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a><span class="fu">name</span><span class="kw">:</span><span class="at"> skills-ingest</span></span>
+<span id="cb4-3"><a href="#cb4-3" aria-hidden="true" tabindex="-1"></a><span class="fu">description</span><span class="kw">:</span><span class="at"> Use when a new skill needs to be categorized and tagged for the</span></span>
+<span id="cb4-4"><a href="#cb4-4" aria-hidden="true" tabindex="-1"></a><span class="at">  skills-manager library. Takes a SKILL.md path and produces structured JSON</span></span>
+<span id="cb4-5"><a href="#cb4-5" aria-hidden="true" tabindex="-1"></a><span class="at">  with category, tags, compatibility, and requirement suggestions.</span></span>
+<span id="cb4-6"><a href="#cb4-6" aria-hidden="true" tabindex="-1"></a><span class="fu">compatible</span><span class="kw">:</span><span class="at"> </span><span class="kw">[</span><span class="at">claude</span><span class="kw">,</span><span class="at"> codex</span><span class="kw">,</span><span class="at"> grok</span><span class="kw">,</span><span class="at"> antigravity</span><span class="kw">,</span><span class="at"> gemini</span><span class="kw">,</span><span class="at"> hermes</span><span class="kw">,</span><span class="at"> openclaw</span><span class="kw">]</span></span>
+<span id="cb4-7"><a href="#cb4-7" aria-hidden="true" tabindex="-1"></a><span class="fu">output_format</span><span class="kw">:</span><span class="at"> json-strict</span><span class="co">        # manager validates against schema</span></span>
+<span id="cb4-8"><a href="#cb4-8" aria-hidden="true" tabindex="-1"></a><span class="fu">output_schema</span><span class="kw">:</span><span class="at"> schemas/ingest-output.json</span></span>
+<span id="cb4-9"><a href="#cb4-9" aria-hidden="true" tabindex="-1"></a><span class="pp">---</span></span>
+<span id="cb4-10"><a href="#cb4-10" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb4-11"><a href="#cb4-11" aria-hidden="true" tabindex="-1"></a><span class="co"># skills-ingest</span></span>
+<span id="cb4-12"><a href="#cb4-12" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb4-13"><a href="#cb4-13" aria-hidden="true" tabindex="-1"></a><span class="at">You are categorizing a developer skill for the skills-manager library.</span></span>
+<span id="cb4-14"><a href="#cb4-14" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb4-15"><a href="#cb4-15" aria-hidden="true" tabindex="-1"></a><span class="co">## Inputs</span></span>
+<span id="cb4-16"><a href="#cb4-16" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb4-17"><a href="#cb4-17" aria-hidden="true" tabindex="-1"></a><span class="at">The user (or skills-manager) will provide a SKILL.md file. You analyze it</span></span>
+<span id="cb4-18"><a href="#cb4-18" aria-hidden="true" tabindex="-1"></a><span class="at">and produce a structured categorization.</span></span>
+<span id="cb4-19"><a href="#cb4-19" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb4-20"><a href="#cb4-20" aria-hidden="true" tabindex="-1"></a><span class="co">## Your output</span></span>
+<span id="cb4-21"><a href="#cb4-21" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb4-22"><a href="#cb4-22" aria-hidden="true" tabindex="-1"></a><span class="fu">Return ONLY a JSON object matching this schema</span><span class="kw">:</span></span>
+<span id="cb4-23"><a href="#cb4-23" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb4-24"><a href="#cb4-24" aria-hidden="true" tabindex="-1"></a><span class="kw">{</span></span>
+<span id="cb4-25"><a href="#cb4-25" aria-hidden="true" tabindex="-1"></a><span class="at">  </span><span class="fu">&quot;categories&quot;</span><span class="kw">:</span><span class="at"> </span><span class="kw">[</span><span class="st">&quot;Engineering&quot;</span><span class="kw">,</span><span class="at"> </span><span class="st">&quot;Quality&quot;</span><span class="kw">],</span><span class="at">    // 1-3 from the fixed list</span></span>
+<span id="cb4-26"><a href="#cb4-26" aria-hidden="true" tabindex="-1"></a><span class="at">  </span><span class="fu">&quot;tags&quot;</span><span class="kw">:</span><span class="at"> </span><span class="kw">[</span><span class="st">&quot;python&quot;</span><span class="kw">,</span><span class="at"> </span><span class="st">&quot;testing&quot;</span><span class="kw">],</span><span class="at">               // open list</span><span class="kw">,</span><span class="at"> see guidelines</span></span>
+<span id="cb4-27"><a href="#cb4-27" aria-hidden="true" tabindex="-1"></a><span class="at">  </span><span class="fu">&quot;compatibility&quot;</span><span class="kw">:</span><span class="at"> </span><span class="kw">{</span></span>
+<span id="cb4-28"><a href="#cb4-28" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="fu">&quot;mode&quot;</span><span class="kw">:</span><span class="at"> </span><span class="st">&quot;portable&quot;</span><span class="at"> </span><span class="er">|</span><span class="at"> </span><span class="er">&quot;compatible&quot;</span><span class="at"> </span><span class="er">|</span><span class="at"> </span><span class="er">&quot;exclusive&quot;</span><span class="kw">,</span></span>
+<span id="cb4-29"><a href="#cb4-29" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="fu">&quot;harnesses&quot;</span><span class="kw">:</span><span class="at"> </span><span class="kw">[</span><span class="st">&quot;claude&quot;</span><span class="kw">,</span><span class="at"> </span><span class="st">&quot;codex&quot;</span><span class="kw">],</span><span class="at">          // only for compatible</span></span>
+<span id="cb4-30"><a href="#cb4-30" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="fu">&quot;harness&quot;</span><span class="kw">:</span><span class="at"> </span><span class="st">&quot;claude&quot;</span><span class="kw">,</span><span class="at">                       // only for exclusive</span></span>
+<span id="cb4-31"><a href="#cb4-31" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="fu">&quot;reason&quot;</span><span class="kw">:</span><span class="at"> </span><span class="st">&quot;...&quot;</span><span class="at">                            </span><span class="er">//</span><span class="at"> </span><span class="er">optional</span><span class="at"> </span><span class="er">for</span><span class="at"> </span><span class="er">exclusive</span></span>
+<span id="cb4-32"><a href="#cb4-32" aria-hidden="true" tabindex="-1"></a><span class="at">  </span><span class="kw">},</span></span>
+<span id="cb4-33"><a href="#cb4-33" aria-hidden="true" tabindex="-1"></a><span class="at">  </span><span class="fu">&quot;requirements&quot;</span><span class="kw">:</span><span class="at"> </span><span class="kw">{</span></span>
+<span id="cb4-34"><a href="#cb4-34" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="fu">&quot;model&quot;</span><span class="kw">:</span><span class="at"> </span><span class="kw">{</span><span class="fu">&quot;tool_use&quot;</span><span class="kw">:</span><span class="at"> </span><span class="st">&quot;required&quot;</span><span class="at"> </span><span class="er">|</span><span class="at"> </span><span class="er">&quot;optional&quot;</span><span class="at"> </span><span class="er">|</span><span class="at"> </span><span class="er">&quot;none&quot;</span><span class="kw">},</span></span>
+<span id="cb4-35"><a href="#cb4-35" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="fu">&quot;tools&quot;</span><span class="kw">:</span><span class="at"> </span><span class="kw">[{</span><span class="fu">&quot;name&quot;</span><span class="kw">:</span><span class="at"> </span><span class="st">&quot;gh&quot;</span><span class="kw">,</span><span class="at"> </span><span class="fu">&quot;required&quot;</span><span class="kw">:</span><span class="at"> </span><span class="ch">true</span><span class="kw">}],</span></span>
+<span id="cb4-36"><a href="#cb4-36" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="fu">&quot;mcp_servers&quot;</span><span class="kw">:</span><span class="at"> </span><span class="kw">[{</span><span class="fu">&quot;name&quot;</span><span class="kw">:</span><span class="at"> </span><span class="st">&quot;linear&quot;</span><span class="kw">,</span><span class="at"> </span><span class="fu">&quot;required&quot;</span><span class="kw">:</span><span class="at"> </span><span class="ch">true</span><span class="kw">}],</span></span>
+<span id="cb4-37"><a href="#cb4-37" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="fu">&quot;credentials&quot;</span><span class="kw">:</span><span class="at"> </span><span class="kw">[{</span><span class="fu">&quot;name&quot;</span><span class="kw">:</span><span class="at"> </span><span class="st">&quot;github&quot;</span><span class="kw">,</span><span class="at"> </span><span class="fu">&quot;source&quot;</span><span class="kw">:</span><span class="at"> </span><span class="st">&quot;gh&quot;</span><span class="kw">,</span><span class="at"> </span><span class="fu">&quot;required&quot;</span><span class="kw">:</span><span class="at"> </span><span class="ch">true</span><span class="kw">}]</span></span>
+<span id="cb4-38"><a href="#cb4-38" aria-hidden="true" tabindex="-1"></a><span class="at">  </span><span class="kw">},</span></span>
+<span id="cb4-39"><a href="#cb4-39" aria-hidden="true" tabindex="-1"></a><span class="at">  </span><span class="fu">&quot;confidence&quot;</span><span class="kw">:</span><span class="at"> </span><span class="kw">{</span></span>
+<span id="cb4-40"><a href="#cb4-40" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="fu">&quot;categories&quot;</span><span class="kw">:</span><span class="at"> </span><span class="st">&quot;high&quot;</span><span class="at"> </span><span class="er">|</span><span class="at"> </span><span class="er">&quot;medium&quot;</span><span class="at"> </span><span class="er">|</span><span class="at"> </span><span class="er">&quot;low&quot;</span><span class="kw">,</span></span>
+<span id="cb4-41"><a href="#cb4-41" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="fu">&quot;tags&quot;</span><span class="kw">:</span><span class="at"> </span><span class="st">&quot;high&quot;</span><span class="at"> </span><span class="er">|</span><span class="at"> </span><span class="er">&quot;medium&quot;</span><span class="at"> </span><span class="er">|</span><span class="at"> </span><span class="er">&quot;low&quot;</span><span class="kw">,</span></span>
+<span id="cb4-42"><a href="#cb4-42" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="fu">&quot;compatibility&quot;</span><span class="kw">:</span><span class="at"> </span><span class="st">&quot;high&quot;</span><span class="at"> </span><span class="er">|</span><span class="at"> </span><span class="er">&quot;medium&quot;</span><span class="at"> </span><span class="er">|</span><span class="at"> </span><span class="er">&quot;low&quot;</span><span class="kw">,</span></span>
+<span id="cb4-43"><a href="#cb4-43" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="fu">&quot;requirements&quot;</span><span class="kw">:</span><span class="at"> </span><span class="st">&quot;high&quot;</span><span class="at"> </span><span class="er">|</span><span class="at"> </span><span class="er">&quot;medium&quot;</span><span class="at"> </span><span class="er">|</span><span class="at"> </span><span class="er">&quot;low&quot;</span></span>
+<span id="cb4-44"><a href="#cb4-44" aria-hidden="true" tabindex="-1"></a><span class="at">  </span><span class="kw">},</span></span>
+<span id="cb4-45"><a href="#cb4-45" aria-hidden="true" tabindex="-1"></a><span class="at">  </span><span class="fu">&quot;notes&quot;</span><span class="kw">:</span><span class="at"> </span><span class="kw">[</span><span class="st">&quot;any observations the user should see&quot;</span><span class="kw">]</span></span>
+<span id="cb4-46"><a href="#cb4-46" aria-hidden="true" tabindex="-1"></a><span class="kw">}</span></span>
+<span id="cb4-47"><a href="#cb4-47" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb4-48"><a href="#cb4-48" aria-hidden="true" tabindex="-1"></a><span class="co">## Categories — the fixed list</span></span>
+<span id="cb4-49"><a href="#cb4-49" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb4-50"><a href="#cb4-50" aria-hidden="true" tabindex="-1"></a><span class="kw">[</span><span class="at">lists the 10 categories from TAXONOMY.md with descriptions</span><span class="kw">]</span></span>
+<span id="cb4-51"><a href="#cb4-51" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb4-52"><a href="#cb4-52" aria-hidden="true" tabindex="-1"></a><span class="co">## Tags — guidelines</span></span>
+<span id="cb4-53"><a href="#cb4-53" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb4-54"><a href="#cb4-54" aria-hidden="true" tabindex="-1"></a><span class="kw">[</span><span class="at">lists tag conventions from TAXONOMY.md</span><span class="kw">]</span></span>
+<span id="cb4-55"><a href="#cb4-55" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb4-56"><a href="#cb4-56" aria-hidden="true" tabindex="-1"></a><span class="co">## Compatibility and requirements — pattern matching</span></span>
+<span id="cb4-57"><a href="#cb4-57" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb4-58"><a href="#cb4-58" aria-hidden="true" tabindex="-1"></a><span class="kw">[</span><span class="at">lists patterns from COMPATIBILITY.md</span><span class="kw">]</span></span>
+<span id="cb4-59"><a href="#cb4-59" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb4-60"><a href="#cb4-60" aria-hidden="true" tabindex="-1"></a><span class="co">## Output requirements</span></span>
+<span id="cb4-61"><a href="#cb4-61" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb4-62"><a href="#cb4-62" aria-hidden="true" tabindex="-1"></a><span class="kw">-</span><span class="at"> JSON only, no commentary</span></span>
+<span id="cb4-63"><a href="#cb4-63" aria-hidden="true" tabindex="-1"></a><span class="kw">-</span><span class="at"> Valid against the schema (the manager will reject and retry if invalid)</span></span>
+<span id="cb4-64"><a href="#cb4-64" aria-hidden="true" tabindex="-1"></a><span class="kw">-</span><span class="at"> Confidence honest — `low` is fine; better than guessing high</span></span></code></pre></div>
+<h2 id="each-bundled-skill-in-detail">Each bundled skill in detail</h2>
+<h3 id="skills-ingest"><code>skills-ingest</code></h3>
+<p>Input: a SKILL.md path Output: categorization JSON (above schema)
+When invoked: any new skill enters the library; updates that change
+description significantly</p>
+<h3 id="skills-compat-check"><code>skills-compat-check</code></h3>
+<p>Input: a SKILL.md path + list of target harnesses Output: per-harness
+compatibility and execution-requirement assessment with confidence +
+reasons</p>
+<div class="sourceCode" id="cb5"><pre
+class="sourceCode json"><code class="sourceCode json"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span></span>
+<span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;skill&quot;</span><span class="fu">:</span> <span class="st">&quot;qa&quot;</span><span class="fu">,</span></span>
+<span id="cb5-3"><a href="#cb5-3" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;assessments&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
+<span id="cb5-4"><a href="#cb5-4" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;claude&quot;</span><span class="fu">:</span>      <span class="fu">{</span><span class="dt">&quot;compatible&quot;</span><span class="fu">:</span> <span class="kw">true</span><span class="fu">,</span>  <span class="dt">&quot;confidence&quot;</span><span class="fu">:</span> <span class="st">&quot;high&quot;</span><span class="fu">,</span>   <span class="dt">&quot;notes&quot;</span><span class="fu">:</span> <span class="ot">[</span><span class="st">&quot;native — uses Plan Mode&quot;</span><span class="ot">]</span><span class="fu">},</span></span>
+<span id="cb5-5"><a href="#cb5-5" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;codex&quot;</span><span class="fu">:</span>       <span class="fu">{</span><span class="dt">&quot;compatible&quot;</span><span class="fu">:</span> <span class="kw">false</span><span class="fu">,</span> <span class="dt">&quot;confidence&quot;</span><span class="fu">:</span> <span class="st">&quot;high&quot;</span><span class="fu">,</span>   <span class="dt">&quot;notes&quot;</span><span class="fu">:</span> <span class="ot">[</span><span class="st">&quot;AskUserQuestion is Claude-only&quot;</span><span class="ot">]</span><span class="fu">},</span></span>
+<span id="cb5-6"><a href="#cb5-6" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;grok&quot;</span><span class="fu">:</span>        <span class="fu">{</span><span class="dt">&quot;compatible&quot;</span><span class="fu">:</span> <span class="kw">false</span><span class="fu">,</span> <span class="dt">&quot;confidence&quot;</span><span class="fu">:</span> <span class="st">&quot;medium&quot;</span><span class="fu">,</span> <span class="dt">&quot;notes&quot;</span><span class="fu">:</span> <span class="ot">[</span><span class="st">&quot;AskUserQuestion + slash-command format&quot;</span><span class="ot">]</span><span class="fu">},</span></span>
+<span id="cb5-7"><a href="#cb5-7" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;hermes&quot;</span><span class="fu">:</span>      <span class="fu">{</span><span class="dt">&quot;compatible&quot;</span><span class="fu">:</span> <span class="kw">false</span><span class="fu">,</span> <span class="dt">&quot;confidence&quot;</span><span class="fu">:</span> <span class="st">&quot;high&quot;</span><span class="fu">,</span>   <span class="dt">&quot;notes&quot;</span><span class="fu">:</span> <span class="ot">[</span><span class="st">&quot;multiple Claude-only tools&quot;</span><span class="ot">]</span><span class="fu">}</span></span>
+<span id="cb5-8"><a href="#cb5-8" aria-hidden="true" tabindex="-1"></a>  <span class="fu">},</span></span>
+<span id="cb5-9"><a href="#cb5-9" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;recommendation&quot;</span><span class="fu">:</span> <span class="st">&quot;exclusive: claude&quot;</span><span class="fu">,</span></span>
+<span id="cb5-10"><a href="#cb5-10" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;requirements&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
+<span id="cb5-11"><a href="#cb5-11" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;tools&quot;</span><span class="fu">:</span> <span class="ot">[</span><span class="fu">{</span><span class="dt">&quot;name&quot;</span><span class="fu">:</span> <span class="st">&quot;rg&quot;</span><span class="fu">,</span> <span class="dt">&quot;required&quot;</span><span class="fu">:</span> <span class="kw">true</span><span class="fu">}</span><span class="ot">]</span><span class="fu">,</span></span>
+<span id="cb5-12"><a href="#cb5-12" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;mcp_servers&quot;</span><span class="fu">:</span> <span class="ot">[]</span><span class="fu">,</span></span>
+<span id="cb5-13"><a href="#cb5-13" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;model&quot;</span><span class="fu">:</span> <span class="fu">{</span><span class="dt">&quot;tool_use&quot;</span><span class="fu">:</span> <span class="st">&quot;required&quot;</span><span class="fu">}</span></span>
+<span id="cb5-14"><a href="#cb5-14" aria-hidden="true" tabindex="-1"></a>  <span class="fu">}</span></span>
+<span id="cb5-15"><a href="#cb5-15" aria-hidden="true" tabindex="-1"></a><span class="fu">}</span></span></code></pre></div>
+<h3 id="skills-diff-summary"><code>skills-diff-summary</code></h3>
+<p>Input: two versions of a SKILL.md (before/after diff) Output:
+structured summary</p>
+<div class="sourceCode" id="cb6"><pre
+class="sourceCode markdown"><code class="sourceCode markdown"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a><span class="fu"># &lt;skill-name&gt; &lt;from&gt; → &lt;to&gt;</span></span>
+<span id="cb6-2"><a href="#cb6-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb6-3"><a href="#cb6-3" aria-hidden="true" tabindex="-1"></a><span class="fu">## What changed</span></span>
+<span id="cb6-4"><a href="#cb6-4" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>bullet</span>
+<span id="cb6-5"><a href="#cb6-5" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>bullet</span>
+<span id="cb6-6"><a href="#cb6-6" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb6-7"><a href="#cb6-7" aria-hidden="true" tabindex="-1"></a><span class="fu">## Impact assessment</span></span>
+<span id="cb6-8"><a href="#cb6-8" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>Breaking changes: none | yes (details)</span>
+<span id="cb6-9"><a href="#cb6-9" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>Description changed: yes | no</span>
+<span id="cb6-10"><a href="#cb6-10" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>Compatibility changed: yes | no</span>
+<span id="cb6-11"><a href="#cb6-11" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>Requirements changed: yes | no</span>
+<span id="cb6-12"><a href="#cb6-12" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>Safety flags: <span class="co">[</span><span class="ot">flag, ...</span><span class="co">]</span></span>
+<span id="cb6-13"><a href="#cb6-13" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>Hostile review instructions: none | yes (quote short excerpt)</span>
+<span id="cb6-14"><a href="#cb6-14" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>Body additions: ~N lines</span>
+<span id="cb6-15"><a href="#cb6-15" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>Body removals: ~N lines</span>
+<span id="cb6-16"><a href="#cb6-16" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb6-17"><a href="#cb6-17" aria-hidden="true" tabindex="-1"></a><span class="fu">## Recommended action</span></span>
+<span id="cb6-18"><a href="#cb6-18" aria-hidden="true" tabindex="-1"></a><span class="co">[</span><span class="ot">Accept | Review carefully | Reject</span><span class="co">]</span> - <span class="co">[</span><span class="ot">1-2 sentence reason</span><span class="co">]</span></span></code></pre></div>
+<p>The manager parses the section headers to populate badges. The prose
+is whatever the model produced. A summary cannot clear deterministic
+safety flags.</p>
+<h3 id="skills-port-v10"><code>skills-port</code> (v1.0)</h3>
+<p>Input: source skill + list of target harnesses Output: rewritten
+SKILL.md content for each target</p>
+<p>The detailed prompt is in <a href="INGEST_FLOW.md#porter">the porter
+design from earlier</a>. It includes:</p>
+<ul>
+<li>Translation patterns (<code>AskUserQuestion</code> → generic
+phrasing, etc.)</li>
+<li>What to preserve (name, description, intent)</li>
+<li>Capability matrix for context</li>
+<li>Output format requirements</li>
+</ul>
+<p>The output is validated by the manager — banned patterns, frontmatter
+integrity, description unchanged.</p>
+<h3 id="skills-author-v10"><code>skills-author</code> (v1.0)</h3>
+<p>Input: user's description of what they want a skill to do Output: a
+complete SKILL.md draft</p>
+<p>Guides the user through:</p>
+<ul>
+<li>Naming</li>
+<li>Description writing (the activation control)</li>
+<li>Body structure</li>
+<li>Compatibility declaration</li>
+<li>Testing approach</li>
+</ul>
+<p>This is the "help me write a new skill" UX, but living in the user's
+agent rather than as a manager subcommand.</p>
+<h2 id="where-bundled-skills-live-in-the-repo">Where bundled skills live
+in the repo</h2>
+<pre><code>skills-manager/                       # this repo
+├── docs/                             # design docs
+├── src/                              # CLI source
+└── bundled-skills/                   # the bundled skills (markdown)
+    ├── skills-ingest/
+    │   ├── SKILL.md
+    │   └── schemas/
+    │       └── ingest-output.json
+    ├── skills-compat-check/
+    │   └── SKILL.md
+    ├── skills-diff-summary/
+    │   └── SKILL.md
+    ├── skills-port/                  # v1.0
+    │   └── SKILL.md
+    └── skills-author/                # v1.0
+        └── SKILL.md</code></pre>
+<p>They ship inside the manager's binary (embedded). Updates to the
+manager update the bundled skills. If the user enabled handoff
+installation and has edited a bundled skill in a harness path, manager
+updates must treat that as a local override and avoid overwriting it
+without confirmation.</p>
+<h2 id="output-validation">Output validation</h2>
+<p>The CLI validates bundled-skill output before saving:</p>
+<pre><code>$ skills-manager port-apply qa --from /tmp/qa.ported.md
+
+Validating output from skills-port...
+  ✓ Frontmatter valid YAML
+  ✓ name unchanged (qa)
+  ✓ description unchanged (preserves activation)
+  ✓ No banned patterns detected for target harness (codex)
+  ⚠ compatibility-notes added: hermes (sequential fallback)
+  
+Save as new variant? [Y/n]</code></pre>
+<p>If validation fails (model renamed the skill, broke frontmatter,
+introduced banned patterns), the CLI rejects the input and shows the
+diff so the user can re-run.</p>
+<h2 id="community-improvement-model">Community improvement model</h2>
+<p>Each bundled skill is a markdown file. Improving them is
+straightforward:</p>
+<ol type="1">
+<li>Fork the manager repo</li>
+<li>Edit the SKILL.md in <code>bundled-skills/&lt;name&gt;/</code></li>
+<li>Open a PR</li>
+<li>Maintainers merge if it improves output on test cases</li>
+</ol>
+<p>A <code>bundled-skills/test-cases/</code> directory holds expected
+inputs/outputs for regression testing. PRs that change a bundled skill
+must keep tests passing or update them.</p>
+<h2 id="custom-bundled-skills-advanced">Custom bundled skills
+(advanced)</h2>
+<p>Users with strong preferences can override the shipped bundled
+skills:</p>
+<div class="sourceCode" id="cb9"><pre
+class="sourceCode yaml"><code class="sourceCode yaml"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a><span class="co"># ~/.skills-manager/config.yaml</span></span>
+<span id="cb9-2"><a href="#cb9-2" aria-hidden="true" tabindex="-1"></a><span class="fu">bundled_skills</span><span class="kw">:</span></span>
+<span id="cb9-3"><a href="#cb9-3" aria-hidden="true" tabindex="-1"></a><span class="at">  </span><span class="fu">override_path</span><span class="kw">:</span><span class="at"> ~/dev/my-custom-bundled-skills/</span></span></code></pre></div>
+<p>The manager will use the user's versions instead of the shipped ones.
+Useful for orgs that want custom categorization rules or stricter
+porting policies.</p>
+<h2 id="what-bundled-skills-dont-do">What bundled skills DON'T do</h2>
+<ul>
+<li>Don't execute arbitrary code</li>
+<li>Don't have access to network beyond the configured provider or
+user's agent</li>
+<li>Don't see user's other skill content (each invocation is
+scoped)</li>
+<li>Don't store state between invocations (stateless)</li>
+<li>Don't bypass the manager's validation layer</li>
+<li>Don't hide raw diffs, safety flags, or validation failures</li>
+</ul>
+<h2 id="future-bundled-skills-no-commitment">Future bundled skills (no
+commitment)</h2>
+<p>Ideas worth tracking:</p>
+<ul>
+<li><code>skills-cleanup</code> — analyze a project's installed skills
+and suggest removal of unused ones</li>
+<li><code>skills-merge</code> — combine two overlapping skills into
+one</li>
+<li><code>skills-fork</code> — create a personal variant of a community
+skill</li>
+<li><code>skills-quality</code> — score a skill for clarity,
+completeness, activation precision</li>
+</ul>
+    <footer class="doc-footer">
+      <span>skills-manager · design doc</span>
+      <span><a href="BUNDLED_SKILLS.md">view source (.md)</a></span>
+    </footer>
+  </main>
+</div>
+</body>
+</html>

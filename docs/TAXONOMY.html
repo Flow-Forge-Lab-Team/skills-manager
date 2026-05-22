@@ -1,0 +1,426 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Taxonomy — skills-manager</title>
+<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/styles/atom-one-dark.min.css">
+<script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/highlight.min.js"></script>
+<script>document.addEventListener('DOMContentLoaded', () => {
+  // Pandoc emits class="sourceCode <lang>"; normalize to language-<lang> for hljs.
+  document.querySelectorAll('pre code.sourceCode').forEach(el => {
+    const lang = [...el.classList].find(c => c !== 'sourceCode');
+    if (lang) {
+      el.classList.add('language-' + lang);
+      hljs.highlightElement(el);
+    }
+  });
+});</script>
+</head>
+<body>
+<div class="app">
+  <nav class="sidebar">
+    <a href="index.html" class="brand">
+      <span class="brand-logo">s</span>
+      <span class="brand-name">skills-manager</span>
+    </a>
+    <div class="nav-section">Foundation</div>
+    <a href="VISION.html" class="nav-item">Vision</a>
+    <a href="ARCHITECTURE.html" class="nav-item">Architecture</a>
+    <a href="ROADMAP.html" class="nav-item">Roadmap</a>
+    <a href="DATA_MODEL.html" class="nav-item">Data model</a>
+    <div class="nav-section">Surface</div>
+    <a href="CLI_REFERENCE.html" class="nav-item">CLI reference</a>
+    <a href="TAXONOMY.html" class="nav-item active">Taxonomy</a>
+    <div class="nav-section">Subsystems</div>
+    <a href="COMPATIBILITY.html" class="nav-item">Compatibility</a>
+    <a href="INGEST_FLOW.html" class="nav-item">Ingest flow</a>
+    <a href="UPDATE_FLOW.html" class="nav-item">Update flow</a>
+    <a href="BUNDLED_SKILLS.html" class="nav-item">Bundled skills</a>
+    <a href="SCHEDULING.html" class="nav-item">Scheduling</a>
+    <a href="CROSS_MACHINE.html" class="nav-item">Cross-machine sync</a>
+    <div class="nav-section">Out-of-band</div>
+    <a href="../mockup.html" class="nav-item">UI mockup ↗</a>
+    <a href="../README.html" class="nav-item">README</a>
+  </nav>
+  <main class="content">
+    <div class="doc-meta">
+      <span class="crumb"><a href="index.html">docs</a></span>
+      <span class="sep">/</span>
+      <span class="crumb">TAXONOMY.md</span>
+    </div>
+<h1 id="taxonomy">Taxonomy</h1>
+<p>The two-dimensional system for organizing skills.</p>
+<h2 id="design-principles">Design principles</h2>
+<ol type="1">
+<li><strong>Small enough to fit on one screen.</strong> 10 categories +
+tags as needed. Not 71.</li>
+<li><strong>Each tag obvious from its name.</strong> No "is this
+<code>kind:</code> or <code>fn:</code>?" questions.</li>
+<li><strong>Matches ecosystem consensus.</strong> Aligns with <a
+href="https://agnt.gg/articles/100-best-ai-agent-skills">AGNT.gg</a>, <a
+href="https://skillsmp.com/">SkillsMP</a>, and similar
+marketplaces.</li>
+<li><strong>Handles non-coding skills.</strong> Business, Productivity,
+Writing as first-class.</li>
+<li><strong>Two layers, not three.</strong> Categories (fixed list) +
+flat tags (open).</li>
+</ol>
+<h2 id="dimension-1-categories">Dimension 1: Categories</h2>
+<p>A skill has <strong>one or more</strong> categories. Pick from this
+fixed list of 10.</p>
+<table>
+<thead>
+<tr>
+<th>Category</th>
+<th>What goes here</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Engineering</strong></td>
+<td>Building software — frontend, backend, mobile, APIs, integrations,
+libraries</td>
+</tr>
+<tr>
+<td><strong>Quality</strong></td>
+<td>Testing, code review, debugging, QA, performance auditing,
+verification</td>
+</tr>
+<tr>
+<td><strong>Operations</strong></td>
+<td>Deploying, monitoring, infrastructure, CI/CD, incident response</td>
+</tr>
+<tr>
+<td><strong>Data</strong></td>
+<td>Data engineering, analytics, ML, databases, ETL, BI</td>
+</tr>
+<tr>
+<td><strong>Design</strong></td>
+<td>UI/UX, visual design, brand systems, diagramming, prototyping</td>
+</tr>
+<tr>
+<td><strong>Documents</strong></td>
+<td>File-format work — PDFs, spreadsheets, presentations, Word docs</td>
+</tr>
+<tr>
+<td><strong>Writing</strong></td>
+<td>Technical writing, copywriting, communications, content
+creation</td>
+</tr>
+<tr>
+<td><strong>Business</strong></td>
+<td>Strategy, product mgmt, marketing, sales, finance, compliance</td>
+</tr>
+<tr>
+<td><strong>Productivity</strong></td>
+<td>Personal/team automation, organizing, scheduling, workflows</td>
+</tr>
+<tr>
+<td><strong>Agent-tooling</strong></td>
+<td>Meta: building skills, agents, MCP servers, plugins, hooks, session
+config</td>
+</tr>
+</tbody>
+</table>
+<h3 id="multi-category-guidance">Multi-category guidance</h3>
+<p>Most skills land in 1 or 2 categories. A skill landing in 3+ is
+usually over-tagged — pick the most central two.</p>
+<p>Examples:</p>
+<ul>
+<li><code>shadcn-ui</code> → Design, Engineering (it's both an aesthetic
+system and an implementation library)</li>
+<li><code>qa</code> → Engineering, Quality (it tests Engineering work;
+it IS Quality work)</li>
+<li><code>pdf</code> → Documents (just one — it's pure file-format
+work)</li>
+<li><code>linear-feature</code> → Engineering, Operations (implements
+features; lands them via PR)</li>
+</ul>
+<h3 id="naming-convention">Naming convention</h3>
+<ul>
+<li><strong>Capitalized</strong> (<code>Engineering</code>, not
+<code>engineering</code>)</li>
+<li><strong>Singular</strong> (<code>Document</code>, not
+<code>Documents</code> — wait, we use <code>Documents</code> plural. OK
+fine, plural is the convention)</li>
+<li><strong>No abbreviations</strong> (<code>Agent-tooling</code>, not
+<code>Agent</code>)</li>
+</ul>
+<h2 id="dimension-2-tags">Dimension 2: Tags</h2>
+<p>Open, flat, optional. Add as needed for precision. No namespaces.</p>
+<h3 id="tag-conventions">Tag conventions</h3>
+<ul>
+<li><strong>lowercase-with-dashes</strong> (<code>slash-command</code>,
+<code>multi-agent</code>, <code>session-mode</code>)</li>
+<li><strong>No prefixes</strong> (we used <code>fn:</code>,
+<code>framework:</code>, etc. in design exploration; production is
+flat)</li>
+<li><strong>Tag what's specific.</strong> A skill IS a
+<code>react</code> skill; it doesn't need
+<code>framework:react</code>.</li>
+</ul>
+<h3 id="standard-tag-clusters">Standard tag clusters</h3>
+<p>These aren't enforced — just common patterns:</p>
+<table>
+<thead>
+<tr>
+<th>Cluster</th>
+<th>Examples</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Stack</td>
+<td><code>react</code>, <code>nextjs</code>, <code>vue</code>,
+<code>svelte</code>, <code>tailwind</code>, <code>python</code>,
+<code>go</code>, <code>rust</code>, <code>typescript</code></td>
+</tr>
+<tr>
+<td>Framework</td>
+<td><code>shadcn</code>, <code>bmad</code>, <code>superpowers</code>,
+<code>gstack</code>, <code>prisma</code>, <code>laravel</code></td>
+</tr>
+<tr>
+<td>Integration</td>
+<td><code>linear</code>, <code>sentry</code>, <code>jira</code>,
+<code>supabase</code>, <code>stripe</code>, <code>github</code>,
+<code>slack</code>, <code>obsidian</code></td>
+</tr>
+<tr>
+<td>Method</td>
+<td><code>methodology</code>, <code>tdd</code>,
+<code>multi-agent</code>, <code>mcp</code>,
+<code>orchestration</code></td>
+</tr>
+<tr>
+<td>Scope</td>
+<td><code>personal</code>, <code>team</code>, <code>client</code></td>
+</tr>
+<tr>
+<td>Trigger</td>
+<td><code>slash-command</code> (only when distinctive — most
+aren't)</td>
+</tr>
+<tr>
+<td>Mode</td>
+<td><code>session-mode</code>, <code>tool-wrapper</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="when-to-make-a-new-tag">When to make a new tag</h3>
+<p>A tag earns its place when:</p>
+<ol type="1">
+<li>It applies to <strong>≥3 skills</strong>, AND</li>
+<li>It would meaningfully <strong>filter</strong> or
+<strong>scope</strong> — answers a real question the user would ask</li>
+<li>It doesn't <strong>subsume</strong> an existing tag (no
+<code>framework-react</code> + <code>react</code> — pick one)</li>
+</ol>
+<p>If you only have 1–2 skills with a property, it's not a tag yet. The
+library will tell you when it needs to become one.</p>
+<h3 id="anti-patterns">Anti-patterns</h3>
+<ul>
+<li><code>coding</code>, <code>engineering</code>, <code>dev</code> —
+Engineering is a category, not a tag</li>
+<li><code>important</code>, <code>useful</code>, <code>cool</code> —
+value judgments aren't tags</li>
+<li><code>claude</code>, <code>codex</code> — harness specificity is the
+compatibility model, not a tag</li>
+<li><code>pr-2026-05-22</code> — temporal markers aren't tags</li>
+<li><code>wip</code>, <code>experimental</code> — lifecycle state
+belongs in the skill's own description</li>
+</ul>
+<h2 id="project-side-taxonomy">Project-side taxonomy</h2>
+<p>A project has the same shape — categories + tags. Two questions at
+init time:</p>
+<pre><code>What kinds of work does this project involve?
+  [✓] Engineering   [✓] Design   [✓] Quality   [✓] Operations
+  [ ] Data          [ ] Documents [ ] Writing   [ ] Business
+  [ ] Productivity  [ ] Agent-tooling
+
+What&#39;s the stack/tools?
+  [ react ] [ nextjs ] [ shadcn ] [ supabase ] [ sentry ] [+ add ]</code></pre>
+<p>Categories scope <strong>the universe</strong>. Tags add
+<strong>specificity</strong>.</p>
+<h2 id="matching-algorithm">Matching algorithm</h2>
+<p>A skill is a candidate for a project if and only if:</p>
+<pre><code>match(skill, project) iff
+  (skill.categories ∩ project.categories) ≠ ∅
+  AND respects(skill.compatibility, project.harnesses)</code></pre>
+<p>Once it is a candidate, <strong>score by tag overlap</strong>:</p>
+<pre><code>score(skill, project) =
+    1 × |skill.categories ∩ project.categories|
+  + 2 × |skill.tags ∩ project.tags|</code></pre>
+<p>Tags weighted 2× because they're more discriminating than categories.
+Sort descending by score, then show the proposed list before install.
+v0.1 must not silently auto-install newly matched skills; automatic
+application can come later only after the ranking is trusted.</p>
+<p>The algorithm is intentionally simple, but it needs negative signals
+and explanations to avoid over-installing broad category matches:</p>
+<ul>
+<li>Stack mismatch: a skill tagged <code>python</code> should not
+outrank a <code>nodejs</code> project just because both are
+<code>Engineering</code>.</li>
+<li>Missing required dependency: a skill requiring <code>gh</code> or a
+Linear MCP server should warn or be held back when unavailable.</li>
+<li>Explicit project exclusions (<code>never_include</code>) always
+win.</li>
+<li>Low-confidence categorization lowers the score until the user
+confirms it.</li>
+</ul>
+<p>Complexity should still live in the data and explainable rules, not
+opaque ranking.</p>
+<h2 id="filesystem-auto-detection">Filesystem auto-detection</h2>
+<p>At <code>skills-manager init</code>, the CLI reads project files to
+propose categories + tags:</p>
+<table>
+<thead>
+<tr>
+<th>Signal</th>
+<th>Implies categories</th>
+<th>Implies tags</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>package.json</code> exists</td>
+<td>Engineering</td>
+<td><code>nodejs</code></td>
+</tr>
+<tr>
+<td><code>next.config.*</code> exists</td>
+<td>Engineering, Design</td>
+<td><code>nextjs</code>, <code>react</code></td>
+</tr>
+<tr>
+<td><code>components.json</code> exists</td>
+<td>Design</td>
+<td><code>shadcn</code></td>
+</tr>
+<tr>
+<td><code>tailwind.config.*</code> exists</td>
+<td>Design</td>
+<td><code>tailwind</code></td>
+</tr>
+<tr>
+<td><code>pyproject.toml</code> / <code>setup.py</code></td>
+<td>Engineering</td>
+<td><code>python</code></td>
+</tr>
+<tr>
+<td><code>go.mod</code></td>
+<td>Engineering</td>
+<td><code>go</code></td>
+</tr>
+<tr>
+<td><code>Cargo.toml</code></td>
+<td>Engineering</td>
+<td><code>rust</code></td>
+</tr>
+<tr>
+<td><code>Gemfile</code></td>
+<td>Engineering</td>
+<td><code>ruby</code></td>
+</tr>
+<tr>
+<td><code>composer.json</code></td>
+<td>Engineering</td>
+<td><code>php</code></td>
+</tr>
+<tr>
+<td><code>playwright.config.*</code></td>
+<td>Quality</td>
+<td><code>playwright</code></td>
+</tr>
+<tr>
+<td><code>vitest.config.*</code> / <code>jest.config.*</code></td>
+<td>Quality</td>
+<td><code>vitest</code> / <code>jest</code></td>
+</tr>
+<tr>
+<td><code>Dockerfile</code>, <code>.github/workflows/</code></td>
+<td>Operations</td>
+<td>—</td>
+</tr>
+<tr>
+<td><code>prisma/schema.prisma</code></td>
+<td>Data, Engineering</td>
+<td><code>prisma</code></td>
+</tr>
+<tr>
+<td><code>@sentry/*</code> in dependencies</td>
+<td>Operations</td>
+<td><code>sentry</code></td>
+</tr>
+<tr>
+<td><code>@supabase/*</code> in dependencies</td>
+<td>Data, Engineering</td>
+<td><code>supabase</code></td>
+</tr>
+<tr>
+<td><code>stripe</code> in dependencies</td>
+<td>Engineering</td>
+<td><code>stripe</code></td>
+</tr>
+<tr>
+<td><code>.mcp.json</code> / mcp config</td>
+<td>Agent-tooling</td>
+<td><code>mcp</code></td>
+</tr>
+</tbody>
+</table>
+<p>The auto-detector is opinionated but always asks the user to confirm.
+Detectors live in the manager's repo and are PR-friendly so new stacks
+can be added.</p>
+<h2 id="categorization-at-import">Categorization-at-import</h2>
+<p>When a new skill is added via <code>skills-manager add</code>, the
+CLI invokes the bundled <code>skills-ingest</code> skill (or the user's
+LLM API key, if configured) to suggest categories and tags from the
+skill's content. The user reviews and confirms.</p>
+<p>The proposed categorization comes with <strong>confidence
+levels</strong>:</p>
+<ul>
+<li><strong>High</strong>: name + description + body all align (e.g., a
+skill named <code>react-component-author</code> with React mentioned 12
+times)</li>
+<li><strong>Medium</strong>: name and body hint at it but description is
+vague</li>
+<li><strong>Low</strong>: only weak signals — user input is essentially
+required</li>
+</ul>
+<p>Low-confidence categorizations are flagged for the user;
+high-confidence ones can be auto-accepted (if <code>--auto</code> or
+<code>auto_ingest: true</code> is set).</p>
+<h2 id="evolution">Evolution</h2>
+<p>The taxonomy is <strong>versioned</strong> (current: v1). When the
+ecosystem shifts or a category becomes too big:</p>
+<ul>
+<li>Splitting a category requires a migration</li>
+<li>Adding tags requires nothing (they're open)</li>
+<li>Removing/merging tags happens lazily via
+<code>set --remove-tag</code> per skill</li>
+</ul>
+<p>If a category itself proves wrong (e.g., "Productivity" is too
+broad), v2 of the taxonomy could rename or split it. Migrations are
+tracked in the manager's CHANGELOG.</p>
+<h2 id="trust-this-taxonomy">Trust this taxonomy</h2>
+<p>It was derived from:</p>
+<ul>
+<li>Cross-referencing 4 major skill registries' category systems</li>
+<li>Tagging 251 real skills against the proposed system</li>
+<li>Validating that 93% of skills land in ≤2 categories</li>
+<li>Stress-testing against intentionally weird skills (algorithmic art,
+financial models, BMAD workflows)</li>
+</ul>
+<p>It works. Resist the urge to add more categories until the data
+demands it.</p>
+    <footer class="doc-footer">
+      <span>skills-manager · design doc</span>
+      <span><a href="TAXONOMY.md">view source (.md)</a></span>
+    </footer>
+  </main>
+</div>
+</body>
+</html>

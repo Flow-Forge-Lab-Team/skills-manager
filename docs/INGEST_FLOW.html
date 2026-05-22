@@ -1,0 +1,425 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ingest flow — skills-manager</title>
+<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/styles/atom-one-dark.min.css">
+<script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/highlight.min.js"></script>
+<script>document.addEventListener('DOMContentLoaded', () => {
+  // Pandoc emits class="sourceCode <lang>"; normalize to language-<lang> for hljs.
+  document.querySelectorAll('pre code.sourceCode').forEach(el => {
+    const lang = [...el.classList].find(c => c !== 'sourceCode');
+    if (lang) {
+      el.classList.add('language-' + lang);
+      hljs.highlightElement(el);
+    }
+  });
+});</script>
+</head>
+<body>
+<div class="app">
+  <nav class="sidebar">
+    <a href="index.html" class="brand">
+      <span class="brand-logo">s</span>
+      <span class="brand-name">skills-manager</span>
+    </a>
+    <div class="nav-section">Foundation</div>
+    <a href="VISION.html" class="nav-item">Vision</a>
+    <a href="ARCHITECTURE.html" class="nav-item">Architecture</a>
+    <a href="ROADMAP.html" class="nav-item">Roadmap</a>
+    <a href="DATA_MODEL.html" class="nav-item">Data model</a>
+    <div class="nav-section">Surface</div>
+    <a href="CLI_REFERENCE.html" class="nav-item">CLI reference</a>
+    <a href="TAXONOMY.html" class="nav-item">Taxonomy</a>
+    <div class="nav-section">Subsystems</div>
+    <a href="COMPATIBILITY.html" class="nav-item">Compatibility</a>
+    <a href="INGEST_FLOW.html" class="nav-item active">Ingest flow</a>
+    <a href="UPDATE_FLOW.html" class="nav-item">Update flow</a>
+    <a href="BUNDLED_SKILLS.html" class="nav-item">Bundled skills</a>
+    <a href="SCHEDULING.html" class="nav-item">Scheduling</a>
+    <a href="CROSS_MACHINE.html" class="nav-item">Cross-machine sync</a>
+    <div class="nav-section">Out-of-band</div>
+    <a href="../mockup.html" class="nav-item">UI mockup ↗</a>
+    <a href="../README.html" class="nav-item">README</a>
+  </nav>
+  <main class="content">
+    <div class="doc-meta">
+      <span class="crumb"><a href="index.html">docs</a></span>
+      <span class="sep">/</span>
+      <span class="crumb">INGEST_FLOW.md</span>
+    </div>
+<h1 id="ingest-flow">Ingest Flow</h1>
+<p>How skills enter the library. Five sources, three triggers, one
+validation pipeline.</p>
+<h2 id="the-five-sources">The five sources</h2>
+<table>
+<thead>
+<tr>
+<th>Source</th>
+<th>Trigger</th>
+<th>Examples</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Marketplace</strong></td>
+<td><code>skills-manager add &lt;marketplace&gt;/&lt;skill&gt;</code></td>
+<td>Claude Code marketplace, agentskills.io</td>
+</tr>
+<tr>
+<td><strong>GitHub</strong></td>
+<td><code>skills-manager add &lt;github-url&gt;</code></td>
+<td>Any public repo with SKILL.md at the root</td>
+</tr>
+<tr>
+<td><strong>Local path</strong></td>
+<td><code>skills-manager add ./path/to/skill</code></td>
+<td>A skill folder you have on disk</td>
+</tr>
+<tr>
+<td><strong>Hand-authored</strong></td>
+<td><code>skills-manager new &lt;name&gt;</code></td>
+<td>You wrote it from scratch in the manager</td>
+</tr>
+<tr>
+<td><strong>AI-authored</strong></td>
+<td>Watcher detects skill in
+<code>~/.&lt;harness&gt;/skills/</code></td>
+<td>Hermes auto-improve, Claude wrote it inline</td>
+</tr>
+</tbody>
+</table>
+<p>Each source produces the same end state — a skill in
+<code>~/.skills-manager/library/</code> with origin metadata.</p>
+<h2 id="the-ingest-triggers">The ingest triggers</h2>
+<ol type="1">
+<li><strong>Explicit</strong> — user runs
+<code>skills-manager add &lt;source&gt;</code></li>
+<li><strong>Detected</strong> — <code>skills-manager scan</code> finds a
+SKILL.md the manager hasn't seen</li>
+<li><strong>Suggested</strong> — during another operation (e.g., user
+installs from a project that references unregistered skills)</li>
+<li><strong>Watched</strong> — optional v0.3 watcher finds a new
+SKILL.md after scan-based ingest has proven insufficient</li>
+</ol>
+<h2 id="ingest-pipeline">Ingest pipeline</h2>
+<p>Every source goes through the same pipeline:</p>
+<pre><code>┌─────────────────────────────────────────────────────────────┐
+│  1. Fetch &amp; validate                                         │
+│     • Pull the skill content (clone / copy / download)       │
+│     • Verify SKILL.md exists and parses                      │
+│     • Compute SHA-256 fingerprint                            │
+├─────────────────────────────────────────────────────────────┤
+│  2. Origin metadata                                          │
+│     • Record source type, URL, version/commit, install time │
+│     • Generate .skill-meta.yaml                              │
+├─────────────────────────────────────────────────────────────┤
+│  3. Categorization                                           │
+│     • Pattern-based: derive from name + description          │
+│     • LLM-based (optional): invoke skills-ingest via provider│
+│     • Confidence levels: high / medium / low                 │
+├─────────────────────────────────────────────────────────────┤
+│  4. Compatibility analysis                                   │
+│     • Scan body for harness-specific patterns                │
+│     • Suggest portable / compatible / exclusive              │
+│     • Prompt user for intent if uncertain                    │
+├─────────────────────────────────────────────────────────────┤
+│  5. User confirmation                                        │
+│     • Show proposed categories, tags, compatibility          │
+│     • User accepts / edits / rejects                         │
+├─────────────────────────────────────────────────────────────┤
+│  6. Commit                                                   │
+│     • Copy to library                                        │
+│     • Update catalog.yaml                                    │
+│     • Update state.db                                        │
+│     • Offer auto-install in matching projects                │
+└─────────────────────────────────────────────────────────────┘</code></pre>
+<p>Steps 3, 4, 5 can be skipped with <code>--auto</code> only when
+confidence is high and required dependency checks are available. v1 does
+not schedule auto-ingest by default; capture should not outrun
+review.</p>
+<h2 id="source-specific-behavior">Source-specific behavior</h2>
+<h3 id="marketplace-ingest">Marketplace ingest</h3>
+<pre><code>$ skills-manager add anthropic-skills/pdf
+
+Fetching from Claude Code marketplace...
+  ✓ Located at ~/.claude/plugins/marketplaces/anthropic-agent-skills/skills/pdf/
+  ✓ Read SKILL.md (7068 bytes)
+  ✓ Fingerprint: a7f3...
+
+Origin recorded:
+  source: marketplace
+  marketplace: anthropic-agent-skills
+  path: skills/pdf
+  version: 1.4.2
+  commit: abc123  (from marketplace git repo)
+
+Suggested categories: [Documents]
+Suggested tags: [pypdf]
+Suggested compatibility: portable
+
+Confirm? [Y/n]</code></pre>
+<p>Marketplace versioning comes from the marketplace's git tags or
+version file. Updates are detected by re-polling.</p>
+<h3 id="github-ingest">GitHub ingest</h3>
+<pre><code>$ skills-manager add github.com/user/some-skill
+
+Cloning github.com/user/some-skill...
+  ✓ SKILL.md found at root
+  ✓ Commit: def456789
+  ✓ Fingerprint: b2e1...
+
+Origin recorded:
+  source: github
+  url: https://github.com/user/some-skill
+  commit: def456789
+  installed_at: 2026-05-22T14:30:00Z
+
+[suggested categorization + compatibility flow as above]</code></pre>
+<p>For subdirectory skills, supports
+<code>github.com/org/repo/path/to/skill</code> syntax.</p>
+<h3 id="local-path">Local path</h3>
+<pre><code>$ skills-manager add ./my-skill/
+
+Importing from /Users/greg/dev/my-skill/...
+  ✓ SKILL.md valid
+  ✓ Fingerprint: c4f9...
+
+Origin recorded:
+  source: local
+  path: /Users/greg/dev/my-skill/
+  imported_at: 2026-05-22T14:30:00Z
+  (no upstream tracking — local-only)
+
+[continues...]</code></pre>
+<p>No update tracking — local sources have no upstream by
+definition.</p>
+<h3 id="hand-authored">Hand-authored</h3>
+<pre><code>$ skills-manager new my-custom-skill
+
+Opens $EDITOR with the SKILL.md template:
+---
+name: my-custom-skill
+description: TODO
+---
+
+# TODO
+
+Saves to ~/.skills-manager/library/my-custom-skill/SKILL.md
+Origin: authored locally</code></pre>
+<p>The manager generates a template scaffolded with the user's
+name/email if available.</p>
+<h3 id="ai-authored-detected-skill-case">AI-authored (detected skill
+case)</h3>
+<pre><code>(scan or watcher finds a new skill)
+
+━━━ New skill detected ━━━
+Path: ~/.hermes/skills/code-reviewer/SKILL.md
+Created: 12 minutes ago
+Likely: Hermes auto-improve session (no .git, recent timestamp)
+
+Auto-ingest? [Y]es / [N]o / [S]kip-this-time / [I]gnore-forever</code></pre>
+<p>If the user enabled <code>auto_ingest: true</code> in config, the
+prompt is skipped only for high-confidence cases. The accepted skill
+still appears in the activity feed for review.</p>
+<h2 id="filesystem-watcher-deferred">Filesystem watcher (deferred)</h2>
+<p>Background daemon. Optional and deferred until v0.3. v0.1/v0.2 use
+<code>skills-manager scan</code> so ingest is reviewable and does not
+require a resident process.</p>
+<h3 id="what-it-watches">What it watches</h3>
+<p>By default, all known harness skill paths on the machine:</p>
+<pre><code>~/.claude/skills/
+~/.codex/skills/
+~/.grok/skills/
+~/.hermes/skills/
+~/.openclaw/skills/
+~/.gemini/antigravity/skills/</code></pre>
+<p>Plus, on a per-project basis (when registered), the project's local
+skill paths:</p>
+<pre><code>&lt;project&gt;/.claude/skills/
+&lt;project&gt;/.codex/skills/
+&lt;project&gt;/.agents/skills/
+&lt;project&gt;/skills/</code></pre>
+<h3 id="what-triggers-a-candidate">What triggers a candidate</h3>
+<p>A <code>SKILL.md</code> file appearing or being modified, where the
+file's containing directory is NOT in the manager's manifest (i.e., we
+didn't put it there).</p>
+<p>Specifically:</p>
+<ul>
+<li>Newly-appeared SKILL.md in a watched directory → ingest
+candidate</li>
+<li>Modified SKILL.md that the manager created → drift warning, not
+ingest</li>
+<li>Modified SKILL.md that we didn't create → "user edit" event, not
+ingest</li>
+<li>Non-<code>SKILL.md</code> memory/cache files → ignored</li>
+<li>Duplicate events for the same fingerprint → collapsed into one
+notification</li>
+</ul>
+<h3 id="how-notifications-surface">How notifications surface</h3>
+<p>The watcher writes to <code>~/.skills-manager/notifications/</code>
+and the manager's <code>status</code> shows them:</p>
+<pre><code>$ skills-manager status
+
+Library:           251 skills
+Pending updates:   4
+Unregistered:      2 detected   ⚠ run `skills-manager scan`
+Last sync:         2h ago</code></pre>
+<p>The web UI's Overview page shows them as activity feed entries with
+[Ingest] [Skip] [Dismiss] buttons.</p>
+<h2 id="skills-manager-scan"><code>skills-manager scan</code></h2>
+<p>Non-daemon alternative to the watcher. Walks every known location
+once, reports.</p>
+<pre><code>$ skills-manager scan
+
+Scanning 7 directories...
+
+Found 47 skills total
+  43 already in library
+  4 unregistered:
+    • email-summarizer       ~/.claude/skills/        ai-authored (likely)
+    • code-reviewer          ~/.hermes/skills/        ai-authored (likely)
+    • style-guide            ~/dev/acme/.claude/      hand-authored
+    • debug-helper           ~/.openclaw/skills/      unknown source
+
+Ingest now?  [a] all  [s] select  [n] none</code></pre>
+<p>Useful for first-time setup and for users who don't want a background
+process.</p>
+<h2 id="how-ai-authored-vs-hand-authored-is-guessed">How "AI-authored"
+vs "hand-authored" is guessed</h2>
+<p>Heuristics (none authoritative — these are just hints):</p>
+<ul>
+<li><strong>AI-authored signals</strong>: very recent timestamp (created
+within the last hour during an active agent session); SKILL.md structure
+suspiciously well-formed; description-then-overview pattern of
+Claude-generated content</li>
+<li><strong>Hand-authored signals</strong>: file in a git repo with
+history; timestamp older than 24h; manual editing patterns (typos,
+irregular structure)</li>
+<li><strong>Unknown</strong>: skill predates the watcher; no other
+signals</li>
+</ul>
+<p>The classification appears in <code>.skill-meta.yaml</code> as
+<code>origin.guess: ai-authored | hand-authored | unknown</code>. The
+user can correct it manually.</p>
+<h2 id="ingest-ux-detail">Ingest UX detail</h2>
+<p>The interactive ingest flow:</p>
+<pre><code>━━━ Ingesting: code-reviewer ━━━
+
+Source: filesystem watcher
+Path:   ~/.hermes/skills/code-reviewer/
+Body:   2,847 bytes
+Fingerprint: a7f3...d8c2
+
+Looking at content...
+
+  Detected patterns:
+    • Hermes /memory directive
+    • References to ~/.hermes/ paths
+    • Code review workflow (10 mentions of &quot;review&quot;, &quot;audit&quot;, &quot;diff&quot;)
+
+  Categorization:
+    Categories: [Quality]                  ← confidence: high
+    Tags: [hermes-authored, code-review]   ← confidence: high
+
+  Compatibility:
+    Suggested: exclusive: hermes           ← confidence: high
+
+  Description:
+    &quot;Reviews staged changes for style, logic, and security issues...&quot;
+    (preserves as-is — changing description shifts activation)
+
+━━━ How should we ingest this? ━━━
+
+  [a] Accept all suggestions
+  [c] Customize before ingest
+  [r] Mark as PORTABLE instead (offer porting to other harnesses)
+  [l] Mark as COMPATIBLE with multiple harnesses
+  [s] Skip for now
+  [i] Ignore forever (don&#39;t ask again for this path)
+
+&gt;</code></pre>
+<h2 id="auto-ingest-mode-advanced">Auto-ingest mode (advanced)</h2>
+<pre><code>$ skills-manager scan --auto-ingest</code></pre>
+<p>Or, in v0.3, watcher with <code>auto_ingest: true</code>:</p>
+<div class="sourceCode" id="cb13"><pre
+class="sourceCode yaml"><code class="sourceCode yaml"><span id="cb13-1"><a href="#cb13-1" aria-hidden="true" tabindex="-1"></a><span class="co"># ~/.skills-manager/config.yaml</span></span>
+<span id="cb13-2"><a href="#cb13-2" aria-hidden="true" tabindex="-1"></a><span class="fu">watcher</span><span class="kw">:</span></span>
+<span id="cb13-3"><a href="#cb13-3" aria-hidden="true" tabindex="-1"></a><span class="at">  </span><span class="fu">enabled</span><span class="kw">:</span><span class="at"> </span><span class="ch">true</span></span>
+<span id="cb13-4"><a href="#cb13-4" aria-hidden="true" tabindex="-1"></a><span class="at">  </span><span class="fu">auto_ingest</span><span class="kw">:</span><span class="at"> </span><span class="ch">true</span></span>
+<span id="cb13-5"><a href="#cb13-5" aria-hidden="true" tabindex="-1"></a><span class="at">  </span><span class="fu">auto_ingest_rules</span><span class="kw">:</span></span>
+<span id="cb13-6"><a href="#cb13-6" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="fu">high_confidence_only</span><span class="kw">:</span><span class="at"> </span><span class="ch">true</span><span class="co">     # only auto-accept categorization at high confidence</span></span>
+<span id="cb13-7"><a href="#cb13-7" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="fu">exclude_paths</span><span class="kw">:</span><span class="co">                 # never auto-ingest from these</span></span>
+<span id="cb13-8"><a href="#cb13-8" aria-hidden="true" tabindex="-1"></a><span class="at">      </span><span class="kw">-</span><span class="at"> ~/dev/scratch/</span><span class="co">             # personal experiments</span></span></code></pre></div>
+<p>Skills accepted via auto-ingest still appear in the activity feed so
+the user can review post-hoc. Low-confidence categorization, unknown
+compatibility, missing required dependencies, and suspicious
+instructions disable auto-ingest.</p>
+<h2 id="what-happens-after-ingest">What happens after ingest</h2>
+<ol type="1">
+<li>Skill is in library</li>
+<li>Manager runs <code>skills-manager match --explain</code> against all
+registered projects</li>
+<li>For each project where the new skill would match:
+<ul>
+<li>Offer install (interactive) OR</li>
+<li>Auto-install if project config says
+<code>auto_apply_new_matches: true</code></li>
+</ul></li>
+<li>The skill becomes available in the user's library indefinitely</li>
+</ol>
+<h2 id="failure-modes-and-what-happens">Failure modes and what
+happens</h2>
+<table>
+<thead>
+<tr>
+<th>Failure</th>
+<th>Behavior</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>SKILL.md</code> malformed (no frontmatter)</td>
+<td>Refuse ingest, report error</td>
+</tr>
+<tr>
+<td>Skill name conflicts with existing library entry</td>
+<td>Prompt: skip / replace / rename / merge</td>
+</tr>
+<tr>
+<td>Same fingerprint as existing (re-ingest)</td>
+<td>Skip silently (we already have it)</td>
+</tr>
+<tr>
+<td>Network failure during marketplace fetch</td>
+<td>Retry once, then save state and report</td>
+</tr>
+<tr>
+<td>Categorization confidence too low</td>
+<td>Mark categories as <code>[]</code>, ingest anyway, surface for user
+review</td>
+</tr>
+</tbody>
+</table>
+<p>Ingest is intentionally lenient — better to capture a skill with
+incomplete metadata than to lose it.</p>
+<h2 id="what-ingest-never-does">What ingest never does</h2>
+<ul>
+<li>Never executes scripts bundled with the skill</li>
+<li>Never modifies the skill's content during ingest</li>
+<li>Never auto-changes the description (which controls activation)</li>
+<li>Never auto-ingests from paths the user marked
+<code>ignore</code></li>
+<li>Never silently fails — every error surfaces in <code>status</code>
+and logs</li>
+</ul>
+    <footer class="doc-footer">
+      <span>skills-manager · design doc</span>
+      <span><a href="INGEST_FLOW.md">view source (.md)</a></span>
+    </footer>
+  </main>
+</div>
+</body>
+</html>

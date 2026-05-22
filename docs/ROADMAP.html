@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Roadmap — skills-manager</title>
+<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/styles/atom-one-dark.min.css">
+<script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/highlight.min.js"></script>
+<script>document.addEventListener('DOMContentLoaded', () => {
+  // Pandoc emits class="sourceCode <lang>"; normalize to language-<lang> for hljs.
+  document.querySelectorAll('pre code.sourceCode').forEach(el => {
+    const lang = [...el.classList].find(c => c !== 'sourceCode');
+    if (lang) {
+      el.classList.add('language-' + lang);
+      hljs.highlightElement(el);
+    }
+  });
+});</script>
+</head>
+<body>
+<div class="app">
+  <nav class="sidebar">
+    <a href="index.html" class="brand">
+      <span class="brand-logo">s</span>
+      <span class="brand-name">skills-manager</span>
+    </a>
+    <div class="nav-section">Foundation</div>
+    <a href="VISION.html" class="nav-item">Vision</a>
+    <a href="ARCHITECTURE.html" class="nav-item">Architecture</a>
+    <a href="ROADMAP.html" class="nav-item active">Roadmap</a>
+    <a href="DATA_MODEL.html" class="nav-item">Data model</a>
+    <div class="nav-section">Surface</div>
+    <a href="CLI_REFERENCE.html" class="nav-item">CLI reference</a>
+    <a href="TAXONOMY.html" class="nav-item">Taxonomy</a>
+    <div class="nav-section">Subsystems</div>
+    <a href="COMPATIBILITY.html" class="nav-item">Compatibility</a>
+    <a href="INGEST_FLOW.html" class="nav-item">Ingest flow</a>
+    <a href="UPDATE_FLOW.html" class="nav-item">Update flow</a>
+    <a href="BUNDLED_SKILLS.html" class="nav-item">Bundled skills</a>
+    <a href="SCHEDULING.html" class="nav-item">Scheduling</a>
+    <a href="CROSS_MACHINE.html" class="nav-item">Cross-machine sync</a>
+    <div class="nav-section">Out-of-band</div>
+    <a href="../mockup.html" class="nav-item">UI mockup ↗</a>
+    <a href="../README.html" class="nav-item">README</a>
+  </nav>
+  <main class="content">
+    <div class="doc-meta">
+      <span class="crumb"><a href="index.html">docs</a></span>
+      <span class="sep">/</span>
+      <span class="crumb">ROADMAP.md</span>
+    </div>
+<h1 id="roadmap">Roadmap</h1>
+<p>Phased delivery. Each phase ends with a usable product; nothing is
+"wait for v1 to be useful." The adversarial review changed the
+sequencing: prove the local library, safety model, and reversible
+install path before adding long-running automation, web surfaces, or
+cloud schedulers.</p>
+<h2 id="v01--local-library--reversible-installs">v0.1 — Local library +
+reversible installs</h2>
+<p><strong>Goal:</strong> A small working CLI that imports skills,
+installs them safely across SKILL.md-native harnesses, detects upstream
+changes, and can prove exactly what it owns. No UI. No watcher. No cloud
+scheduling. No LLM dependency.</p>
+<p><strong>In scope:</strong></p>
+<ul>
+<li>CLI commands: <code>init</code>, <code>add</code>,
+<code>install</code>, <code>sync</code>, <code>check</code>,
+<code>update</code>, <code>list</code>, <code>show</code>,
+<code>status</code>, <code>uninstall</code>, <code>scan</code>,
+<code>doctor</code>, <code>config</code></li>
+<li>Copy mode (no symlinks for v0.1)</li>
+<li>Manifest tracking (every file we create is recorded)</li>
+<li>Project config file (<code>.skills/project.yaml</code>) + lock file
+(<code>.skills/installed.lock</code>)</li>
+<li>Filesystem auto-detection for project init (Node, Python, Go, Rust,
+Ruby, PHP)</li>
+<li>Origin tracking with sidecars (<code>.skill-meta.yaml</code>)</li>
+<li>GitHub-based update detection (the largest source)</li>
+<li>10-category + flat-tag taxonomy applied to existing library</li>
+<li>Compatibility model honored at install time</li>
+<li>Execution requirements declared and checked by <code>doctor</code>
+(system tools, MCP servers, scripts, credentials, model/tool
+assumptions)</li>
+<li>Update safety review: raw diff, changed description/frontmatter
+detection, suspicious instruction detection, no AI summary required</li>
+<li>Local state rebuild: <code>doctor</code> can rebuild
+<code>state.db</code> from library files and explain catalog/state
+drift</li>
+</ul>
+<p><strong>Out of scope (deferred):</strong></p>
+<ul>
+<li>Local git-based library sync between machines</li>
+<li>Web UI</li>
+<li>Cursor / Copilot compilation</li>
+<li>AGENTS.md assembly</li>
+<li>Bundled skills (<code>skills-port</code>, etc.)</li>
+<li>Filesystem watcher daemon</li>
+<li>Local and cloud scheduling integration</li>
+<li>LLM-generated diff summaries</li>
+<li>Auto-install of newly-matched skills</li>
+</ul>
+<p><strong>Acceptance criteria:</strong></p>
+<ul>
+<li><code>skills-manager init</code> in a typical Next.js project sets
+up reasonable defaults in &lt;30 seconds</li>
+<li><code>skills-manager install</code> populates 7 harness paths
+correctly from one canonical library</li>
+<li><code>skills-manager uninstall</code> cleanly removes everything we
+created, preserves what we didn't</li>
+<li><code>skills-manager check</code> detects new commits on
+GitHub-sourced skills</li>
+<li><code>skills-manager update --diff &lt;skill&gt;</code> shows raw
+diff plus safety flags before acceptance</li>
+<li><code>skills-manager doctor</code> catches missing binaries/MCP
+servers/credentials for installed skills</li>
+<li><code>skills-manager doctor --rebuild-state</code> can recover
+<code>state.db</code> from <code>catalog.yaml</code> + sidecars</li>
+</ul>
+<p><strong>Time estimate:</strong> 2–3 weeks of focused work.</p>
+<hr />
+<h2 id="v02--local-sync--optional-llm-assistance">v0.2 — Local sync +
+optional LLM assistance</h2>
+<p><strong>Goal:</strong> Add cross-machine sync and low-friction AI
+assistance without making clipboard handoff the primary path.</p>
+<p><strong>In scope:</strong></p>
+<ul>
+<li>Local git-based library sync between machines
+(<code>sync-library</code>, <code>join</code>,
+<code>machines</code>)</li>
+<li>Merge/conflict rules for generated metadata
+(<code>catalog.yaml</code>, <code>.machines.yaml</code>,
+<code>.skill-meta.yaml</code>)</li>
+<li>Optional local LLM provider path for summaries and ingest
+(<code>llm.provider</code>, <code>llm.api_key-env</code>, or environment
+variables)</li>
+<li>Bundled skill: <code>skills-diff-summary</code> (optional summary
+mechanism for updates)</li>
+<li>Bundled skill: <code>skills-ingest</code> (categorization + tagging
+at import time)</li>
+<li>Bundled skill: <code>skills-compat-check</code> (deeper
+compatibility + requirements analysis)</li>
+<li>Clipboard/file handoff remains available as a fallback, not the
+default recommended path</li>
+<li>Local OS scheduling integration
+(<code>setup-schedule --provider local</code>)</li>
+<li>Cost-honest opt-in for auto-summary via local API key
+configuration</li>
+</ul>
+<p><strong>Out of scope:</strong></p>
+<ul>
+<li>Cloud scheduling (Claude routines / Codex automations) — pushed
+beyond v1</li>
+<li>Web UI — pushed to v0.3</li>
+<li>Cursor / Copilot compilation — pushed to v1.0</li>
+<li>Filesystem watcher daemon — deferred until scan-based ingest proves
+insufficient</li>
+</ul>
+<p><strong>Acceptance criteria:</strong></p>
+<ul>
+<li>A second machine can join the library, pull updates, and install a
+project from a committed lockfile</li>
+<li>A teammate missing a locked skill gets a clear remediation path
+instead of a silent install failure</li>
+<li>Generated metadata conflicts are either auto-resolved
+deterministically or surfaced with a file-specific explanation</li>
+<li>A user can run <code>skills-manager summarize pdf --auto</code> with
+an explicit local provider and get a validated summary</li>
+<li>Clipboard handoff works as a fallback and is documented as
+higher-friction</li>
+<li>launchd / cron / systemd integration installs a working daily-check
+job</li>
+</ul>
+<p><strong>Time estimate:</strong> 3–4 weeks after v0.1.</p>
+<hr />
+<h2 id="v03--triage-ui--optional-watcher">v0.3 — Triage UI + optional
+watcher</h2>
+<p><strong>Goal:</strong> Add visual review surfaces only after the CLI
+state model is trustworthy.</p>
+<p><strong>In scope:</strong></p>
+<ul>
+<li><code>skills-manager serve</code> — local web server</li>
+<li>All views from the mockup: Overview, Library, Skill Detail, Project,
+Updates, Matrix, Cross-machine</li>
+<li>Cross-machine status view (drift detection)</li>
+<li>Usage tracking from Claude Code OTEL events
+(<code>claude_code.skill_activated</code>)</li>
+<li>Optional filesystem watcher daemon
+(<code>skills-manager watch</code>) for users who find manual scan
+insufficient</li>
+<li>Watcher notifications and false-positive controls</li>
+</ul>
+<p><strong>Out of scope:</strong></p>
+<ul>
+<li>Cursor / Copilot — pushed to v1.0</li>
+<li>Authentication beyond localhost (Tailscale users can punch through
+manually)</li>
+<li>Mobile / responsive UI polish</li>
+<li>Cloud scheduling</li>
+</ul>
+<p><strong>Acceptance criteria:</strong></p>
+<ul>
+<li>The mockup's screens are functional, not just visual</li>
+<li>The Matrix view renders for a 250-skill / 7-project library in under
+1 second</li>
+<li>The Updates view shows AI summaries inline (generated either by the
+bundled skill flow or auto-summary if configured)</li>
+<li>The UI can review a 10-update batch faster than the CLI without
+hiding raw diffs or safety flags</li>
+<li>Watcher mode ignores manager-owned writes and produces no duplicate
+ingest prompts in normal install/update flows</li>
+</ul>
+<p><strong>Time estimate:</strong> 4–5 weeks after v0.2.</p>
+<hr />
+<h2 id="v10--cursor--copilot--polish">v1.0 — Cursor + Copilot +
+polish</h2>
+<p><strong>Goal:</strong> Cover the remaining major harnesses that need
+format compilation.</p>
+<p><strong>In scope:</strong></p>
+<ul>
+<li>Cursor <code>.mdc</code> compiler (SKILL.md → Cursor rule format
+with <code>globs</code> / <code>alwaysApply</code>)</li>
+<li>Copilot <code>.instructions.md</code> compiler</li>
+<li>AGENTS.md assembler (concatenate relevant skills into project-root
+AGENTS.md)</li>
+<li>Bundled skill: <code>skills-port</code> (cross-harness
+rewriter)</li>
+<li>Bundled skill: <code>skills-author</code> (skill creation
+guide)</li>
+<li>Variants system (per-harness ported variants of a canonical
+skill)</li>
+<li>Public release: documentation, install scripts, marketplace
+listings</li>
+</ul>
+<p><strong>Acceptance criteria:</strong></p>
+<ul>
+<li>A skill installed via <code>skills-manager</code> works correctly in
+Cursor with the right globs</li>
+<li>A skill installed via <code>skills-manager</code> works correctly in
+projects using AGENTS.md</li>
+<li>Public install with <code>npm install -g skills-manager</code> (or
+equivalent) works on macOS, Linux, Windows</li>
+<li>A user new to the tool can go from zero to working setup in 5
+minutes following the docs</li>
+<li>v1 still works without cloud scheduling, a hosted backend, or a web
+UI session left running</li>
+</ul>
+<p><strong>Time estimate:</strong> 4–6 weeks after v0.3.</p>
+<hr />
+<h2 id="beyond-v10-no-commitments">Beyond v1.0 (no commitments)</h2>
+<p>Ideas worth tracking but not designing in detail yet:</p>
+<ul>
+<li><strong>Skill author dashboard</strong> — for skill maintainers to
+see install counts, version adoption</li>
+<li><strong>Community ports registry</strong> — a shared store of
+<code>skills-port</code> results (so popular ports don't need to be
+re-generated by each user)</li>
+<li><strong>Multi-team library</strong> — orgs with private skill
+libraries shared across teammates</li>
+<li><strong>Skill quality scoring</strong> — heuristics for skill
+quality (length, clarity, examples)</li>
+<li><strong>MCP server packaging</strong> — bundle skills + MCP servers
+as a unit</li>
+<li><strong>Mobile companion</strong> — read-only dashboard from your
+phone</li>
+<li><strong>Skill exchange / marketplace</strong> — but only if a
+community emerges that wants it</li>
+<li><strong>Cloud scheduling</strong> — Claude routines / Codex
+automations, only if local scheduling is not enough and provider APIs
+are stable</li>
+</ul>
+<h2 id="time-totals">Time totals</h2>
+<p>Realistic indicative numbers (solo developer, focused):</p>
+<ul>
+<li>v0.1: 2–3 weeks</li>
+<li>v0.2: 3–4 weeks</li>
+<li>v0.3: 4–5 weeks</li>
+<li>v1.0: 4–6 weeks</li>
+</ul>
+<p><strong>Total to v1.0: 13–18 weeks</strong> (~3–4 months of focused
+work).</p>
+<p>These are estimates, not commitments. Real estimates depend on
+language choice, testing rigor, and how often the design needs to be
+revised based on what we learn.</p>
+<h2 id="whats-deferred-and-why">What's deferred and why</h2>
+<p>Things deliberately not in any current phase:</p>
+<ul>
+<li><strong>Marketplace publishing</strong> — we integrate with
+marketplaces but don't publish to them. Possibly never.</li>
+<li><strong>Cloud backend</strong> — local-first is a core
+principle.</li>
+<li><strong>Cloud scheduling</strong> — explicitly beyond v1. It adds
+provider churn, billing, credential, and result-writeback complexity
+before the local product has earned it.</li>
+<li><strong>Auth system</strong> — localhost-only is fine for v1.
+Multi-user / team-shared comes later if needed.</li>
+<li><strong>Plugin system for the manager itself</strong> — the manager
+isn't pluggable. Bundled skills cover most extension cases.</li>
+<li><strong>GUI desktop app</strong> — web UI in <code>serve</code> mode
+covers this; native shells (Tauri/Electron) aren't worth the build
+complexity.</li>
+</ul>
+<h2 id="risk-register">Risk register</h2>
+<p>Top risks to delivery:</p>
+<ol type="1">
+<li><strong>Clipboard handoff becomes the product's daily UX.</strong>
+Mitigation: make local provider automation the preferred LLM path; keep
+clipboard/file handoff only as fallback.</li>
+<li><strong>AI summaries hide risky upstream changes.</strong>
+Mitigation: raw diffs and deterministic safety flags are mandatory;
+summaries are advisory and validated.</li>
+<li><strong>v0.1 sprawls before value is proven.</strong> Mitigation: no
+sync, UI, watcher, cloud scheduling, or LLM features in v0.1.</li>
+<li><strong>Compatibility is underspecified.</strong> Mitigation: model
+execution requirements separately from harness support and validate them
+in <code>doctor</code>.</li>
+<li><strong>No one cares about this category of tool.</strong>
+Mitigation: ship the smallest local workflow, validate with real users
+(you), iterate.</li>
+<li><strong>Harnesses diverge from SKILL.md standard.</strong>
+Mitigation: variants system (v1.0) handles per-harness divergence.</li>
+</ol>
+    <footer class="doc-footer">
+      <span>skills-manager · design doc</span>
+      <span><a href="ROADMAP.md">view source (.md)</a></span>
+    </footer>
+  </main>
+</div>
+</body>
+</html>

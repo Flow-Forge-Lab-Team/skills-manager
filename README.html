@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>README — skills-manager</title>
+<link rel="stylesheet" href="docs/styles.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/styles/atom-one-dark.min.css">
+<script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/highlight.min.js"></script>
+<script>document.addEventListener('DOMContentLoaded', () => {
+  // Pandoc emits class="sourceCode <lang>"; normalize to language-<lang> for hljs.
+  document.querySelectorAll('pre code.sourceCode').forEach(el => {
+    const lang = [...el.classList].find(c => c !== 'sourceCode');
+    if (lang) {
+      el.classList.add('language-' + lang);
+      hljs.highlightElement(el);
+    }
+  });
+});</script>
+</head>
+<body>
+<div class="app">
+  <nav class="sidebar">
+    <a href="docs/index.html" class="brand">
+      <span class="brand-logo">s</span>
+      <span class="brand-name">skills-manager</span>
+    </a>
+    <div class="nav-section">Foundation</div>
+    <a href="docs/VISION.html" class="nav-item">Vision</a>
+    <a href="docs/ARCHITECTURE.html" class="nav-item">Architecture</a>
+    <a href="docs/ROADMAP.html" class="nav-item">Roadmap</a>
+    <a href="docs/DATA_MODEL.html" class="nav-item">Data model</a>
+    <div class="nav-section">Surface</div>
+    <a href="docs/CLI_REFERENCE.html" class="nav-item">CLI reference</a>
+    <a href="docs/TAXONOMY.html" class="nav-item">Taxonomy</a>
+    <div class="nav-section">Subsystems</div>
+    <a href="docs/COMPATIBILITY.html" class="nav-item">Compatibility</a>
+    <a href="docs/INGEST_FLOW.html" class="nav-item">Ingest flow</a>
+    <a href="docs/UPDATE_FLOW.html" class="nav-item">Update flow</a>
+    <a href="docs/BUNDLED_SKILLS.html" class="nav-item">Bundled skills</a>
+    <a href="docs/SCHEDULING.html" class="nav-item">Scheduling</a>
+    <a href="docs/CROSS_MACHINE.html" class="nav-item">Cross-machine sync</a>
+    <div class="nav-section">Out-of-band</div>
+    <a href="mockup.html" class="nav-item">UI mockup ↗</a>
+    <a href="README.html" class="nav-item">README</a>
+  </nav>
+  <main class="content">
+    <div class="doc-meta">
+      <span class="crumb"><a href="docs/index.html">docs</a></span>
+      <span class="sep">/</span>
+      <span class="crumb">../README.md</span>
+    </div>
+<h1 id="skills-manager">skills-manager</h1>
+<p>A local-first CLI for managing AI agent skills across the harnesses
+you actually use — Claude Code, Codex CLI, Grok Build, Antigravity,
+Gemini CLI, Hermes, OpenClaw, and more.</p>
+<blockquote>
+<p><strong>Status:</strong> Design phase. See <a
+href="docs/"><code>docs/</code></a> for the full design. Markdown is
+canonical. The checked-in HTML files are generated from the Markdown
+with <a href="docs/_build.sh"><code>docs/_build.sh</code></a> for easier
+browsing.</p>
+</blockquote>
+<h2 id="what-it-does">What it does</h2>
+<ul>
+<li><strong>One library, many harnesses.</strong> Maintain a canonical
+store of skills and have them appear in the right place for each agent
+CLI you use.</li>
+<li><strong>Project-aware matching.</strong> Tag a project with
+categories and stack tags; preview relevant skills before installing
+them.</li>
+<li><strong>Update tracking with safety review.</strong> Detect upstream
+changes, inspect diffs, and optionally generate guarded summaries before
+accepting.</li>
+<li><strong>Execution-aware compatibility.</strong> Skills declare
+harness support, model/tool assumptions, local binaries, MCP servers,
+scripts, and credentials.</li>
+<li><strong>Cross-machine via git.</strong> Sync your library between
+laptop, desktop, server.</li>
+<li><strong>Reversible.</strong> Copy mode by default. Uninstall removes
+only files the manager created.</li>
+</ul>
+<h2 id="why">Why</h2>
+<p>Skills now live in <code>~/.claude/skills/</code>,
+<code>~/.codex/skills/</code>, <code>~/.grok/skills/</code>,
+<code>~/.hermes/skills/</code>, <code>~/.openclaw/skills/</code>,
+<code>~/.gemini/antigravity/skills/</code>,
+<code>.agents/skills/</code>, marketplaces, GitHub repos, and ad-hoc
+files. They get duplicated, drift, and go stale. Nothing tracks what you
+have where, what's been updated, or what would actually be useful in the
+project you just opened.</p>
+<p>This tool fixes that incrementally. v0.1 focuses on a reliable local
+library, install manifests, update detection, and reversible installs.
+Automation, richer UI, and cross-harness ports come only after the local
+workflow is trusted.</p>
+<h2 id="design-docs">Design docs</h2>
+<p>Read in this order:</p>
+<ol type="1">
+<li><a href="docs/VISION.html"><code>docs/VISION.md</code></a> — the
+why</li>
+<li><a href="docs/ARCHITECTURE.html"><code>docs/ARCHITECTURE.md</code></a>
+— the how</li>
+<li><a href="docs/ROADMAP.html"><code>docs/ROADMAP.md</code></a> — what
+ships when</li>
+<li><a href="docs/DATA_MODEL.html"><code>docs/DATA_MODEL.md</code></a> —
+schemas</li>
+<li><a
+href="docs/CLI_REFERENCE.html"><code>docs/CLI_REFERENCE.md</code></a> —
+command surface</li>
+<li><a href="docs/TAXONOMY.html"><code>docs/TAXONOMY.md</code></a> —
+categories + tags</li>
+<li><a
+href="docs/COMPATIBILITY.html"><code>docs/COMPATIBILITY.md</code></a> —
+compatibility + execution requirements</li>
+<li><a href="docs/INGEST_FLOW.html"><code>docs/INGEST_FLOW.md</code></a> —
+adding skills</li>
+<li><a href="docs/UPDATE_FLOW.html"><code>docs/UPDATE_FLOW.md</code></a> —
+tracking changes</li>
+<li><a
+href="docs/BUNDLED_SKILLS.html"><code>docs/BUNDLED_SKILLS.md</code></a> —
+manager skills</li>
+<li><a href="docs/SCHEDULING.html"><code>docs/SCHEDULING.md</code></a> —
+scheduling design</li>
+<li><a
+href="docs/CROSS_MACHINE.html"><code>docs/CROSS_MACHINE.md</code></a> —
+git sync</li>
+</ol>
+<h2 id="mockup">Mockup</h2>
+<p>A clickable UI mockup of a possible dashboard is at <a
+href="mockup.html"><code>mockup.html</code></a>. It is a reference for
+later triage surfaces, not a v0.1 commitment.</p>
+<h2 id="license">License</h2>
+<p>TBD.</p>
+    <footer class="doc-footer">
+      <span>skills-manager · design doc</span>
+      <span><a href="README.md">view source (.md)</a></span>
+    </footer>
+  </main>
+</div>
+</body>
+</html>
