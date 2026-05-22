@@ -171,6 +171,67 @@ skills:
 	}
 }
 
+func TestInstallPersistsManifestBeforeReturningAfterPartialFailure(t *testing.T) {
+	home := t.TempDir()
+	project := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+
+	writeFile(t, filepath.Join(project, ".skills", "project.yaml"), `version: 1
+name: demo
+categories: [Engineering]
+harnesses: [claude]
+`)
+	writeFile(t, filepath.Join(home, "library", "catalog.yaml"), `version: 1
+skills:
+  - name: alpha
+    categories: [Engineering]
+    compatibility:
+      mode: portable
+    requirements:
+      tools: []
+  - name: missing-source
+    categories: [Engineering]
+    compatibility:
+      mode: portable
+    requirements:
+      tools: []
+`)
+	writeFile(t, filepath.Join(home, "library", "alpha", "SKILL.md"), "alpha\n")
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := Run([]string{"install", "--project", project}, &stdout, &stderr)
+	if code != 3 {
+		t.Fatalf("Run returned %d, want 3\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+	}
+	if _, err := os.Stat(filepath.Join(project, ".claude", "skills", "alpha", "SKILL.md")); err != nil {
+		t.Fatalf("expected first skill to be copied before later failure: %v", err)
+	}
+
+	manifestPath := filepath.Join(home, "manifests", projectSlug(project)+".json")
+	data, err := os.ReadFile(manifestPath)
+	if err != nil {
+		t.Fatalf("read manifest: %v", err)
+	}
+	var manifest installManifest
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		t.Fatalf("unmarshal manifest: %v", err)
+	}
+	if got, want := manifest.ManagedPaths, []string{".claude/skills/alpha"}; strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("managed paths = %#v, want %#v", got, want)
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	code = Run([]string{"uninstall", "--project", project, "--confirm"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("uninstall returned %d, want 0\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+	}
+	if _, err := os.Stat(filepath.Join(project, ".claude", "skills", "alpha")); !os.IsNotExist(err) {
+		t.Fatalf("expected uninstall to remove partially installed copy, got err %v", err)
+	}
+}
+
 func TestSyncPrunesStaleManagedInstallsWhenCompatibilityNarrows(t *testing.T) {
 	home := t.TempDir()
 	project := t.TempDir()

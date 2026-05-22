@@ -205,6 +205,11 @@ func runInstall(args []string, stdout io.Writer, stderr io.Writer, syncMode bool
 					fmt.Fprintf(stdout, "  preserve %s (%v)\n", relTarget, err)
 					continue
 				}
+				if installed > 0 {
+					if writeErr := saveInstallManifest(manifestPath, manifest, managed, preserved, files); writeErr != nil {
+						fmt.Fprintf(stderr, "write manifest after failed install: %v\n", writeErr)
+					}
+				}
 				fmt.Fprintf(stderr, "install %s: %v\n", relTarget, err)
 				return 3
 			}
@@ -214,6 +219,9 @@ func runInstall(args []string, stdout io.Writer, stderr io.Writer, syncMode bool
 				delete(preserved, relTarget)
 				fingerprint, err := fingerprintDir(target)
 				if err != nil {
+					if writeErr := saveInstallManifest(manifestPath, manifest, managed, preserved, files); writeErr != nil {
+						fmt.Fprintf(stderr, "write manifest after failed fingerprint: %v\n", writeErr)
+					}
 					fmt.Fprintf(stderr, "fingerprint %s: %v\n", relTarget, err)
 					return 3
 				}
@@ -234,11 +242,7 @@ func runInstall(args []string, stdout io.Writer, stderr io.Writer, syncMode bool
 				partial = true
 			}
 		}
-		manifest.ManagedPaths = sortedKeys(managed)
-		manifest.PreservedPaths = sortedKeys(preserved)
-		manifest.Files = files
-		manifest.InstalledAt = time.Now().UTC().Format(time.RFC3339)
-		if err := writeManifest(manifestPath, manifest); err != nil {
+		if err := saveInstallManifest(manifestPath, manifest, managed, preserved, files); err != nil {
 			fmt.Fprintf(stderr, "write manifest: %v\n", err)
 			return 3
 		}
@@ -469,6 +473,14 @@ func writeManifest(path string, manifest installManifest) error {
 	}
 	data = append(data, '\n')
 	return os.WriteFile(path, data, 0o644)
+}
+
+func saveInstallManifest(path string, manifest installManifest, managed map[string]bool, preserved map[string]bool, files map[string]string) error {
+	manifest.ManagedPaths = sortedKeys(managed)
+	manifest.PreservedPaths = sortedKeys(preserved)
+	manifest.Files = files
+	manifest.InstalledAt = time.Now().UTC().Format(time.RFC3339)
+	return writeManifest(path, manifest)
 }
 
 func readProjectConfig(path string) (projectConfig, error) {
