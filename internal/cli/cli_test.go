@@ -87,7 +87,7 @@ skills:
 		}
 	}
 
-	manifestPath := filepath.Join(home, "manifests", filepath.Base(project)+".json")
+	manifestPath := filepath.Join(home, "manifests", projectSlug(project)+".json")
 	data, err := os.ReadFile(manifestPath)
 	if err != nil {
 		t.Fatalf("read manifest: %v", err)
@@ -168,6 +168,66 @@ skills:
 	assertFileContent(t, filepath.Join(project, ".claude", "skills", "review", "SKILL.md"), "first\n")
 	if !strings.Contains(stdout.String(), "local edits") {
 		t.Fatalf("stdout = %q, want local edit preserve message", stdout.String())
+	}
+}
+
+func TestUninstallPreservesLocallyEditedManagedTargets(t *testing.T) {
+	home := t.TempDir()
+	project := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+
+	writeFile(t, filepath.Join(project, ".skills", "project.yaml"), `version: 1
+name: demo
+categories: [Engineering]
+harnesses: [claude]
+`)
+	writeFile(t, filepath.Join(home, "library", "catalog.yaml"), `version: 1
+skills:
+  - name: review
+    categories: [Engineering]
+    compatibility:
+      mode: portable
+    requirements:
+      tools: []
+`)
+	writeFile(t, filepath.Join(home, "library", "review", "SKILL.md"), "first\n")
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := Run([]string{"install", "--project", project}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("install returned %d, want 0\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+	}
+	writeFile(t, filepath.Join(project, ".claude", "skills", "review", "local.md"), "local edit\n")
+
+	stdout.Reset()
+	stderr.Reset()
+	code = Run([]string{"uninstall", "--project", project, "--confirm"}, &stdout, &stderr)
+	if code != 4 {
+		t.Fatalf("uninstall returned %d, want 4\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+	}
+	if _, err := os.Stat(filepath.Join(project, ".claude", "skills", "review", "local.md")); err != nil {
+		t.Fatalf("expected uninstall to preserve locally edited copy: %v", err)
+	}
+	if !strings.Contains(stdout.String(), "manager-owned copy has local edits") {
+		t.Fatalf("stdout = %q, want local edit preserve message", stdout.String())
+	}
+}
+
+func TestManifestPathSeparatesSameNamedProjects(t *testing.T) {
+	home := t.TempDir()
+	parentA := filepath.Join(t.TempDir(), "left")
+	parentB := filepath.Join(t.TempDir(), "right")
+	projectA := filepath.Join(parentA, "app")
+	projectB := filepath.Join(parentB, "app")
+
+	pathA := manifestPath(home, projectA)
+	pathB := manifestPath(home, projectB)
+	if pathA == pathB {
+		t.Fatalf("manifestPath returned same path for distinct projects: %s", pathA)
+	}
+	if !strings.HasPrefix(filepath.Base(pathA), "app-") {
+		t.Fatalf("manifest path %s should keep readable project basename", pathA)
 	}
 }
 

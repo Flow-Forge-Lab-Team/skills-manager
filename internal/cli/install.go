@@ -125,6 +125,10 @@ func runInstall(args []string, stdout io.Writer, stderr io.Writer, syncMode bool
 		fmt.Fprintf(stderr, "read manifest: %v\n", err)
 		return 3
 	}
+	if manifest.ProjectPath != "" && manifest.ProjectPath != projectPath {
+		fmt.Fprintf(stderr, "manifest belongs to %s, not %s\n", manifest.ProjectPath, projectPath)
+		return 3
+	}
 	if manifest.ProjectPath == "" {
 		manifest = newManifest(projectPath)
 	}
@@ -254,6 +258,10 @@ func runUninstall(args []string, stdout io.Writer, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "no manifest found for project")
 		return 3
 	}
+	if manifest.ProjectPath != projectPath {
+		fmt.Fprintf(stderr, "manifest belongs to %s, not %s\n", manifest.ProjectPath, projectPath)
+		return 3
+	}
 
 	fmt.Fprintln(stdout, "Uninstall preview:")
 	for _, rel := range manifest.ManagedPaths {
@@ -264,14 +272,37 @@ func runUninstall(args []string, stdout io.Writer, stderr io.Writer) int {
 		return 2
 	}
 
+	remaining := map[string]bool{}
 	for i := len(manifest.ManagedPaths) - 1; i >= 0; i-- {
 		rel := manifest.ManagedPaths[i]
 		target := filepath.Join(projectPath, filepath.FromSlash(rel))
+		expected := manifest.Files[rel]
+		if expected != "" {
+			actual, err := fingerprintDir(target)
+			if err == nil && actual != expected {
+				fmt.Fprintf(stdout, "- preserve %s (manager-owned copy has local edits)\n", rel)
+				remaining[rel] = true
+				continue
+			}
+			if err != nil && !errors.Is(err, os.ErrNotExist) {
+				fmt.Fprintf(stderr, "fingerprint %s: %v\n", rel, err)
+				return 3
+			}
+		}
 		if err := os.RemoveAll(target); err != nil {
 			fmt.Fprintf(stderr, "remove %s: %v\n", rel, err)
 			return 3
 		}
 		pruneEmptyParents(projectPath, filepath.Dir(target))
+	}
+	if len(remaining) > 0 {
+		manifest.ManagedPaths = sortedKeys(remaining)
+		manifest.PreservedPaths = unionSorted(manifest.PreservedPaths, manifest.ManagedPaths)
+		if err := writeManifest(path, manifest); err != nil {
+			fmt.Fprintf(stderr, "write manifest: %v\n", err)
+			return 3
+		}
+		return 4
 	}
 	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 		fmt.Fprintf(stderr, "remove manifest: %v\n", err)
@@ -352,7 +383,12 @@ func managerHome() (string, error) {
 }
 
 func manifestPath(home string, projectPath string) string {
-	return filepath.Join(home, "manifests", slug(filepath.Base(projectPath))+".json")
+	return filepath.Join(home, "manifests", projectSlug(projectPath)+".json")
+}
+
+func projectSlug(projectPath string) string {
+	sum := sha256.Sum256([]byte(projectPath))
+	return slug(filepath.Base(projectPath)) + "-" + hex.EncodeToString(sum[:])[:12]
 }
 
 func slug(value string) string {
@@ -377,7 +413,7 @@ func newManifest(projectPath string) installManifest {
 	return installManifest{
 		Version:      1,
 		ProjectPath:  projectPath,
-		ProjectSlug:  slug(filepath.Base(projectPath)),
+		ProjectSlug:  projectSlug(projectPath),
 		InstalledAt:  time.Now().UTC().Format(time.RFC3339),
 		ManagedPaths: []string{},
 		Files:        map[string]string{},
@@ -889,4 +925,12 @@ func sortedKeys(values map[string]bool) []string {
 	}
 	sort.Strings(keys)
 	return keys
+}
+
+func unionSorted(left []string, right []string) []string {
+	values := mapFromSlice(left)
+	for _, item := range right {
+		values[item] = true
+	}
+	return sortedKeys(values)
 }
