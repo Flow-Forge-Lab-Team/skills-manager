@@ -342,6 +342,9 @@ skills:
 	if code != 0 {
 		t.Fatalf("Run returned %d, want 0\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
 	}
+	if !strings.Contains(stdout.String(), "warning, installing despite missing required tools") {
+		t.Fatalf("stdout = %q, want missing requirement override warning", stdout.String())
+	}
 	if _, err := os.Stat(filepath.Join(project, ".codex", "skills", "deploy", "SKILL.md")); err != nil {
 		t.Fatalf("expected override to install copy: %v", err)
 	}

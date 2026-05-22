@@ -177,6 +177,9 @@ func runInstall(args []string, stdout io.Writer, stderr io.Writer, syncMode bool
 			fmt.Fprintf(stdout, "- %s: blocked, missing required tools: %s\n", candidate.Skill.Name, strings.Join(missing, ", "))
 			continue
 		}
+		if len(missing) > 0 {
+			fmt.Fprintf(stdout, "- %s: warning, installing despite missing required tools: %s\n", candidate.Skill.Name, strings.Join(missing, ", "))
+		}
 
 		fmt.Fprintf(stdout, "- %s: %s; harnesses: %s\n", candidate.Skill.Name, candidate.Reason, strings.Join(candidate.Harnesses, ", "))
 		src := filepath.Join(libraryPath, candidate.Skill.Name)
