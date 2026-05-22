@@ -304,6 +304,59 @@ skills:
 	}
 }
 
+func TestSyncDryRunPreservesLocallyEditedStaleInstalls(t *testing.T) {
+	home := t.TempDir()
+	project := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+
+	writeFile(t, filepath.Join(project, ".skills", "project.yaml"), `version: 1
+name: demo
+categories: [Engineering]
+harnesses: [claude, codex]
+`)
+	writeFile(t, filepath.Join(home, "library", "catalog.yaml"), `version: 1
+skills:
+  - name: review
+    categories: [Engineering]
+    compatibility:
+      mode: portable
+    requirements:
+      tools: []
+`)
+	writeFile(t, filepath.Join(home, "library", "review", "SKILL.md"), "review\n")
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := Run([]string{"install", "--project", project}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("install returned %d, want 0\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+	}
+	writeFile(t, filepath.Join(project, ".codex", "skills", "review", "local.md"), "local edit\n")
+	writeFile(t, filepath.Join(home, "library", "catalog.yaml"), `version: 1
+skills:
+  - name: review
+    categories: [Engineering]
+    compatibility:
+      mode: exclusive
+      harness: claude
+    requirements:
+      tools: []
+`)
+
+	stdout.Reset()
+	stderr.Reset()
+	code = Run([]string{"sync", "--project", project, "--dry-run"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("sync dry-run returned %d, want 0\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "preserve stale .codex/skills/review") {
+		t.Fatalf("stdout = %q, want stale local edit preserve preview", stdout.String())
+	}
+	if strings.Contains(stdout.String(), "remove stale .codex/skills/review") {
+		t.Fatalf("stdout = %q, should not preview removal for locally edited stale install", stdout.String())
+	}
+}
+
 func TestUninstallPreservesLocallyEditedManagedTargets(t *testing.T) {
 	home := t.TempDir()
 	project := t.TempDir()
@@ -408,6 +461,40 @@ skills:
 	}
 	if _, err := os.Stat(filepath.Join(project, ".codex", "skills", "deploy", "SKILL.md")); err != nil {
 		t.Fatalf("expected override to install copy: %v", err)
+	}
+}
+
+func TestInstallRejectsSkillNamesThatEscapeHarnessRoots(t *testing.T) {
+	home := t.TempDir()
+	project := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+
+	writeFile(t, filepath.Join(project, ".skills", "project.yaml"), `version: 1
+name: demo
+categories: [Engineering]
+harnesses: [claude]
+`)
+	writeFile(t, filepath.Join(home, "library", "catalog.yaml"), `version: 1
+skills:
+  - name: ../owned
+    categories: [Engineering]
+    compatibility:
+      mode: portable
+    requirements:
+      tools: []
+`)
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := Run([]string{"install", "--project", project}, &stdout, &stderr)
+	if code != 3 {
+		t.Fatalf("Run returned %d, want 3\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "invalid skill name") {
+		t.Fatalf("stderr = %q, want invalid skill name message", stderr.String())
+	}
+	if _, err := os.Stat(filepath.Join(project, ".claude", "owned")); !os.IsNotExist(err) {
+		t.Fatalf("expected no escaped install target, got err %v", err)
 	}
 }
 

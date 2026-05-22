@@ -138,6 +138,12 @@ func runInstall(args []string, stdout io.Writer, stderr io.Writer, syncMode bool
 		fmt.Fprintf(stderr, "skill %q was not found or does not match this project\n", opts.onlySkill)
 		return 3
 	}
+	for _, candidate := range candidates {
+		if err := validateSkillName(candidate.Skill.Name); err != nil {
+			fmt.Fprintf(stderr, "invalid skill name %q: %v\n", candidate.Skill.Name, err)
+			return 3
+		}
+	}
 
 	blocked := 0
 	installed := 0
@@ -158,8 +164,9 @@ func runInstall(args []string, stdout io.Writer, stderr io.Writer, syncMode bool
 
 	desired := desiredManagedPaths(candidates)
 	if syncMode && opts.dryRun {
-		for _, rel := range staleManagedPaths(managed, desired) {
-			fmt.Fprintf(stdout, "- remove stale %s\n", rel)
+		if err := previewStaleManaged(projectPath, managed, desired, files, stdout); err != nil {
+			fmt.Fprintf(stderr, "preview stale installs: %v\n", err)
+			return 3
 		}
 	}
 
@@ -866,6 +873,25 @@ func pruneStaleManaged(projectPath string, managed map[string]bool, desired map[
 	return partial, nil
 }
 
+func previewStaleManaged(projectPath string, managed map[string]bool, desired map[string]bool, files map[string]string, stdout io.Writer) error {
+	for _, rel := range staleManagedPaths(managed, desired) {
+		target := filepath.Join(projectPath, filepath.FromSlash(rel))
+		expected := files[rel]
+		if expected != "" {
+			actual, err := fingerprintDir(target)
+			if err == nil && actual != expected {
+				fmt.Fprintf(stdout, "- preserve stale %s (manager-owned copy has local edits)\n", rel)
+				continue
+			}
+			if err != nil && !errors.Is(err, os.ErrNotExist) {
+				return fmt.Errorf("fingerprint %s: %w", rel, err)
+			}
+		}
+		fmt.Fprintf(stdout, "- remove stale %s\n", rel)
+	}
+	return nil
+}
+
 func missingRequiredTools(req requirements) []string {
 	var missing []string
 	for _, tool := range req.Tools {
@@ -878,6 +904,22 @@ func missingRequiredTools(req requirements) []string {
 	}
 	sort.Strings(missing)
 	return missing
+}
+
+func validateSkillName(name string) error {
+	if name == "" {
+		return errors.New("must not be empty")
+	}
+	if name == "." || name == ".." || filepath.Base(name) != name || filepath.Clean(name) != name {
+		return errors.New("must be a single path component")
+	}
+	for _, r := range name {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_' || r == '.' {
+			continue
+		}
+		return fmt.Errorf("contains unsupported character %q", r)
+	}
+	return nil
 }
 
 var (
