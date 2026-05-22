@@ -1,0 +1,1490 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>skills-manager</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --bg: #0a0a0a;
+    --bg-panel: #131316;
+    --bg-elev: #1a1a1f;
+    --bg-hover: #1f1f25;
+    --border: #26262d;
+    --border-soft: #1f1f25;
+    --text: #e5e5e5;
+    --text-muted: #888;
+    --text-faint: #555;
+    --accent: #7c7cff;
+    --accent-dim: rgba(124, 124, 255, 0.15);
+    --warn: #f59e0b;
+    --warn-dim: rgba(245, 158, 11, 0.12);
+    --ok: #10b981;
+    --ok-dim: rgba(16, 185, 129, 0.12);
+    --danger: #ef4444;
+    --danger-dim: rgba(239, 68, 68, 0.12);
+    --usage-1: #1e3a5f;
+    --usage-2: #2e5894;
+    --usage-3: #4476c4;
+    --usage-4: #6a96e0;
+  }
+  html, body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Inter", "SF Pro Text", system-ui, sans-serif;
+    font-size: 13px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+    min-height: 100vh;
+  }
+  code, .mono { font-family: "SF Mono", Monaco, "JetBrains Mono", monospace; font-size: 12px; }
+
+  /* Layout */
+  .app { display: grid; grid-template-columns: 240px 1fr; min-height: 100vh; }
+  .sidebar {
+    background: var(--bg-panel);
+    border-right: 1px solid var(--border);
+    padding: 16px 12px;
+    position: sticky; top: 0; height: 100vh; overflow-y: auto;
+  }
+  .main { padding: 24px 32px; max-width: 1400px; width: 100%; }
+
+  /* Sidebar */
+  .brand { display: flex; align-items: center; gap: 8px; padding: 4px 8px 20px; }
+  .brand-logo { width: 24px; height: 24px; border-radius: 6px;
+    background: linear-gradient(135deg, var(--accent), #b07cff);
+    display: flex; align-items: center; justify-content: center;
+    color: white; font-weight: 700; font-size: 13px;
+  }
+  .brand-name { font-weight: 600; letter-spacing: -0.01em; }
+  .nav-section { font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em;
+    color: var(--text-faint); padding: 12px 8px 6px; }
+  .nav-item {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 6px 10px; border-radius: 6px; cursor: pointer;
+    color: var(--text-muted); transition: all 0.15s; font-size: 13px;
+  }
+  .nav-item:hover { background: var(--bg-hover); color: var(--text); }
+  .nav-item.active { background: var(--accent-dim); color: var(--accent); font-weight: 500; }
+  .nav-count { font-size: 11px; color: var(--text-faint); }
+  .nav-item.active .nav-count { color: var(--accent); }
+  .nav-badge { background: var(--warn); color: black; font-size: 10px; padding: 1px 6px;
+    border-radius: 10px; font-weight: 600; }
+  .machine-pill { margin-top: auto; padding: 8px 10px; border: 1px solid var(--border);
+    border-radius: 8px; font-size: 11px; color: var(--text-muted); }
+  .machine-pill strong { color: var(--text); }
+
+  /* Main header */
+  .page-header { display: flex; justify-content: space-between; align-items: flex-start;
+    margin-bottom: 24px; }
+  .page-title { font-size: 22px; font-weight: 600; letter-spacing: -0.02em; }
+  .page-subtitle { color: var(--text-muted); font-size: 13px; margin-top: 4px; }
+
+  /* Buttons */
+  .btn {
+    background: var(--bg-elev); color: var(--text); border: 1px solid var(--border);
+    padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 12px;
+    transition: all 0.15s; font-family: inherit; font-weight: 500;
+  }
+  .btn:hover { background: var(--bg-hover); border-color: #383844; }
+  .btn-primary { background: var(--accent); border-color: var(--accent); color: white; }
+  .btn-primary:hover { background: #9090ff; border-color: #9090ff; }
+  .btn-sm { padding: 3px 9px; font-size: 11px; }
+  .btn-ghost { background: transparent; border-color: transparent; color: var(--text-muted); }
+  .btn-ghost:hover { background: var(--bg-hover); color: var(--text); }
+
+  /* Cards */
+  .card { background: var(--bg-panel); border: 1px solid var(--border); border-radius: 8px;
+    padding: 16px; }
+  .card-title { font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em;
+    color: var(--text-muted); margin-bottom: 12px; font-weight: 600; }
+
+  /* Stat tiles */
+  .stat-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 24px; }
+  .stat-tile { background: var(--bg-panel); border: 1px solid var(--border); border-radius: 8px;
+    padding: 16px 18px; }
+  .stat-num { font-size: 26px; font-weight: 600; letter-spacing: -0.02em; }
+  .stat-label { font-size: 12px; color: var(--text-muted); margin-top: 4px; }
+  .stat-delta { font-size: 11px; color: var(--ok); margin-top: 6px; }
+  .stat-delta.warn { color: var(--warn); }
+
+  /* Activity feed */
+  .activity-item { padding: 12px 0; border-bottom: 1px solid var(--border-soft);
+    display: grid; grid-template-columns: 80px 1fr auto; gap: 16px; align-items: start; }
+  .activity-item:last-child { border-bottom: none; }
+  .activity-time { color: var(--text-faint); font-size: 11px; padding-top: 2px; }
+  .activity-text { font-size: 13px; }
+  .activity-text strong { color: var(--accent); font-weight: 500; }
+  .activity-tag { display: inline-block; font-size: 10px; padding: 2px 6px; border-radius: 4px;
+    background: var(--bg-elev); color: var(--text-muted); margin-left: 4px; vertical-align: middle; }
+  .activity-tag.warn { background: var(--warn-dim); color: var(--warn); }
+  .activity-actions { display: flex; gap: 6px; }
+
+  /* Skills usage chart */
+  .usage-row { display: grid; grid-template-columns: 200px 1fr 60px; align-items: center;
+    gap: 12px; padding: 6px 0; font-size: 12px; }
+  .usage-name { color: var(--text); }
+  .usage-bar { height: 8px; background: var(--bg-elev); border-radius: 4px; overflow: hidden; }
+  .usage-fill { height: 100%; background: linear-gradient(90deg, var(--accent), #b07cff); }
+  .usage-count { color: var(--text-muted); font-variant-numeric: tabular-nums; text-align: right; }
+
+  /* Library view */
+  .library-layout { display: grid; grid-template-columns: 220px 1fr; gap: 24px; align-items: start; }
+  .filter-section { margin-bottom: 20px; }
+  .filter-label { font-size: 11px; text-transform: uppercase; color: var(--text-faint);
+    letter-spacing: 0.05em; margin-bottom: 8px; font-weight: 600; }
+  .filter-item { display: flex; justify-content: space-between; padding: 4px 6px;
+    border-radius: 4px; cursor: pointer; font-size: 12px; color: var(--text-muted); }
+  .filter-item:hover { background: var(--bg-hover); color: var(--text); }
+  .filter-item.active { color: var(--accent); }
+  .filter-item .count { font-size: 11px; color: var(--text-faint); }
+
+  .skill-list { display: flex; flex-direction: column; gap: 4px; }
+  .skill-row {
+    background: var(--bg-panel); border: 1px solid var(--border); border-radius: 8px;
+    padding: 14px 16px; cursor: pointer; transition: all 0.15s;
+  }
+  .skill-row:hover { border-color: #353541; transform: translateY(-1px); }
+  .skill-row-top { display: flex; justify-content: space-between; align-items: center;
+    margin-bottom: 6px; }
+  .skill-name { font-weight: 600; color: var(--text); font-size: 14px; }
+  .skill-cats { display: flex; gap: 4px; flex-wrap: wrap; }
+  .cat-chip { font-size: 10px; padding: 2px 8px; border-radius: 10px;
+    background: var(--bg-elev); color: var(--text-muted); border: 1px solid var(--border); }
+  .cat-chip.eng { background: rgba(124, 124, 255, 0.1); color: #b8b8ff; border-color: rgba(124, 124, 255, 0.2); }
+  .cat-chip.quality { background: rgba(16, 185, 129, 0.1); color: #6ee7c1; border-color: rgba(16, 185, 129, 0.2); }
+  .cat-chip.design { background: rgba(236, 72, 153, 0.1); color: #f9a8d4; border-color: rgba(236, 72, 153, 0.2); }
+  .cat-chip.agent { background: rgba(168, 85, 247, 0.1); color: #d8b4fe; border-color: rgba(168, 85, 247, 0.2); }
+  .cat-chip.ops { background: rgba(245, 158, 11, 0.1); color: #fbbf24; border-color: rgba(245, 158, 11, 0.2); }
+  .cat-chip.writing { background: rgba(244, 114, 182, 0.1); color: #fbcfe8; border-color: rgba(244, 114, 182, 0.2); }
+  .cat-chip.business { background: rgba(34, 197, 94, 0.1); color: #86efac; border-color: rgba(34, 197, 94, 0.2); }
+  .cat-chip.productivity { background: rgba(99, 102, 241, 0.1); color: #a5b4fc; border-color: rgba(99, 102, 241, 0.2); }
+  .cat-chip.documents { background: rgba(20, 184, 166, 0.1); color: #5eead4; border-color: rgba(20, 184, 166, 0.2); }
+  .cat-chip.data { background: rgba(14, 165, 233, 0.1); color: #7dd3fc; border-color: rgba(14, 165, 233, 0.2); }
+
+  .skill-meta { display: flex; gap: 14px; font-size: 11px; color: var(--text-muted); }
+  .skill-meta-item { display: flex; align-items: center; gap: 4px; }
+  .tag-pill { font-size: 10px; padding: 1px 7px; border-radius: 4px; background: var(--bg-elev);
+    color: var(--text-muted); }
+  .tag-pill.tag-gstack { background: rgba(124, 124, 255, 0.12); color: #b8b8ff; }
+  .tag-pill.tag-bmad { background: rgba(168, 85, 247, 0.12); color: #d8b4fe; }
+  .badge-update { background: var(--warn); color: black; font-size: 9px; padding: 1px 6px;
+    border-radius: 8px; font-weight: 700; }
+  .badge-exclusive { background: var(--bg-elev); color: var(--warn); font-size: 10px;
+    padding: 1px 6px; border-radius: 4px; border: 1px solid var(--warn-dim); }
+  .badge-portable { background: var(--ok-dim); color: var(--ok); font-size: 10px;
+    padding: 1px 6px; border-radius: 4px; }
+
+  .search-bar { display: flex; gap: 8px; margin-bottom: 16px; align-items: center; }
+  .search-input { flex: 1; background: var(--bg-panel); border: 1px solid var(--border);
+    border-radius: 6px; padding: 8px 12px; color: var(--text); font-family: inherit; font-size: 13px; }
+  .search-input:focus { outline: none; border-color: var(--accent); }
+  .sort-buttons { display: flex; gap: 4px; }
+
+  /* Matrix view */
+  .matrix-wrap { background: var(--bg-panel); border: 1px solid var(--border);
+    border-radius: 8px; overflow: hidden; }
+  .matrix-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  .matrix-table th, .matrix-table td { padding: 8px 10px; text-align: left;
+    border-bottom: 1px solid var(--border-soft); }
+  .matrix-table thead th { background: var(--bg-elev); font-weight: 600; font-size: 11px;
+    color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.04em;
+    position: sticky; top: 0; }
+  .matrix-table tbody tr:hover { background: var(--bg-hover); }
+  .matrix-skill { font-weight: 500; }
+  .matrix-cell { text-align: center; font-variant-numeric: tabular-nums;
+    font-family: "SF Mono", Monaco, monospace; font-size: 11px; }
+  .heat-0 { color: var(--text-faint); }
+  .heat-1 { background: rgba(76, 110, 200, 0.18); color: #b8c5ed; }
+  .heat-2 { background: rgba(76, 110, 200, 0.32); color: #d4dcff; }
+  .heat-3 { background: rgba(76, 110, 200, 0.52); color: #e8edff; }
+  .heat-4 { background: rgba(124, 124, 255, 0.7); color: white; font-weight: 600; }
+  .heat-na { color: var(--text-faint); }
+
+  .matrix-controls { display: flex; gap: 12px; margin-bottom: 16px; align-items: center;
+    flex-wrap: wrap; }
+  .matrix-control { display: flex; align-items: center; gap: 6px; font-size: 12px;
+    color: var(--text-muted); }
+  .matrix-control select { background: var(--bg-panel); border: 1px solid var(--border);
+    color: var(--text); padding: 4px 8px; border-radius: 4px; font-family: inherit; font-size: 12px; }
+
+  .legend { display: flex; gap: 16px; padding: 12px 16px; background: var(--bg-elev);
+    border-top: 1px solid var(--border); font-size: 11px; color: var(--text-muted); }
+  .legend-item { display: flex; align-items: center; gap: 6px; }
+  .legend-swatch { width: 14px; height: 12px; border-radius: 2px; }
+
+  /* Insights */
+  .insights { margin-top: 16px; }
+  .insight-row { display: flex; gap: 10px; padding: 8px 0; font-size: 13px;
+    color: var(--text-muted); }
+  .insight-icon { color: var(--warn); }
+
+  /* Project detail */
+  .project-meta-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px;
+    margin-bottom: 20px; }
+  .meta-cell { background: var(--bg-panel); border: 1px solid var(--border);
+    border-radius: 8px; padding: 12px 14px; }
+  .meta-label { font-size: 11px; color: var(--text-muted); margin-bottom: 6px; }
+  .meta-value { font-size: 13px; color: var(--text); }
+  .chip-row { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
+  .chip { font-size: 11px; padding: 3px 10px; border-radius: 12px;
+    background: var(--bg-elev); border: 1px solid var(--border); color: var(--text); }
+  .chip.active { background: var(--accent-dim); border-color: var(--accent); color: var(--accent); }
+  .chip-x { color: var(--text-faint); margin-left: 4px; cursor: pointer; }
+
+  .skill-section-header { font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em;
+    color: var(--text-muted); padding: 16px 0 8px; font-weight: 600; }
+
+  /* Skill detail / update diff */
+  .skill-header { display: flex; justify-content: space-between; align-items: flex-start;
+    margin-bottom: 12px; }
+  .description { color: var(--text-muted); margin-bottom: 16px; font-size: 14px; }
+  .key-value-grid { display: grid; grid-template-columns: 140px 1fr; gap: 8px 16px;
+    font-size: 12px; padding: 8px 0; }
+  .kv-key { color: var(--text-muted); }
+  .kv-value { color: var(--text); }
+
+  .update-panel { background: linear-gradient(180deg, rgba(245, 158, 11, 0.08), transparent);
+    border: 1px solid rgba(245, 158, 11, 0.3); border-radius: 8px; padding: 14px 16px;
+    margin: 12px 0; }
+  .update-panel-title { font-size: 12px; font-weight: 600; color: var(--warn);
+    margin-bottom: 4px; display: flex; align-items: center; gap: 6px; }
+  .ai-summary { background: linear-gradient(180deg, rgba(124, 124, 255, 0.06), transparent);
+    border: 1px solid rgba(124, 124, 255, 0.25); border-radius: 8px; padding: 16px; margin: 12px 0; }
+  .ai-summary-header { display: flex; align-items: center; gap: 8px; font-size: 12px;
+    color: var(--accent); margin-bottom: 10px; font-weight: 600; }
+  .ai-summary ul { list-style: none; padding: 0; margin: 8px 0; }
+  .ai-summary li { padding: 3px 0; font-size: 13px; padding-left: 14px; position: relative; }
+  .ai-summary li::before { content: "•"; position: absolute; left: 0; color: var(--accent); }
+  .ai-footer { font-size: 10px; color: var(--text-faint); margin-top: 10px;
+    padding-top: 10px; border-top: 1px solid var(--border-soft); }
+
+  .diff-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1px; background: var(--border);
+    border-radius: 6px; overflow: hidden; font-family: "SF Mono", monospace; font-size: 12px; }
+  .diff-side { background: var(--bg-elev); padding: 12px; }
+  .diff-side h4 { font-family: inherit; font-size: 11px; color: var(--text-muted);
+    text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 8px; }
+  .diff-line.add { background: rgba(16, 185, 129, 0.08); color: #6ee7c1; }
+  .diff-line.del { background: rgba(239, 68, 68, 0.08); color: #fca5a5; }
+  .diff-line { padding: 1px 6px; white-space: pre-wrap; }
+
+  /* Sparkline */
+  .sparkline { display: flex; align-items: end; gap: 2px; height: 32px; }
+  .spark-bar { background: var(--accent); width: 6px; border-radius: 1px;
+    opacity: 0.5; transition: opacity 0.2s; }
+  .spark-bar:hover { opacity: 1; }
+
+  .installed-row { display: grid; grid-template-columns: 220px 80px 1fr auto;
+    gap: 12px; padding: 8px 0; font-size: 13px; border-bottom: 1px solid var(--border-soft); }
+  .installed-row:last-child { border-bottom: none; }
+  .check { color: var(--ok); }
+  .warn-text { color: var(--warn); font-size: 11px; }
+
+  /* Misc */
+  .row-flex { display: flex; gap: 12px; align-items: center; }
+  .hidden { display: none !important; }
+  .text-muted { color: var(--text-muted); }
+  .text-warn { color: var(--warn); }
+  .text-ok { color: var(--ok); }
+  .mt-12 { margin-top: 12px; }
+  .mt-16 { margin-top: 16px; }
+  .mt-24 { margin-top: 24px; }
+  .mb-12 { margin-bottom: 12px; }
+  .mb-16 { margin-bottom: 16px; }
+  .gap-12 { gap: 12px; }
+  .gap-16 { gap: 16px; }
+
+  /* Top bar */
+  .topbar { display: flex; justify-content: flex-end; align-items: center; gap: 12px;
+    padding: 12px 16px; border-bottom: 1px solid var(--border); background: var(--bg);
+    position: sticky; top: 0; z-index: 10; }
+  .topbar-search { width: 280px; }
+  .machine-badge { display: flex; align-items: center; gap: 6px; font-size: 12px;
+    color: var(--text-muted); padding: 4px 10px; border-radius: 6px;
+    background: var(--bg-panel); border: 1px solid var(--border); }
+  .dot-ok { width: 6px; height: 6px; border-radius: 50%; background: var(--ok); }
+</style>
+</head>
+<body>
+<div class="app">
+  <!-- ============== SIDEBAR ============== -->
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="brand-logo">S</div>
+      <div class="brand-name">skills-manager</div>
+    </div>
+
+    <div class="nav-section">Manage</div>
+    <div class="nav-item active" data-view="overview">Overview</div>
+    <div class="nav-item" data-view="library">Library <span class="nav-count">251</span></div>
+    <div class="nav-item" data-view="projects">Projects <span class="nav-count">7</span></div>
+    <div class="nav-item" data-view="updates">Updates <span class="nav-badge">4</span></div>
+
+    <div class="nav-section">Insights</div>
+    <div class="nav-item" data-view="matrix">Matrix</div>
+    <div class="nav-item" data-view="machines">Cross-machine</div>
+
+    <div class="nav-section">More</div>
+    <div class="nav-item" data-view="discover">Discover</div>
+    <div class="nav-item" data-view="settings">Settings</div>
+
+    <div class="machine-pill" style="margin-top: 24px;">
+      <div style="display: flex; align-items: center; gap: 6px;">
+        <span class="dot-ok"></span><strong>greg-laptop</strong>
+      </div>
+      <div style="margin-top: 4px;">in sync · 12m ago</div>
+    </div>
+  </aside>
+
+  <!-- ============== MAIN ============== -->
+  <main class="main">
+
+    <!-- =========== OVERVIEW =========== -->
+    <section data-view-panel="overview">
+      <div class="page-header">
+        <div>
+          <h1 class="page-title">Overview</h1>
+          <div class="page-subtitle">251 skills · 7 projects · 4 updates ready</div>
+        </div>
+        <div class="row-flex">
+          <button class="btn">Scan disk</button>
+          <button class="btn btn-primary">+ Add skill</button>
+        </div>
+      </div>
+
+      <div class="stat-grid">
+        <div class="stat-tile">
+          <div class="stat-num">251</div>
+          <div class="stat-label">Skills in library</div>
+          <div class="stat-delta">↑ 3 new this week</div>
+        </div>
+        <div class="stat-tile">
+          <div class="stat-num">4</div>
+          <div class="stat-label">Updates ready</div>
+          <div class="stat-delta warn">↑ 1 new today</div>
+        </div>
+        <div class="stat-tile">
+          <div class="stat-num">2,847</div>
+          <div class="stat-label">Invocations · 30 days</div>
+          <div class="stat-delta">↑ 18% vs prior</div>
+        </div>
+      </div>
+
+      <div class="card mb-16">
+        <div class="card-title">Recent activity</div>
+        <div class="activity-item">
+          <div class="activity-time">12 min ago</div>
+          <div class="activity-text">
+            <strong>Hermes</strong> created <strong>code-reviewer</strong>
+            <span class="activity-tag warn">auto-created</span>
+            <div class="text-muted" style="margin-top: 2px; font-size: 12px;">
+              Detected in ~/.hermes/skills/ — not yet registered
+            </div>
+          </div>
+          <div class="activity-actions">
+            <button class="btn btn-sm btn-primary">Ingest</button>
+            <button class="btn btn-sm">View</button>
+            <button class="btn btn-sm btn-ghost">Dismiss</button>
+          </div>
+        </div>
+        <div class="activity-item">
+          <div class="activity-time">2h ago</div>
+          <div class="activity-text">
+            Skill <strong>pdf</strong> has update available <code>v1.4.2 → v1.5.0</code>
+            <div class="text-muted" style="margin-top: 2px; font-size: 12px;">
+              From Anthropic Skills marketplace · affects 3 projects
+            </div>
+          </div>
+          <div class="activity-actions">
+            <button class="btn btn-sm btn-primary">Review diff</button>
+            <button class="btn btn-sm">Accept</button>
+            <button class="btn btn-sm btn-ghost">Pin v1.4.2</button>
+          </div>
+        </div>
+        <div class="activity-item">
+          <div class="activity-time">4h ago</div>
+          <div class="activity-text">
+            Synced library from <code>github.com/greg/skills-store</code>
+            <span class="text-muted">— 3 changes pulled</span>
+          </div>
+          <div></div>
+        </div>
+        <div class="activity-item">
+          <div class="activity-time">yesterday</div>
+          <div class="activity-text">
+            Installed <strong>shadcn-ui</strong> in <strong>my-saas-app</strong> and <strong>internal-tools</strong>
+          </div>
+          <div></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Most-used skills · last 30 days</div>
+        <div class="usage-row">
+          <div class="usage-name">verification-before-completion</div>
+          <div class="usage-bar"><div class="usage-fill" style="width: 100%;"></div></div>
+          <div class="usage-count">847</div>
+        </div>
+        <div class="usage-row">
+          <div class="usage-name">systematic-debugging</div>
+          <div class="usage-bar"><div class="usage-fill" style="width: 72%;"></div></div>
+          <div class="usage-count">612</div>
+        </div>
+        <div class="usage-row">
+          <div class="usage-name">ship</div>
+          <div class="usage-bar"><div class="usage-fill" style="width: 50%;"></div></div>
+          <div class="usage-count">421</div>
+        </div>
+        <div class="usage-row">
+          <div class="usage-name">qa</div>
+          <div class="usage-bar"><div class="usage-fill" style="width: 46%;"></div></div>
+          <div class="usage-count">389</div>
+        </div>
+        <div class="usage-row">
+          <div class="usage-name">linear-feature</div>
+          <div class="usage-bar"><div class="usage-fill" style="width: 28%;"></div></div>
+          <div class="usage-count">234</div>
+        </div>
+        <div class="usage-row">
+          <div class="usage-name">shadcn-ui</div>
+          <div class="usage-bar"><div class="usage-fill" style="width: 6%;"></div></div>
+          <div class="usage-count">47</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- =========== LIBRARY =========== -->
+    <section data-view-panel="library" class="hidden">
+      <div class="page-header">
+        <div>
+          <h1 class="page-title">Library</h1>
+          <div class="page-subtitle">All skills you've ever installed · 251 skills</div>
+        </div>
+        <div class="row-flex">
+          <button class="btn">Scan disk</button>
+          <button class="btn btn-primary">+ Add skill</button>
+        </div>
+      </div>
+
+      <div class="library-layout">
+        <aside>
+          <div class="filter-section">
+            <div class="filter-label">Categories</div>
+            <div class="filter-item active"><span>All</span><span class="count">251</span></div>
+            <div class="filter-item"><span>Engineering</span><span class="count">119</span></div>
+            <div class="filter-item"><span>Agent-tooling</span><span class="count">64</span></div>
+            <div class="filter-item"><span>Quality</span><span class="count">51</span></div>
+            <div class="filter-item"><span>Writing</span><span class="count">33</span></div>
+            <div class="filter-item"><span>Design</span><span class="count">32</span></div>
+            <div class="filter-item"><span>Productivity</span><span class="count">24</span></div>
+            <div class="filter-item"><span>Operations</span><span class="count">21</span></div>
+            <div class="filter-item"><span>Business</span><span class="count">19</span></div>
+            <div class="filter-item"><span>Documents</span><span class="count">6</span></div>
+            <div class="filter-item"><span>Data</span><span class="count">5</span></div>
+          </div>
+
+          <div class="filter-section">
+            <div class="filter-label">Top tags</div>
+            <div class="filter-item"><span>gstack</span><span class="count">44</span></div>
+            <div class="filter-item"><span>bmad</span><span class="count">44</span></div>
+            <div class="filter-item"><span>slash-command</span><span class="count">40</span></div>
+            <div class="filter-item"><span>methodology</span><span class="count">24</span></div>
+            <div class="filter-item"><span>orchestration</span><span class="count">20</span></div>
+            <div class="filter-item"><span>github</span><span class="count">14</span></div>
+            <div class="filter-item"><span>superpowers</span><span class="count">14</span></div>
+            <div class="filter-item"><span>mcp</span><span class="count">7</span></div>
+            <div class="filter-item"><span>shadcn</span><span class="count">4</span></div>
+          </div>
+
+          <div class="filter-section">
+            <div class="filter-label">Source</div>
+            <div class="filter-item"><span>Anthropic</span><span class="count">16</span></div>
+            <div class="filter-item"><span>Marketplace</span><span class="count">87</span></div>
+            <div class="filter-item"><span>GitHub</span><span class="count">62</span></div>
+            <div class="filter-item"><span>AI-authored</span><span class="count">12</span></div>
+            <div class="filter-item"><span>Hand-written</span><span class="count">74</span></div>
+          </div>
+
+          <div class="filter-section">
+            <div class="filter-label">Compatibility</div>
+            <div class="filter-item"><span>Portable</span><span class="count">163</span></div>
+            <div class="filter-item"><span>Exclusive</span><span class="count">88</span></div>
+          </div>
+        </aside>
+
+        <div>
+          <div class="search-bar">
+            <input class="search-input" placeholder="Search skills, descriptions, tags...">
+            <div class="sort-buttons">
+              <button class="btn btn-sm">Name</button>
+              <button class="btn btn-sm">Usage</button>
+              <button class="btn btn-sm">Recent</button>
+              <button class="btn btn-sm">Updates</button>
+            </div>
+          </div>
+
+          <div class="skill-list">
+            <!-- qa -->
+            <div class="skill-row" onclick="switchView('skill-detail')">
+              <div class="skill-row-top">
+                <div class="row-flex" style="gap: 10px;">
+                  <div class="skill-name">qa</div>
+                  <span class="badge-update">UPDATE</span>
+                  <span class="badge-exclusive">exclusive: claude</span>
+                </div>
+                <div class="skill-cats">
+                  <span class="cat-chip eng">Engineering</span>
+                  <span class="cat-chip quality">Quality</span>
+                </div>
+              </div>
+              <div class="text-muted" style="font-size: 13px; margin-bottom: 8px;">
+                Systematically QA test a web application and fix bugs found in source code.
+              </div>
+              <div class="skill-meta">
+                <div class="skill-meta-item">used <strong style="color: var(--text);">389×</strong></div>
+                <div class="skill-meta-item">5 projects</div>
+                <div class="skill-meta-item">
+                  <span class="tag-pill tag-gstack">gstack</span>
+                  <span class="tag-pill">slash-command</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- shadcn-ui -->
+            <div class="skill-row">
+              <div class="skill-row-top">
+                <div class="row-flex" style="gap: 10px;">
+                  <div class="skill-name">shadcn-ui</div>
+                  <span class="badge-portable">portable</span>
+                </div>
+                <div class="skill-cats">
+                  <span class="cat-chip design">Design</span>
+                  <span class="cat-chip eng">Engineering</span>
+                </div>
+              </div>
+              <div class="text-muted" style="font-size: 13px; margin-bottom: 8px;">
+                Build UIs with shadcn/ui v4 components, Tailwind CSS v4, and the shadcn CLI.
+              </div>
+              <div class="skill-meta">
+                <div class="skill-meta-item">used <strong style="color: var(--text);">47×</strong></div>
+                <div class="skill-meta-item">2 projects</div>
+                <div class="skill-meta-item">
+                  <span class="tag-pill">shadcn</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- verification-before-completion -->
+            <div class="skill-row">
+              <div class="skill-row-top">
+                <div class="row-flex" style="gap: 10px;">
+                  <div class="skill-name">verification-before-completion</div>
+                  <span class="badge-portable">portable</span>
+                </div>
+                <div class="skill-cats">
+                  <span class="cat-chip quality">Quality</span>
+                </div>
+              </div>
+              <div class="text-muted" style="font-size: 13px; margin-bottom: 8px;">
+                Use when about to claim work is complete - requires running verification commands.
+              </div>
+              <div class="skill-meta">
+                <div class="skill-meta-item">used <strong style="color: var(--text);">847×</strong></div>
+                <div class="skill-meta-item">7 projects</div>
+                <div class="skill-meta-item">
+                  <span class="tag-pill">superpowers</span>
+                  <span class="tag-pill">methodology</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- linear-feature -->
+            <div class="skill-row">
+              <div class="skill-row-top">
+                <div class="row-flex" style="gap: 10px;">
+                  <div class="skill-name">linear-feature</div>
+                  <span class="badge-portable">portable</span>
+                </div>
+                <div class="skill-cats">
+                  <span class="cat-chip eng">Engineering</span>
+                  <span class="cat-chip ops">Operations</span>
+                </div>
+              </div>
+              <div class="text-muted" style="font-size: 13px; margin-bottom: 8px;">
+                Full orchestrator for completing Linear issues: branch, implement, PR, codex review loop, merge.
+              </div>
+              <div class="skill-meta">
+                <div class="skill-meta-item">used <strong style="color: var(--text);">234×</strong></div>
+                <div class="skill-meta-item">4 projects</div>
+                <div class="skill-meta-item">
+                  <span class="tag-pill">linear</span>
+                  <span class="tag-pill">github</span>
+                  <span class="tag-pill">multi-agent</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- supabase-postgres-best-practices -->
+            <div class="skill-row">
+              <div class="skill-row-top">
+                <div class="row-flex" style="gap: 10px;">
+                  <div class="skill-name">supabase-postgres-best-practices</div>
+                  <span class="badge-portable">portable</span>
+                </div>
+                <div class="skill-cats">
+                  <span class="cat-chip data">Data</span>
+                  <span class="cat-chip eng">Engineering</span>
+                  <span class="cat-chip quality">Quality</span>
+                </div>
+              </div>
+              <div class="text-muted" style="font-size: 13px; margin-bottom: 8px;">
+                Postgres performance optimization and best practices from Supabase.
+              </div>
+              <div class="skill-meta">
+                <div class="skill-meta-item">used <strong style="color: var(--text);">23×</strong></div>
+                <div class="skill-meta-item">1 project</div>
+                <div class="skill-meta-item">
+                  <span class="tag-pill">supabase</span>
+                  <span class="tag-pill">postgres</span>
+                  <span class="tag-pill">methodology</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- pdf -->
+            <div class="skill-row">
+              <div class="skill-row-top">
+                <div class="row-flex" style="gap: 10px;">
+                  <div class="skill-name">pdf</div>
+                  <span class="badge-update">UPDATE</span>
+                  <span class="badge-portable">portable</span>
+                </div>
+                <div class="skill-cats">
+                  <span class="cat-chip documents">Documents</span>
+                </div>
+              </div>
+              <div class="text-muted" style="font-size: 13px; margin-bottom: 8px;">
+                Comprehensive PDF manipulation toolkit for extracting text and tables, creating PDFs, merging/splitting.
+              </div>
+              <div class="skill-meta">
+                <div class="skill-meta-item">used <strong style="color: var(--text);">23×</strong></div>
+                <div class="skill-meta-item">3 projects</div>
+                <div class="skill-meta-item">
+                  <span class="tag-pill">pypdf</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- skill-creator -->
+            <div class="skill-row">
+              <div class="skill-row-top">
+                <div class="row-flex" style="gap: 10px;">
+                  <div class="skill-name">skill-creator</div>
+                  <span class="badge-portable">portable</span>
+                </div>
+                <div class="skill-cats">
+                  <span class="cat-chip agent">Agent-tooling</span>
+                </div>
+              </div>
+              <div class="text-muted" style="font-size: 13px; margin-bottom: 8px;">
+                Guide for creating effective skills that extend Claude's capabilities.
+              </div>
+              <div class="skill-meta">
+                <div class="skill-meta-item">used <strong style="color: var(--text);">8×</strong></div>
+                <div class="skill-meta-item">1 project</div>
+                <div class="skill-meta-item">
+                  <span class="tag-pill">methodology</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- freeze -->
+            <div class="skill-row">
+              <div class="skill-row-top">
+                <div class="row-flex" style="gap: 10px;">
+                  <div class="skill-name">freeze</div>
+                  <span class="badge-exclusive">exclusive: claude</span>
+                </div>
+                <div class="skill-cats">
+                  <span class="cat-chip agent">Agent-tooling</span>
+                </div>
+              </div>
+              <div class="text-muted" style="font-size: 13px; margin-bottom: 8px;">
+                Restrict file edits to a specific directory for the session.
+              </div>
+              <div class="skill-meta">
+                <div class="skill-meta-item">used <strong style="color: var(--text);">14×</strong></div>
+                <div class="skill-meta-item">3 projects</div>
+                <div class="skill-meta-item">
+                  <span class="tag-pill tag-gstack">gstack</span>
+                  <span class="tag-pill">session-mode</span>
+                  <span class="tag-pill">slash-command</span>
+                </div>
+              </div>
+            </div>
+
+            <div style="text-align: center; padding: 16px; color: var(--text-faint); font-size: 12px;">
+              showing 1–8 of 251 · <a href="#" style="color: var(--accent); text-decoration: none;">load more</a>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- =========== SKILL DETAIL =========== -->
+    <section data-view-panel="skill-detail" class="hidden">
+      <div class="page-header">
+        <div>
+          <div class="text-muted" style="font-size: 12px;">
+            <a href="#" onclick="switchView('library')" style="color: var(--accent); text-decoration: none;">← Library</a>
+            <span style="margin: 0 6px;">/</span> qa
+          </div>
+          <h1 class="page-title" style="margin-top: 4px;">qa</h1>
+          <div class="description">Systematically QA test a web application and fix bugs found in source code.</div>
+        </div>
+        <div class="row-flex">
+          <button class="btn">Edit</button>
+          <button class="btn btn-ghost">Remove</button>
+        </div>
+      </div>
+
+      <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 16px;">
+        <div>
+          <!-- Update available -->
+          <div class="update-panel">
+            <div class="update-panel-title">⚠ Update available · v2.3.4 → v2.4.0</div>
+            <div class="text-muted" style="font-size: 13px; margin-bottom: 12px;">
+              Adds incident-mode flag; tightens activation description. Released 6h ago.
+            </div>
+            <div class="row-flex">
+              <button class="btn btn-sm btn-primary">Review changes</button>
+              <button class="btn btn-sm">Accept</button>
+              <button class="btn btn-sm btn-ghost">Pin v2.3.4</button>
+            </div>
+          </div>
+
+          <!-- Categories & tags -->
+          <div class="card mb-16">
+            <div class="card-title">Categories & tags</div>
+            <div style="margin-bottom: 8px;">
+              <div class="text-muted" style="font-size: 11px; margin-bottom: 4px;">Categories</div>
+              <div class="chip-row">
+                <span class="cat-chip eng">Engineering <span class="chip-x">×</span></span>
+                <span class="cat-chip quality">Quality <span class="chip-x">×</span></span>
+                <span class="chip">+ add</span>
+              </div>
+            </div>
+            <div>
+              <div class="text-muted" style="font-size: 11px; margin-bottom: 4px;">Tags</div>
+              <div class="chip-row">
+                <span class="tag-pill tag-gstack">gstack <span class="chip-x">×</span></span>
+                <span class="tag-pill">slash-command <span class="chip-x">×</span></span>
+                <span class="chip">+ add</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Compatibility -->
+          <div class="card mb-16">
+            <div class="card-title">Compatibility</div>
+            <div style="font-size: 13px;">
+              <strong class="text-warn">⚠ Exclusive: claude</strong>
+              <span class="text-muted">· auto-detected from skill content</span>
+            </div>
+            <ul style="list-style: none; padding: 8px 0; font-size: 12px; color: var(--text-muted);">
+              <li style="padding: 2px 0;">— Uses AskUserQuestion (Claude-specific UI primitive)</li>
+              <li style="padding: 2px 0;">— References Plan Mode</li>
+              <li style="padding: 2px 0;">— Uses gstack preamble + lifecycle hooks</li>
+            </ul>
+            <div class="text-muted" style="font-size: 12px; margin: 8px 0;">
+              <strong style="color: var(--text);">Won't install in:</strong> codex, grok, hermes, antigravity
+            </div>
+            <button class="btn btn-sm">Change to portable</button>
+            <button class="btn btn-sm">Port for other harnesses</button>
+          </div>
+
+          <!-- Installed in -->
+          <div class="card mb-16">
+            <div class="card-title">Installed in (5 projects)</div>
+            <div class="installed-row">
+              <div><strong>my-saas-app</strong></div>
+              <div class="usage-count">used 187×</div>
+              <div class="text-muted">last 2h ago</div>
+              <span class="check">✓</span>
+            </div>
+            <div class="installed-row">
+              <div><strong>blog</strong></div>
+              <div class="usage-count">used 43×</div>
+              <div class="text-muted">yesterday</div>
+              <span class="check">✓</span>
+            </div>
+            <div class="installed-row">
+              <div><strong>internal-tools</strong></div>
+              <div class="usage-count">used 31×</div>
+              <div class="text-muted">3d ago</div>
+              <span class="check">✓</span>
+            </div>
+            <div class="installed-row">
+              <div><strong>scratch</strong></div>
+              <div class="usage-count">used 8×</div>
+              <div class="text-muted">2w ago</div>
+              <span class="check">✓</span>
+            </div>
+            <div class="installed-row">
+              <div><strong>acme-client-portal</strong></div>
+              <div class="usage-count">used 0×</div>
+              <div class="warn-text">⚠ never used — consider removing</div>
+              <span class="check">✓</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Right column: origin + usage -->
+        <div>
+          <div class="card mb-16">
+            <div class="card-title">Origin</div>
+            <div class="key-value-grid">
+              <div class="kv-key">Source</div>
+              <div class="kv-value">local (gstack)</div>
+              <div class="kv-key">Version</div>
+              <div class="kv-value mono">v2.3.4</div>
+              <div class="kv-key">Released</div>
+              <div class="kv-value">2026-05-15</div>
+              <div class="kv-key">Fingerprint</div>
+              <div class="kv-value mono" style="font-size: 11px;">a7f3...d8c2</div>
+              <div class="kv-key">Local edits</div>
+              <div class="kv-value">none</div>
+            </div>
+          </div>
+
+          <div class="card mb-16">
+            <div class="card-title">Usage · 30 days</div>
+            <div style="font-size: 22px; font-weight: 600; margin-bottom: 4px;">389</div>
+            <div class="text-muted" style="font-size: 11px; margin-bottom: 12px;">total invocations</div>
+
+            <div class="text-muted" style="font-size: 11px; margin-bottom: 4px;">By trigger</div>
+            <div class="usage-row" style="grid-template-columns: 80px 1fr 40px; padding: 3px 0; font-size: 11px;">
+              <div>User</div>
+              <div class="usage-bar"><div class="usage-fill" style="width: 70%;"></div></div>
+              <div class="usage-count">274</div>
+            </div>
+            <div class="usage-row" style="grid-template-columns: 80px 1fr 40px; padding: 3px 0; font-size: 11px;">
+              <div>Proactive</div>
+              <div class="usage-bar"><div class="usage-fill" style="width: 25%;"></div></div>
+              <div class="usage-count">98</div>
+            </div>
+            <div class="usage-row" style="grid-template-columns: 80px 1fr 40px; padding: 3px 0; font-size: 11px;">
+              <div>Nested</div>
+              <div class="usage-bar"><div class="usage-fill" style="width: 5%;"></div></div>
+              <div class="usage-count">17</div>
+            </div>
+
+            <div class="text-muted" style="font-size: 11px; margin: 12px 0 6px;">Daily trend</div>
+            <div class="sparkline">
+              <!-- Sparkline bars -->
+              <div class="spark-bar" style="height: 30%;"></div>
+              <div class="spark-bar" style="height: 45%;"></div>
+              <div class="spark-bar" style="height: 60%;"></div>
+              <div class="spark-bar" style="height: 75%;"></div>
+              <div class="spark-bar" style="height: 90%;"></div>
+              <div class="spark-bar" style="height: 80%;"></div>
+              <div class="spark-bar" style="height: 65%;"></div>
+              <div class="spark-bar" style="height: 50%;"></div>
+              <div class="spark-bar" style="height: 70%;"></div>
+              <div class="spark-bar" style="height: 100%;"></div>
+              <div class="spark-bar" style="height: 85%;"></div>
+              <div class="spark-bar" style="height: 70%;"></div>
+              <div class="spark-bar" style="height: 50%;"></div>
+              <div class="spark-bar" style="height: 35%;"></div>
+              <div class="spark-bar" style="height: 50%;"></div>
+              <div class="spark-bar" style="height: 65%;"></div>
+              <div class="spark-bar" style="height: 70%;"></div>
+              <div class="spark-bar" style="height: 80%;"></div>
+              <div class="spark-bar" style="height: 90%;"></div>
+              <div class="spark-bar" style="height: 75%;"></div>
+              <div class="spark-bar" style="height: 50%;"></div>
+              <div class="spark-bar" style="height: 35%;"></div>
+              <div class="spark-bar" style="height: 25%;"></div>
+              <div class="spark-bar" style="height: 35%;"></div>
+              <div class="spark-bar" style="height: 50%;"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- =========== PROJECT DETAIL =========== -->
+    <section data-view-panel="projects" class="hidden">
+      <div class="page-header">
+        <div>
+          <h1 class="page-title">my-saas-app</h1>
+          <div class="page-subtitle"><code>~/dev/my-saas-app</code> · last synced 2h ago</div>
+        </div>
+        <div class="row-flex">
+          <button class="btn">Sync</button>
+          <button class="btn">Open in editor</button>
+        </div>
+      </div>
+
+      <div class="project-meta-grid">
+        <div class="meta-cell">
+          <div class="meta-label">Categories</div>
+          <div class="chip-row" style="margin: 4px 0 0;">
+            <span class="chip active">Engineering</span>
+            <span class="chip active">Design</span>
+            <span class="chip active">Quality</span>
+            <span class="chip active">Operations</span>
+          </div>
+        </div>
+        <div class="meta-cell">
+          <div class="meta-label">Tags</div>
+          <div class="chip-row" style="margin: 4px 0 0;">
+            <span class="chip">react</span>
+            <span class="chip">nextjs</span>
+            <span class="chip">shadcn</span>
+            <span class="chip">supabase</span>
+            <span class="chip">stripe</span>
+            <span class="chip">sentry</span>
+          </div>
+        </div>
+        <div class="meta-cell">
+          <div class="meta-label">Active harnesses</div>
+          <div class="chip-row" style="margin: 4px 0 0;">
+            <span class="chip active">claude</span>
+            <span class="chip active">codex</span>
+            <span class="chip active">grok</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="meta-cell mb-16" style="background: rgba(124,124,255,0.05); border-color: rgba(124,124,255,0.2);">
+        <div class="meta-label" style="color: var(--accent);">Detected stack (auto)</div>
+        <div class="meta-value">
+          <span class="mono">package.json</span> → next.js, shadcn/ui, supabase, sentry, playwright
+        </div>
+      </div>
+
+      <div class="skill-section-header">Auto-matched (18)</div>
+      <div class="skill-list">
+        <div class="skill-row">
+          <div class="skill-row-top">
+            <div class="row-flex" style="gap: 10px;">
+              <div class="skill-name">shadcn-ui</div>
+              <span class="badge-portable">portable</span>
+            </div>
+            <div class="usage-count">used 47×</div>
+          </div>
+          <div class="skill-meta">
+            <span class="cat-chip design">Design</span>
+            <span class="cat-chip eng">Engineering</span>
+            <span class="tag-pill">shadcn</span>
+            <span style="margin-left: auto;" class="text-muted">matched on: shadcn tag</span>
+          </div>
+        </div>
+        <div class="skill-row">
+          <div class="skill-row-top">
+            <div class="row-flex" style="gap: 10px;">
+              <div class="skill-name">verification-before-completion</div>
+              <span class="badge-portable">portable</span>
+            </div>
+            <div class="usage-count">used 847×</div>
+          </div>
+          <div class="skill-meta">
+            <span class="cat-chip quality">Quality</span>
+            <span class="tag-pill">methodology</span>
+            <span style="margin-left: auto;" class="text-muted">matched on: Quality category</span>
+          </div>
+        </div>
+        <div class="skill-row">
+          <div class="skill-row-top">
+            <div class="row-flex" style="gap: 10px;">
+              <div class="skill-name">qa</div>
+              <span class="badge-exclusive">exclusive: claude</span>
+            </div>
+            <div class="usage-count">used 187×</div>
+          </div>
+          <div class="skill-meta">
+            <span class="cat-chip eng">Engineering</span>
+            <span class="cat-chip quality">Quality</span>
+            <span class="tag-pill tag-gstack">gstack</span>
+            <span style="margin-left: auto;" class="warn-text">claude only — codex/grok skipped</span>
+          </div>
+        </div>
+        <div class="skill-row">
+          <div class="skill-row-top">
+            <div class="row-flex" style="gap: 10px;">
+              <div class="skill-name">supabase-postgres-best-practices</div>
+              <span class="badge-portable">portable</span>
+            </div>
+            <div class="usage-count">used 23×</div>
+          </div>
+          <div class="skill-meta">
+            <span class="cat-chip data">Data</span>
+            <span class="cat-chip eng">Engineering</span>
+            <span class="cat-chip quality">Quality</span>
+            <span class="tag-pill">supabase</span>
+            <span style="margin-left: auto;" class="text-muted">matched on: supabase tag</span>
+          </div>
+        </div>
+        <div class="skill-row">
+          <div class="skill-row-top">
+            <div class="row-flex" style="gap: 10px;">
+              <div class="skill-name">linear-feature</div>
+              <span class="badge-portable">portable</span>
+            </div>
+            <div class="usage-count">used 89×</div>
+          </div>
+          <div class="skill-meta">
+            <span class="cat-chip eng">Engineering</span>
+            <span class="cat-chip ops">Operations</span>
+            <span class="tag-pill">linear</span>
+            <span class="tag-pill">github</span>
+            <span style="margin-left: auto;" class="text-muted">matched on: Engineering category</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="skill-section-header">Suggested but not installed (2)</div>
+      <div class="skill-list">
+        <div class="skill-row">
+          <div class="skill-row-top">
+            <div class="row-flex" style="gap: 10px;">
+              <div class="skill-name">stripe-best-practices</div>
+              <span class="badge-portable">portable</span>
+            </div>
+            <div class="row-flex">
+              <button class="btn btn-sm btn-primary">Install</button>
+              <button class="btn btn-sm btn-ghost">Dismiss</button>
+            </div>
+          </div>
+          <div class="skill-meta">
+            <span class="cat-chip eng">Engineering</span>
+            <span class="tag-pill">stripe</span>
+            <span style="margin-left: auto;" class="text-muted">matched on: stripe tag</span>
+          </div>
+        </div>
+        <div class="skill-row">
+          <div class="skill-row-top">
+            <div class="row-flex" style="gap: 10px;">
+              <div class="skill-name">sentry-setup-tracing</div>
+              <span class="badge-portable">portable</span>
+            </div>
+            <div class="row-flex">
+              <button class="btn btn-sm btn-primary">Install</button>
+              <button class="btn btn-sm btn-ghost">Dismiss</button>
+            </div>
+          </div>
+          <div class="skill-meta">
+            <span class="cat-chip ops">Operations</span>
+            <span class="tag-pill">sentry</span>
+            <span style="margin-left: auto;" class="text-muted">matched on: sentry tag</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- =========== UPDATES =========== -->
+    <section data-view-panel="updates" class="hidden">
+      <div class="page-header">
+        <div>
+          <h1 class="page-title">Updates</h1>
+          <div class="page-subtitle">4 skills with upstream changes ready to review</div>
+        </div>
+        <div class="row-flex">
+          <button class="btn">Check all sources</button>
+          <button class="btn btn-primary">Accept all safe</button>
+        </div>
+      </div>
+
+      <!-- pdf update with AI summary -->
+      <div class="card mb-16">
+        <div class="skill-header">
+          <div>
+            <div class="row-flex" style="gap: 10px;">
+              <span style="font-size: 16px; font-weight: 600;">pdf</span>
+              <code style="color: var(--text-muted);">v1.4.2 → v1.5.0</code>
+              <span class="text-muted">· Anthropic Skills marketplace</span>
+              <span class="text-muted">· released 4 days ago</span>
+            </div>
+          </div>
+          <div class="row-flex">
+            <button class="btn btn-sm btn-primary">Accept</button>
+            <button class="btn btn-sm">Pin current</button>
+          </div>
+        </div>
+
+        <div class="ai-summary">
+          <div class="ai-summary-header">
+            <span style="font-size: 16px;">✨</span>
+            <span>AI summary · what changed</span>
+          </div>
+          <ul>
+            <li>Added new section on PDF form filling (forms.md reference)</li>
+            <li>Description tightened — removed "and manipulating" to reduce over-activation on simple file-read tasks</li>
+            <li>Removed deprecated pypdf2 examples (now uses pypdf only)</li>
+            <li>Two new code snippets for table extraction</li>
+          </ul>
+          <div style="display: flex; gap: 24px; margin-top: 12px; font-size: 12px;">
+            <div><span class="text-muted">Breaking:</span> <span class="text-ok">none</span></div>
+            <div><span class="text-muted">Description changed:</span> <span class="text-warn">yes</span></div>
+            <div><span class="text-muted">Compat changed:</span> <span class="text-ok">no</span></div>
+            <div><span class="text-muted">+40/-12 lines</span></div>
+          </div>
+          <div class="ai-footer">Summarized by claude-opus-4-7 · via skills-diff-summary skill</div>
+        </div>
+
+        <div class="diff-grid mt-12">
+          <div class="diff-side">
+            <h4>v1.4.2 (current)</h4>
+            <div class="diff-line">description: PDF manipulation toolkit</div>
+            <div class="diff-line del">for extracting text and tables,</div>
+            <div class="diff-line del">creating PDFs, merging/splitting and</div>
+            <div class="diff-line del">manipulating documents...</div>
+            <div class="diff-line">&nbsp;</div>
+            <div class="diff-line">## Quick Start</div>
+            <div class="diff-line">```python</div>
+            <div class="diff-line del">from pypdf2 import PdfReader</div>
+            <div class="diff-line">```</div>
+          </div>
+          <div class="diff-side">
+            <h4>v1.5.0 (incoming)</h4>
+            <div class="diff-line">description: PDF processing</div>
+            <div class="diff-line add">for extracting text and tables,</div>
+            <div class="diff-line add">creating PDFs, merging/splitting</div>
+            <div class="diff-line">documents...</div>
+            <div class="diff-line">&nbsp;</div>
+            <div class="diff-line">## Quick Start</div>
+            <div class="diff-line">```python</div>
+            <div class="diff-line add">from pypdf import PdfReader</div>
+            <div class="diff-line">```</div>
+            <div class="diff-line add">## Form filling (NEW)</div>
+            <div class="diff-line add">See forms.md for field detection...</div>
+          </div>
+        </div>
+
+        <div class="text-muted mt-12" style="font-size: 12px;">
+          <strong style="color: var(--text);">Will be applied to:</strong> 3 projects · docs, acme-client-portal, blog
+        </div>
+      </div>
+
+      <!-- Other pending updates summary -->
+      <div class="card">
+        <div class="card-title">Also pending (3)</div>
+        <div class="installed-row" style="grid-template-columns: 200px 120px 1fr auto;">
+          <div><strong>qa</strong></div>
+          <div><code style="font-size: 11px;">v2.3.4 → v2.4.0</code></div>
+          <div class="text-muted">local (gstack) · adds incident-mode flag</div>
+          <button class="btn btn-sm">Review</button>
+        </div>
+        <div class="installed-row" style="grid-template-columns: 200px 120px 1fr auto;">
+          <div><strong>linear-feature</strong></div>
+          <div><code style="font-size: 11px;">abc123 → def456</code></div>
+          <div class="text-muted">github · 3 commits ahead</div>
+          <button class="btn btn-sm">Review</button>
+        </div>
+        <div class="installed-row" style="grid-template-columns: 200px 120px 1fr auto;">
+          <div><strong>shadcn-ui</strong></div>
+          <div><code style="font-size: 11px;">v0.8.0 → v0.9.0</code></div>
+          <div class="text-muted">marketplace · Tailwind v4 alignment</div>
+          <button class="btn btn-sm">Review</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- =========== MATRIX =========== -->
+    <section data-view-panel="matrix" class="hidden">
+      <div class="page-header">
+        <div>
+          <h1 class="page-title">Matrix</h1>
+          <div class="page-subtitle">Skills × Projects · colored by usage</div>
+        </div>
+      </div>
+
+      <div class="matrix-controls">
+        <div class="matrix-control">
+          <span>Color by:</span>
+          <select><option>Usage count</option><option>Recency</option><option>Compatibility</option></select>
+        </div>
+        <div class="matrix-control">
+          <span>Category:</span>
+          <select><option>All</option><option>Engineering</option><option>Quality</option><option>Design</option></select>
+        </div>
+        <div class="matrix-control">
+          <span>Tag:</span>
+          <select><option>All</option><option>gstack</option><option>shadcn</option></select>
+        </div>
+        <div class="matrix-control">
+          <span>Harness:</span>
+          <select><option>claude</option><option>codex</option><option>grok</option></select>
+        </div>
+      </div>
+
+      <div class="matrix-wrap">
+        <table class="matrix-table">
+          <thead>
+            <tr>
+              <th style="width: 280px;">Skill</th>
+              <th>my-saas</th>
+              <th>blog</th>
+              <th>internal-tools</th>
+              <th>acme-client</th>
+              <th>scratch</th>
+              <th>work</th>
+              <th>docs</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td class="matrix-skill">verification-before-completion</td>
+              <td class="matrix-cell heat-4">187</td>
+              <td class="matrix-cell heat-3">84</td>
+              <td class="matrix-cell heat-2">73</td>
+              <td class="matrix-cell heat-2">47</td>
+              <td class="matrix-cell heat-1">12</td>
+              <td class="matrix-cell heat-2">51</td>
+              <td class="matrix-cell heat-2">39</td>
+            </tr>
+            <tr>
+              <td class="matrix-skill">systematic-debugging</td>
+              <td class="matrix-cell heat-3">162</td>
+              <td class="matrix-cell heat-2">73</td>
+              <td class="matrix-cell heat-2">51</td>
+              <td class="matrix-cell heat-1">9</td>
+              <td class="matrix-cell heat-1">8</td>
+              <td class="matrix-cell heat-1">4</td>
+              <td class="matrix-cell heat-2">28</td>
+            </tr>
+            <tr>
+              <td class="matrix-skill">ship</td>
+              <td class="matrix-cell heat-3">124</td>
+              <td class="matrix-cell heat-2">41</td>
+              <td class="matrix-cell heat-1">14</td>
+              <td class="matrix-cell heat-0">—</td>
+              <td class="matrix-cell heat-0">—</td>
+              <td class="matrix-cell heat-2">38</td>
+              <td class="matrix-cell heat-0">—</td>
+            </tr>
+            <tr>
+              <td class="matrix-skill">qa</td>
+              <td class="matrix-cell heat-4">187</td>
+              <td class="matrix-cell heat-2">43</td>
+              <td class="matrix-cell heat-1">31</td>
+              <td class="matrix-cell heat-0">—</td>
+              <td class="matrix-cell heat-1">8</td>
+              <td class="matrix-cell heat-0">—</td>
+              <td class="matrix-cell heat-0">—</td>
+            </tr>
+            <tr>
+              <td class="matrix-skill">linear-feature</td>
+              <td class="matrix-cell heat-2">89</td>
+              <td class="matrix-cell heat-0">—</td>
+              <td class="matrix-cell heat-0">—</td>
+              <td class="matrix-cell heat-0">—</td>
+              <td class="matrix-cell heat-0">—</td>
+              <td class="matrix-cell heat-2">47</td>
+              <td class="matrix-cell heat-0">—</td>
+            </tr>
+            <tr>
+              <td class="matrix-skill">shadcn-ui</td>
+              <td class="matrix-cell heat-2">47</td>
+              <td class="matrix-cell heat-0">—</td>
+              <td class="matrix-cell heat-0">—</td>
+              <td class="matrix-cell heat-1">3</td>
+              <td class="matrix-cell heat-0">—</td>
+              <td class="matrix-cell heat-0">—</td>
+              <td class="matrix-cell heat-0">—</td>
+            </tr>
+            <tr>
+              <td class="matrix-skill">supabase-postgres-best-practices</td>
+              <td class="matrix-cell heat-1">23</td>
+              <td class="matrix-cell heat-0">—</td>
+              <td class="matrix-cell heat-0">—</td>
+              <td class="matrix-cell heat-0">—</td>
+              <td class="matrix-cell heat-0">—</td>
+              <td class="matrix-cell heat-0">—</td>
+              <td class="matrix-cell heat-0">—</td>
+            </tr>
+            <tr>
+              <td class="matrix-skill">pdf</td>
+              <td class="matrix-cell heat-0">—</td>
+              <td class="matrix-cell heat-0">—</td>
+              <td class="matrix-cell heat-0">—</td>
+              <td class="matrix-cell heat-1">7</td>
+              <td class="matrix-cell heat-0">—</td>
+              <td class="matrix-cell heat-0">—</td>
+              <td class="matrix-cell heat-2">33</td>
+            </tr>
+            <tr>
+              <td class="matrix-skill">invoice-organizer</td>
+              <td class="matrix-cell heat-0">—</td>
+              <td class="matrix-cell heat-0">—</td>
+              <td class="matrix-cell heat-0">—</td>
+              <td class="matrix-cell heat-0">—</td>
+              <td class="matrix-cell heat-0">—</td>
+              <td class="matrix-cell heat-0">—</td>
+              <td class="matrix-cell heat-2">12</td>
+            </tr>
+            <tr>
+              <td class="matrix-skill">internal-comms</td>
+              <td class="matrix-cell heat-0">—</td>
+              <td class="matrix-cell heat-0">—</td>
+              <td class="matrix-cell heat-2">38</td>
+              <td class="matrix-cell heat-0">—</td>
+              <td class="matrix-cell heat-0">—</td>
+              <td class="matrix-cell heat-2">41</td>
+              <td class="matrix-cell heat-0">—</td>
+            </tr>
+          </tbody>
+        </table>
+        <div class="legend">
+          <div class="legend-item"><span class="legend-swatch heat-0" style="background: var(--bg-elev);"></span> not installed</div>
+          <div class="legend-item"><span class="legend-swatch heat-1"></span> <20 uses</div>
+          <div class="legend-item"><span class="legend-swatch heat-2"></span> 20–100</div>
+          <div class="legend-item"><span class="legend-swatch heat-3"></span> 100–300</div>
+          <div class="legend-item"><span class="legend-swatch heat-4"></span> 300+</div>
+        </div>
+      </div>
+
+      <div class="card insights mt-16">
+        <div class="card-title">Insights</div>
+        <div class="insight-row">
+          <span class="insight-icon">⚠</span>
+          <span><strong>acme-client-portal</strong> has 4 skills installed but 3 are unused — review configuration?</span>
+        </div>
+        <div class="insight-row">
+          <span class="insight-icon">⚠</span>
+          <span><strong>supabase-postgres-best-practices</strong> only fires in my-saas — should it be marked exclusive to that project?</span>
+        </div>
+        <div class="insight-row">
+          <span class="insight-icon">💡</span>
+          <span><strong>pdf</strong> is used in docs project but not via auto-match — consider adding the documents tag.</span>
+        </div>
+        <div class="insight-row">
+          <span class="insight-icon">💡</span>
+          <span><strong>internal-comms</strong> is heavily used in internal-tools and work but never auto-matched there — strengthen tagging?</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- =========== MACHINES =========== -->
+    <section data-view-panel="machines" class="hidden">
+      <div class="page-header">
+        <div>
+          <h1 class="page-title">Cross-machine</h1>
+          <div class="page-subtitle">Sync source: <code>github.com/greg/skills-store</code> · last sync 12m ago</div>
+        </div>
+      </div>
+
+      <div class="card mb-16">
+        <div class="card-title">Machines</div>
+        <div class="installed-row" style="grid-template-columns: 200px 120px 1fr 100px;">
+          <div><strong>greg-laptop</strong> <span class="text-muted">(this)</span></div>
+          <div><span class="check">✓ in sync</span></div>
+          <div class="text-muted">12m ago</div>
+          <div></div>
+        </div>
+        <div class="installed-row" style="grid-template-columns: 200px 120px 1fr 100px;">
+          <div><strong>greg-macmini</strong></div>
+          <div><span class="text-warn">⚠ 3 behind</span></div>
+          <div class="text-muted">2h ago</div>
+          <button class="btn btn-sm">Push</button>
+        </div>
+        <div class="installed-row" style="grid-template-columns: 200px 120px 1fr 100px;">
+          <div><strong>greg-cloud-dev</strong></div>
+          <div><span style="color: var(--danger);">✗ unreachable</span></div>
+          <div class="text-muted">3d ago</div>
+          <button class="btn btn-sm">Retry</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Drift detected · greg-macmini is behind</div>
+        <div class="installed-row" style="grid-template-columns: 30px 200px 1fr;">
+          <div class="text-warn">↓</div>
+          <div><strong>pdf</strong> <code style="font-size: 11px; color: var(--text-muted);">v1.4.2 → v1.5.0</code></div>
+          <div class="text-muted">You accepted on laptop, mini hasn't pulled</div>
+        </div>
+        <div class="installed-row" style="grid-template-columns: 30px 200px 1fr;">
+          <div class="text-warn">↓</div>
+          <div><strong>code-reviewer</strong> <span style="font-size: 11px; color: var(--text-muted);">new</span></div>
+          <div class="text-muted">Ingested on laptop after Hermes auto-created it</div>
+        </div>
+        <div class="installed-row" style="grid-template-columns: 30px 200px 1fr;">
+          <div class="text-warn">↓</div>
+          <div><strong>qa</strong> <code style="font-size: 11px; color: var(--text-muted);">v2.3.4 → v2.4.0</code></div>
+          <div class="text-muted">Laptop has the new version</div>
+        </div>
+        <div class="mt-12">
+          <button class="btn btn-primary">Push changes</button>
+          <span class="text-muted" style="margin-left: 12px; font-size: 12px;">
+            Or SSH to greg-macmini and run <code>skills-manager sync</code>
+          </span>
+        </div>
+      </div>
+    </section>
+
+    <!-- =========== DISCOVER =========== -->
+    <section data-view-panel="discover" class="hidden">
+      <div class="page-header">
+        <div>
+          <h1 class="page-title">Discover</h1>
+          <div class="page-subtitle">Browse marketplaces and registries for new skills</div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="text-muted">Search across Claude Marketplace · SkillsMP · GitHub · agentskills.io</div>
+        <input class="search-input mt-12" placeholder="Search for skills... e.g. 'react testing', 'stripe integration'">
+      </div>
+    </section>
+
+    <!-- =========== SETTINGS =========== -->
+    <section data-view-panel="settings" class="hidden">
+      <div class="page-header">
+        <div>
+          <h1 class="page-title">Settings</h1>
+          <div class="page-subtitle">Manager preferences</div>
+        </div>
+      </div>
+      <div class="card mb-16">
+        <div class="card-title">Install mode</div>
+        <div style="margin-bottom: 8px;">
+          <label><input type="radio" checked> Copy mode <span class="text-muted">— safest, each location has its own copy</span></label>
+        </div>
+        <div>
+          <label><input type="radio"> Symlink mode <span class="text-muted">— auto-propagates updates, advanced users</span></label>
+        </div>
+      </div>
+      <div class="card mb-16">
+        <div class="card-title">Sync</div>
+        <div class="key-value-grid">
+          <div class="kv-key">Source</div><div class="kv-value mono">github.com/greg/skills-store</div>
+          <div class="kv-key">Check frequency</div><div class="kv-value">Weekly</div>
+          <div class="kv-key">Auto-ingest new skills</div><div class="kv-value">Prompt first</div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-title">Filesystem watcher</div>
+        <div class="text-muted">Active · watching 7 skill directories for changes</div>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<script>
+  function switchView(name) {
+    document.querySelectorAll('[data-view-panel]').forEach(el => el.classList.add('hidden'));
+    const target = document.querySelector(`[data-view-panel="${name}"]`);
+    if (target) target.classList.remove('hidden');
+    document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
+    const nav = document.querySelector(`.nav-item[data-view="${name}"]`);
+    if (nav) nav.classList.add('active');
+    window.scrollTo(0, 0);
+  }
+  document.querySelectorAll('.nav-item').forEach(el => {
+    el.addEventListener('click', () => switchView(el.dataset.view));
+  });
+</script>
+</body>
+</html>

@@ -1,0 +1,387 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Architecture — skills-manager</title>
+<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/styles/atom-one-dark.min.css">
+<script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/highlight.min.js"></script>
+<script>document.addEventListener('DOMContentLoaded', () => {
+  // Pandoc emits class="sourceCode <lang>"; normalize to language-<lang> for hljs.
+  document.querySelectorAll('pre code.sourceCode').forEach(el => {
+    const lang = [...el.classList].find(c => c !== 'sourceCode');
+    if (lang) {
+      el.classList.add('language-' + lang);
+      hljs.highlightElement(el);
+    }
+  });
+});</script>
+</head>
+<body>
+<div class="app">
+  <nav class="sidebar">
+    <a href="index.html" class="brand">
+      <span class="brand-logo">s</span>
+      <span class="brand-name">skills-manager</span>
+    </a>
+    <div class="nav-section">Foundation</div>
+    <a href="VISION.html" class="nav-item">Vision</a>
+    <a href="ARCHITECTURE.html" class="nav-item active">Architecture</a>
+    <a href="ROADMAP.html" class="nav-item">Roadmap</a>
+    <a href="DATA_MODEL.html" class="nav-item">Data model</a>
+    <div class="nav-section">Surface</div>
+    <a href="CLI_REFERENCE.html" class="nav-item">CLI reference</a>
+    <a href="TAXONOMY.html" class="nav-item">Taxonomy</a>
+    <div class="nav-section">Subsystems</div>
+    <a href="COMPATIBILITY.html" class="nav-item">Compatibility</a>
+    <a href="INGEST_FLOW.html" class="nav-item">Ingest flow</a>
+    <a href="UPDATE_FLOW.html" class="nav-item">Update flow</a>
+    <a href="BUNDLED_SKILLS.html" class="nav-item">Bundled skills</a>
+    <a href="SCHEDULING.html" class="nav-item">Scheduling</a>
+    <a href="CROSS_MACHINE.html" class="nav-item">Cross-machine sync</a>
+    <div class="nav-section">Out-of-band</div>
+    <a href="../mockup.html" class="nav-item">UI mockup ↗</a>
+    <a href="../README.html" class="nav-item">README</a>
+  </nav>
+  <main class="content">
+    <div class="doc-meta">
+      <span class="crumb"><a href="index.html">docs</a></span>
+      <span class="sep">/</span>
+      <span class="crumb">ARCHITECTURE.md</span>
+    </div>
+<h1 id="architecture">Architecture</h1>
+<h2 id="high-level-shape">High-level shape</h2>
+<pre><code>┌──────────────────────────────────────────────────────────────┐
+│  skills-manager (CLI — canonical surface)                    │
+│                                                               │
+│  • init / install / sync / update / scan / status / port     │
+│  • Reads &amp; writes: state, library, manifests                 │
+│  • Headless-capable (no TTY required)                        │
+│  • Pure file ops + git + HTTP polling                        │
+│  • No LLM calls unless explicitly configured                 │
+└──────────────────────────────────────────────────────────────┘
+                          ↑↓
+            ┌─────────────┴─────────────┐
+            │       Local state          │
+            │  ~/.skills-manager/        │
+            │   ├── library/             │
+            │   ├── state.db             │
+            │   ├── manifests/           │
+            │   ├── logs/                │
+            │   └── config.yaml          │
+            └─────────────┬─────────────┘
+                          ↑
+            ┌─────────────┴─────────────┐
+            │  skills-manager serve      │
+            │  (web UI — deferred)       │
+            │  Reads state, calls CLI    │
+            └────────────────────────────┘
+                          ↑
+                  user opens browser
+
+  ╭───────────────────────────────────────────────────────────╮
+  │  Scheduler (one of):                                       │
+  │   • launchd / cron / systemd  (local OS)                   │
+  │   • Cloud schedulers          (deferred beyond v1)         │
+  │                                                            │
+  │  All run: `skills-manager check --non-interactive --json`  │
+  ╰───────────────────────────────────────────────────────────╯
+
+  ╭───────────────────────────────────────────────────────────╮
+  │  Bundled manager skills (installed into the user&#39;s agent) │
+  │                                                            │
+  │   • skills-port      — cross-harness translation           │
+  │   • skills-ingest    — categorize + tag new skills         │
+  │   • skills-compat    — analyze compatibility + requirements│
+  │   • skills-author    — guide for writing new skills        │
+  │   • skills-diff-summary — AI summary of update diffs       │
+  │                                                            │
+  │  Invoked via configured provider or agent fallback.        │
+  │  The CLI validates all generated output.                   │
+  ╰───────────────────────────────────────────────────────────╯</code></pre>
+<h2 id="core-principle-cli-is-canonical">Core principle: CLI is
+canonical</h2>
+<p>Everything is a CLI command. The web UI is a viewer that reads
+CLI-written state and triggers CLI invocations. The scheduler runs CLI
+commands. Bundled skills produce output that the CLI consumes.</p>
+<p>This means:</p>
+<ul>
+<li>The product is useful without a UI (CLI-only workflows are
+first-class)</li>
+<li>Scheduling is just "run a command on a timer"</li>
+<li>Headless servers, CI environments, and remote machines all work</li>
+<li>Cross-platform is easier (no Electron/Tauri/native UI complexity in
+v1)</li>
+</ul>
+<h2 id="component-responsibilities">Component responsibilities</h2>
+<h3 id="cli">CLI</h3>
+<ul>
+<li><strong>State management</strong>: SQLite + flat files in
+<code>~/.skills-manager/</code></li>
+<li><strong>Library operations</strong>: import, list, remove, set
+tags/categories/compatibility</li>
+<li><strong>Install operations</strong>: copy or symlink into harness
+paths; manifest tracking</li>
+<li><strong>Match operations</strong>: compute which skills belong in a
+project</li>
+<li><strong>Scan operations</strong>: walk harness directories, detect
+unregistered skills</li>
+<li><strong>Update operations</strong>: poll sources, store diffs,
+propagate updates</li>
+<li><strong>Sync operations</strong>: git push/pull against library
+remote</li>
+<li><strong>Prompt generation</strong>: produce prompts for bundled
+skills the user runs in their agent</li>
+<li><strong>Validation</strong>: lock files, fingerprints, manifest
+integrity, execution requirements</li>
+</ul>
+<h3 id="state-layer">State layer</h3>
+<p>Local-only by default. Structure:</p>
+<pre><code>~/.skills-manager/
+├── library/                  # canonical skill store (git-managed)
+│   ├── &lt;skill-name&gt;/
+│   │   ├── SKILL.md
+│   │   ├── .skill-meta.yaml
+│   │   ├── .variants.yaml    # if it has harness-specific variants
+│   │   ├── scripts/          # optional, from upstream
+│   │   └── ...
+│   └── ...
+├── state.db                  # SQLite: catalog, usage, manifests, history
+├── manifests/                # per-project install manifests
+│   ├── my-saas-app.json
+│   └── ...
+├── logs/                     # scheduled check logs, diagnostics
+├── summaries/                # AI summary cache (when generated)
+├── notifications/            # output from scheduled tasks
+├── backups/                  # backups of replaced skills
+└── config.yaml               # user config: mode, sync source, etc.</code></pre>
+<p>Details in <code>DATA_MODEL.md</code>.</p>
+<h3 id="web-ui-deferred">Web UI (deferred)</h3>
+<p>Pure read+invoke. Frontend is a static SPA bundled with the manager.
+Started via <code>skills-manager serve</code>.</p>
+<ul>
+<li>Reads state via HTTP/SSE from the CLI server process</li>
+<li>User actions translate to CLI invocations (POST endpoints that run
+commands)</li>
+<li>Never has its own state — always reflects what's on disk</li>
+</ul>
+<p>The web UI is a deferred local triage surface. It should not own
+product behavior or state, but it may become the best way to review
+update batches, matrix views, and cross-machine drift once the CLI state
+model is trustworthy. The mockup at <code>mockup.html</code> previews
+possible views; it is not a v0.1 commitment.</p>
+<h3 id="bundled-manager-skills">Bundled manager skills</h3>
+<p>These are SKILL.md files that live in the manager's own repo and get
+installed into the user's harness like any other skill. They handle the
+LLM-heavy operations that would otherwise require the manager to call an
+API.</p>
+<p>Architecture pattern:</p>
+<ol type="1">
+<li>CLI generates a prompt + context (e.g., the diff content for
+<code>skills-diff-summary</code>)</li>
+<li>CLI sends it to the configured provider, or writes a handoff file
+for an agent fallback</li>
+<li>User invokes the bundled skill through an explicitly configured
+local LLM provider, or uses a clipboard/file handoff fallback in an
+agent session</li>
+<li>The agent's model produces the output</li>
+<li>User saves output back; CLI validates and stores</li>
+</ol>
+<p>This keeps the manager LLM-agnostic while avoiding clipboard handoff
+as the daily path. API-key usage is explicit, local, and opt-in.
+Clipboard/file handoff exists for users who refuse to configure a
+provider.</p>
+<p>Details in <code>BUNDLED_SKILLS.md</code>.</p>
+<h3 id="scheduler-integration">Scheduler integration</h3>
+<p>The CLI is invoked by external schedulers. Three modes supported:</p>
+<ul>
+<li><strong>Local OS</strong> (<code>launchd</code>, <code>cron</code>,
+<code>systemd</code>, Windows Task Scheduler) — free, runs only when
+machine is on</li>
+<li><strong>Cloud-scheduled</strong> (Claude Code routines, Codex
+automations) — deferred beyond v1; provider churn, billing, credentials,
+and result writeback are not worth the early complexity</li>
+<li><strong>Manual</strong> — user runs
+<code>skills-manager update</code> ad-hoc</li>
+</ul>
+<p>The CLI doesn't run its own daemon. The local OS handles the timer in
+v1; cloud schedulers are beyond v1.</p>
+<p>Details in <code>SCHEDULING.md</code>.</p>
+<h2 id="harness-integration-model">Harness integration model</h2>
+<h3 id="install-mechanisms">Install mechanisms</h3>
+<table>
+<thead>
+<tr>
+<th>Mechanism</th>
+<th>When used</th>
+<th>Trade-off</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Copy</strong> (default)</td>
+<td>All v1 harnesses (all are SKILL.md-native)</td>
+<td>Safest, each location has independent file, drift possible</td>
+</tr>
+<tr>
+<td><strong>Symlink</strong> (opt-in)</td>
+<td>When user enables <code>mode: symlink</code></td>
+<td>One source of truth, auto-propagate, less Windows-friendly</td>
+</tr>
+<tr>
+<td><strong>Compile</strong> (deferred to v1.0)</td>
+<td>Cursor, Copilot</td>
+<td>Different formats require translation</td>
+</tr>
+<tr>
+<td><strong>Assemble</strong> (deferred)</td>
+<td>AGENTS.md, CLAUDE.md aggregation</td>
+<td>Multi-file → single-file</td>
+</tr>
+</tbody>
+</table>
+<h3 id="v1-supported-harnesses">v1 supported harnesses</h3>
+<p>All SKILL.md-native:</p>
+<table>
+<thead>
+<tr>
+<th>Harness</th>
+<th>Global path</th>
+<th>Project path</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Claude Code</td>
+<td><code>~/.claude/skills/</code></td>
+<td><code>.claude/skills/</code></td>
+</tr>
+<tr>
+<td>Codex CLI</td>
+<td><code>~/.codex/skills/</code></td>
+<td><code>.codex/skills/</code></td>
+</tr>
+<tr>
+<td>Grok Build</td>
+<td><code>~/.grok/skills/</code></td>
+<td><code>.grok/skills/</code></td>
+</tr>
+<tr>
+<td>Antigravity</td>
+<td><code>~/.gemini/antigravity/skills/</code></td>
+<td><code>.agents/skills/</code></td>
+</tr>
+<tr>
+<td>Gemini CLI</td>
+<td><code>~/.gemini/skills/</code></td>
+<td><code>.agents/skills/</code></td>
+</tr>
+<tr>
+<td>Hermes</td>
+<td><code>~/.hermes/skills/</code></td>
+<td><code>skills/</code></td>
+</tr>
+<tr>
+<td>OpenClaw</td>
+<td><code>~/.openclaw/skills/</code></td>
+<td><code>skills/</code></td>
+</tr>
+</tbody>
+</table>
+<p><code>.agents/skills/</code> is shared between Antigravity and Gemini
+CLI (one symlink/copy serves both). <code>skills/</code> is shared
+between Hermes and OpenClaw. So 7 harnesses map to 5 distinct project
+paths.</p>
+<h3 id="deferred-v10">Deferred (v1.0+)</h3>
+<ul>
+<li>Cursor (<code>.cursor/rules/*.mdc</code> — different format, needs
+compiler)</li>
+<li>Copilot (<code>.github/instructions/*.instructions.md</code> —
+different format)</li>
+<li>AGENTS.md (aggregation — needs assembler)</li>
+</ul>
+<h2 id="auth-and-credentials">Auth and credentials</h2>
+<p>By design, the manager itself stores zero credentials:</p>
+<ul>
+<li><strong>GitHub access</strong>: uses the user's existing
+<code>gh</code> CLI auth or <code>GIT_TOKEN</code> env var</li>
+<li><strong>LLM access for bundled skills</strong>: optional provider
+credentials are explicitly configured by the user, preferably through
+environment variables or OS keychain integration</li>
+<li><strong>Agent handoff fallback</strong>: no API key needed by the
+manager, but higher friction and never the recommended unattended
+path</li>
+<li><strong>Claude/Codex OAuth</strong>: never used directly (per <a
+href="https://lalatenduswain.medium.com/claude-code-on-claude-max-plan-understanding-oauth-token-vs-api-key-authentication-in-2026-96a6213d2cde">Anthropic's
+Feb 2026 ToS</a>) — the manager only invokes the user's harness CLI
+which uses its own auth</li>
+</ul>
+<h2 id="what-the-manager-never-does">What the manager never does</h2>
+<p>Hard rules:</p>
+<ul>
+<li>Never modifies skills the user authored locally (no upstream → no
+auto-update)</li>
+<li>Never silently overwrites a file at a target path; backs up +
+prompts</li>
+<li>Never makes LLM API calls without explicit user consent + visible
+credential</li>
+<li>Never uses harness OAuth tokens directly</li>
+<li>Never deletes anything the manifest didn't record creating</li>
+<li>Never bypasses the compatibility model (an
+<code>exclusive: claude</code> skill is never installed elsewhere)</li>
+<li>Never treats an AI summary as sufficient proof that an update is
+safe; raw diff and deterministic safety flags remain visible</li>
+</ul>
+<h2 id="v1-implementation-tech">v1 implementation tech</h2>
+<p>Resolved during v0.1 kickoff:</p>
+<ul>
+<li><strong>Language</strong>: Go. The manager needs a globally
+installable single binary, heavy filesystem work, GitHub/Git
+integration, SQLite, YAML, and a small local HTTP server later. Go keeps
+that implementation straightforward while avoiding Rust's extra
+onboarding cost for the first CLI slice. Python remains useful for
+experiments, but not for the shipped binary.</li>
+<li><strong>State</strong>: SQLite via system libraries; YAML for
+human-facing config</li>
+<li><strong>HTTP</strong>: built-in stdlib (no heavy framework)</li>
+<li><strong>Watcher</strong>: <code>fsnotify</code> if the optional
+watcher ships in v0.3</li>
+<li><strong>Web UI</strong> (when added): static SPA in
+<code>dist/</code>, served by the CLI's <code>serve</code> mode</li>
+</ul>
+<p>The implementation language matters less than the design. The
+architecture should hold up regardless.</p>
+<h2 id="open-questions">Open questions</h2>
+<p>These should be resolved before implementation kicks off:</p>
+<ol type="1">
+<li><strong>State storage format</strong>: pure SQLite, or SQLite + YAML
+hybrid? (Lean: hybrid — YAML for human-edited config, SQLite for derived
+state)</li>
+<li><strong>Library git sync</strong> model: does the library itself
+live inside a git repo the user owns, or are pieces tracked separately?
+(Lean: whole library is one git repo)</li>
+<li><strong>Manifest granularity</strong>: one manifest file per
+project, or one shared manifest with project sections? (Lean:
+per-project for parallelism)</li>
+<li><strong>Bundled skill versioning</strong>: do bundled skills travel
+with the manager binary, or are they pulled from a separate repo? (Lean:
+travel with the binary, but loadable from a custom path for community
+variants)</li>
+<li><strong>LLM credential storage</strong>: environment variables only,
+OS keychain, or encrypted local config? (Lean: environment variables
+first, keychain later)</li>
+<li><strong>Generated metadata merge policy</strong>: which files are
+source-authored vs derived, and which conflicts can be resolved
+deterministically?</li>
+</ol>
+<p>See <code>ROADMAP.md</code> for sequencing of when these get
+resolved.</p>
+    <footer class="doc-footer">
+      <span>skills-manager · design doc</span>
+      <span><a href="ARCHITECTURE.md">view source (.md)</a></span>
+    </footer>
+  </main>
+</div>
+</body>
+</html>

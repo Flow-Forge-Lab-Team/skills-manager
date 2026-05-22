@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Scheduling — skills-manager</title>
+<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/styles/atom-one-dark.min.css">
+<script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/highlight.min.js"></script>
+<script>document.addEventListener('DOMContentLoaded', () => {
+  // Pandoc emits class="sourceCode <lang>"; normalize to language-<lang> for hljs.
+  document.querySelectorAll('pre code.sourceCode').forEach(el => {
+    const lang = [...el.classList].find(c => c !== 'sourceCode');
+    if (lang) {
+      el.classList.add('language-' + lang);
+      hljs.highlightElement(el);
+    }
+  });
+});</script>
+</head>
+<body>
+<div class="app">
+  <nav class="sidebar">
+    <a href="index.html" class="brand">
+      <span class="brand-logo">s</span>
+      <span class="brand-name">skills-manager</span>
+    </a>
+    <div class="nav-section">Foundation</div>
+    <a href="VISION.html" class="nav-item">Vision</a>
+    <a href="ARCHITECTURE.html" class="nav-item">Architecture</a>
+    <a href="ROADMAP.html" class="nav-item">Roadmap</a>
+    <a href="DATA_MODEL.html" class="nav-item">Data model</a>
+    <div class="nav-section">Surface</div>
+    <a href="CLI_REFERENCE.html" class="nav-item">CLI reference</a>
+    <a href="TAXONOMY.html" class="nav-item">Taxonomy</a>
+    <div class="nav-section">Subsystems</div>
+    <a href="COMPATIBILITY.html" class="nav-item">Compatibility</a>
+    <a href="INGEST_FLOW.html" class="nav-item">Ingest flow</a>
+    <a href="UPDATE_FLOW.html" class="nav-item">Update flow</a>
+    <a href="BUNDLED_SKILLS.html" class="nav-item">Bundled skills</a>
+    <a href="SCHEDULING.html" class="nav-item active">Scheduling</a>
+    <a href="CROSS_MACHINE.html" class="nav-item">Cross-machine sync</a>
+    <div class="nav-section">Out-of-band</div>
+    <a href="../mockup.html" class="nav-item">UI mockup ↗</a>
+    <a href="../README.html" class="nav-item">README</a>
+  </nav>
+  <main class="content">
+    <div class="doc-meta">
+      <span class="crumb"><a href="index.html">docs</a></span>
+      <span class="sep">/</span>
+      <span class="crumb">SCHEDULING.md</span>
+    </div>
+<h1 id="scheduling">Scheduling</h1>
+<p>Running <code>skills-manager check</code> on a schedule. v1 supports
+local OS scheduling only. Cloud schedulers are deliberately deferred
+until the local workflow has proved useful.</p>
+<h2 id="the-default-position">The default position</h2>
+<p><strong>The manager does not run a daemon.</strong> It uses external
+schedulers.</p>
+<p>Supported v1 modes:</p>
+<ol type="1">
+<li><strong>Manual</strong> — user runs
+<code>skills-manager check</code> when they want. Always works.</li>
+<li><strong>Local OS scheduler</strong> — launchd / cron / systemd /
+Task Scheduler. Free, inspectable, runs only when the machine is
+on.</li>
+</ol>
+<p>Deferred beyond v1:</p>
+<ul>
+<li>Claude Code routines</li>
+<li>Codex automations</li>
+<li>Any cloud scheduler that needs remote git writeback, provider
+billing, OAuth state, webhooks, or hosted result storage</li>
+</ul>
+<h2 id="what-gets-scheduled">What gets scheduled</h2>
+<p>A single command:</p>
+<div class="sourceCode" id="cb1"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="ex">skills-manager</span> check <span class="at">--non-interactive</span> <span class="at">--quiet</span> <span class="at">--json</span></span></code></pre></div>
+<p>This polls sources, updates <code>state.db</code>, writes logs, and
+exits. It does not accept updates and does not generate summaries unless
+the user explicitly adds that follow-up.</p>
+<p>Optional follow-up when a local provider is configured:</p>
+<div class="sourceCode" id="cb2"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="ex">skills-manager</span> check <span class="at">--non-interactive</span> <span class="at">--quiet</span> <span class="at">--json</span> <span class="kw">&amp;&amp;</span></span>
+<span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a><span class="ex">skills-manager</span> summarize <span class="at">--pending</span> <span class="at">--auto</span> <span class="at">--non-interactive</span></span></code></pre></div>
+<p>This is useful only when <code>llm.provider</code> and a credential
+source such as <code>llm.api_key-env</code> are configured.</p>
+<h2 id="setup-wizard">Setup wizard</h2>
+<p><code>skills-manager setup-schedule</code> walks the user through
+local scheduling:</p>
+<pre><code>$ skills-manager setup-schedule
+
+How should the skill check run?
+
+  [l] Local OS scheduler (launchd on macOS)
+      ✓ No OAuth, no cloud account
+      ✓ Free
+      ○ Only runs when this machine is awake
+      ○ AI summaries require a configured local provider
+
+  [m] Manual only (no schedule)
+      ✓ You run `skills-manager check` when you want
+
+Choose:</code></pre>
+<p>The wizard should say plainly when local scheduling cannot run
+because the machine is asleep. <code>status</code> detects missed runs
+later.</p>
+<h2 id="local-os-scheduling">Local OS scheduling</h2>
+<h3 id="macos-launchd">macOS (launchd)</h3>
+<p>The wizard writes
+<code>~/Library/LaunchAgents/com.skills-manager.daily-check.plist</code>:</p>
+<div class="sourceCode" id="cb4"><pre
+class="sourceCode xml"><code class="sourceCode xml"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a><span class="fu">&lt;?xml</span> <span class="ot">version=</span><span class="st">&quot;1.0&quot;</span> <span class="ot">encoding=</span><span class="st">&quot;UTF-8&quot;</span><span class="fu">?&gt;</span></span>
+<span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a>&lt;<span class="kw">plist</span> <span class="ot">version=</span><span class="st">&quot;1.0&quot;</span>&gt;</span>
+<span id="cb4-3"><a href="#cb4-3" aria-hidden="true" tabindex="-1"></a>&lt;<span class="kw">dict</span>&gt;</span>
+<span id="cb4-4"><a href="#cb4-4" aria-hidden="true" tabindex="-1"></a>    &lt;<span class="kw">key</span>&gt;Label&lt;/<span class="kw">key</span>&gt;</span>
+<span id="cb4-5"><a href="#cb4-5" aria-hidden="true" tabindex="-1"></a>    &lt;<span class="kw">string</span>&gt;com.skills-manager.daily-check&lt;/<span class="kw">string</span>&gt;</span>
+<span id="cb4-6"><a href="#cb4-6" aria-hidden="true" tabindex="-1"></a>    &lt;<span class="kw">key</span>&gt;ProgramArguments&lt;/<span class="kw">key</span>&gt;</span>
+<span id="cb4-7"><a href="#cb4-7" aria-hidden="true" tabindex="-1"></a>    &lt;<span class="kw">array</span>&gt;</span>
+<span id="cb4-8"><a href="#cb4-8" aria-hidden="true" tabindex="-1"></a>        &lt;<span class="kw">string</span>&gt;/usr/local/bin/skills-manager&lt;/<span class="kw">string</span>&gt;</span>
+<span id="cb4-9"><a href="#cb4-9" aria-hidden="true" tabindex="-1"></a>        &lt;<span class="kw">string</span>&gt;check&lt;/<span class="kw">string</span>&gt;</span>
+<span id="cb4-10"><a href="#cb4-10" aria-hidden="true" tabindex="-1"></a>        &lt;<span class="kw">string</span>&gt;--non-interactive&lt;/<span class="kw">string</span>&gt;</span>
+<span id="cb4-11"><a href="#cb4-11" aria-hidden="true" tabindex="-1"></a>        &lt;<span class="kw">string</span>&gt;--quiet&lt;/<span class="kw">string</span>&gt;</span>
+<span id="cb4-12"><a href="#cb4-12" aria-hidden="true" tabindex="-1"></a>        &lt;<span class="kw">string</span>&gt;--json&lt;/<span class="kw">string</span>&gt;</span>
+<span id="cb4-13"><a href="#cb4-13" aria-hidden="true" tabindex="-1"></a>    &lt;/<span class="kw">array</span>&gt;</span>
+<span id="cb4-14"><a href="#cb4-14" aria-hidden="true" tabindex="-1"></a>    &lt;<span class="kw">key</span>&gt;StartCalendarInterval&lt;/<span class="kw">key</span>&gt;</span>
+<span id="cb4-15"><a href="#cb4-15" aria-hidden="true" tabindex="-1"></a>    &lt;<span class="kw">dict</span>&gt;</span>
+<span id="cb4-16"><a href="#cb4-16" aria-hidden="true" tabindex="-1"></a>        &lt;<span class="kw">key</span>&gt;Hour&lt;/<span class="kw">key</span>&gt;&lt;<span class="kw">integer</span>&gt;9&lt;/<span class="kw">integer</span>&gt;</span>
+<span id="cb4-17"><a href="#cb4-17" aria-hidden="true" tabindex="-1"></a>        &lt;<span class="kw">key</span>&gt;Minute&lt;/<span class="kw">key</span>&gt;&lt;<span class="kw">integer</span>&gt;0&lt;/<span class="kw">integer</span>&gt;</span>
+<span id="cb4-18"><a href="#cb4-18" aria-hidden="true" tabindex="-1"></a>    &lt;/<span class="kw">dict</span>&gt;</span>
+<span id="cb4-19"><a href="#cb4-19" aria-hidden="true" tabindex="-1"></a>    &lt;<span class="kw">key</span>&gt;StandardOutPath&lt;/<span class="kw">key</span>&gt;</span>
+<span id="cb4-20"><a href="#cb4-20" aria-hidden="true" tabindex="-1"></a>    &lt;<span class="kw">string</span>&gt;~/.skills-manager/logs/check.stdout.log&lt;/<span class="kw">string</span>&gt;</span>
+<span id="cb4-21"><a href="#cb4-21" aria-hidden="true" tabindex="-1"></a>    &lt;<span class="kw">key</span>&gt;StandardErrorPath&lt;/<span class="kw">key</span>&gt;</span>
+<span id="cb4-22"><a href="#cb4-22" aria-hidden="true" tabindex="-1"></a>    &lt;<span class="kw">string</span>&gt;~/.skills-manager/logs/check.stderr.log&lt;/<span class="kw">string</span>&gt;</span>
+<span id="cb4-23"><a href="#cb4-23" aria-hidden="true" tabindex="-1"></a>&lt;/<span class="kw">dict</span>&gt;</span>
+<span id="cb4-24"><a href="#cb4-24" aria-hidden="true" tabindex="-1"></a>&lt;/<span class="kw">plist</span>&gt;</span></code></pre></div>
+<p>Then runs:</p>
+<div class="sourceCode" id="cb5"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a><span class="ex">launchctl</span> load ~/Library/LaunchAgents/com.skills-manager.daily-check.plist</span></code></pre></div>
+<h3 id="linux-cron">Linux (cron)</h3>
+<pre class="cron"><code>0 9 * * * /usr/local/bin/skills-manager check --non-interactive --quiet --json &gt;&gt; ~/.skills-manager/logs/check.log 2&gt;&amp;1</code></pre>
+<p>Writes to <code>~/.skills-manager/cron-fragment</code> and installs
+via <code>crontab</code>.</p>
+<h3 id="linux-systemd">Linux (systemd)</h3>
+<p>User-level systemd timer:</p>
+<div class="sourceCode" id="cb7"><pre
+class="sourceCode ini"><code class="sourceCode ini"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a><span class="co"># ~/.config/systemd/user/skills-manager-check.timer</span></span>
+<span id="cb7-2"><a href="#cb7-2" aria-hidden="true" tabindex="-1"></a><span class="kw">[Unit]</span></span>
+<span id="cb7-3"><a href="#cb7-3" aria-hidden="true" tabindex="-1"></a><span class="dt">Description</span><span class="ot">=</span><span class="st">skills-manager daily check</span></span>
+<span id="cb7-4"><a href="#cb7-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-5"><a href="#cb7-5" aria-hidden="true" tabindex="-1"></a><span class="kw">[Timer]</span></span>
+<span id="cb7-6"><a href="#cb7-6" aria-hidden="true" tabindex="-1"></a><span class="dt">OnCalendar</span><span class="ot">=</span><span class="st">*-*-* 09:00:00</span></span>
+<span id="cb7-7"><a href="#cb7-7" aria-hidden="true" tabindex="-1"></a><span class="dt">Persistent</span><span class="ot">=</span><span class="kw">true</span></span>
+<span id="cb7-8"><a href="#cb7-8" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-9"><a href="#cb7-9" aria-hidden="true" tabindex="-1"></a><span class="kw">[Install]</span></span>
+<span id="cb7-10"><a href="#cb7-10" aria-hidden="true" tabindex="-1"></a><span class="dt">WantedBy</span><span class="ot">=</span><span class="st">timers.target</span></span></code></pre></div>
+<div class="sourceCode" id="cb8"><pre
+class="sourceCode ini"><code class="sourceCode ini"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a><span class="co"># ~/.config/systemd/user/skills-manager-check.service</span></span>
+<span id="cb8-2"><a href="#cb8-2" aria-hidden="true" tabindex="-1"></a><span class="kw">[Unit]</span></span>
+<span id="cb8-3"><a href="#cb8-3" aria-hidden="true" tabindex="-1"></a><span class="dt">Description</span><span class="ot">=</span><span class="st">skills-manager daily check</span></span>
+<span id="cb8-4"><a href="#cb8-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb8-5"><a href="#cb8-5" aria-hidden="true" tabindex="-1"></a><span class="kw">[Service]</span></span>
+<span id="cb8-6"><a href="#cb8-6" aria-hidden="true" tabindex="-1"></a><span class="dt">Type</span><span class="ot">=</span><span class="st">oneshot</span></span>
+<span id="cb8-7"><a href="#cb8-7" aria-hidden="true" tabindex="-1"></a><span class="dt">ExecStart</span><span class="ot">=</span><span class="st">/usr/local/bin/skills-manager check --non-interactive --quiet --json</span></span></code></pre></div>
+<p>Then:</p>
+<div class="sourceCode" id="cb9"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a><span class="ex">systemctl</span> <span class="at">--user</span> enable <span class="at">--now</span> skills-manager-check.timer</span></code></pre></div>
+<h3 id="windows-task-scheduler">Windows (Task Scheduler)</h3>
+<p>PowerShell script that registers a scheduled task via
+<code>Register-ScheduledTask</code>.</p>
+<h3 id="removal">Removal</h3>
+<p><code>skills-manager unschedule</code> reverses whichever local
+scheduler was set up.</p>
+<h2 id="what-happens-if-scheduling-stops-working">What happens if
+scheduling stops working</h2>
+<p>Machines sleep, cron environments miss PATH entries, and launch
+agents can be unloaded. The manager detects stale runs:</p>
+<pre><code>$ skills-manager status
+
+⚠ Scheduled check hasn&#39;t run in 4 days (expected daily).
+  Last successful: 2026-05-18 09:00
+  Possible causes:
+    • Machine was off
+    • Local scheduler disabled
+    • Binary path changed
+
+  Run manually: skills-manager check
+  Diagnose: skills-manager doctor</code></pre>
+<p>Threshold: 2x the configured frequency. If schedule is daily, alert
+after two missed days.</p>
+<h2 id="headless-mode-requirements">Headless mode requirements</h2>
+<p>Every command that scheduling might invoke must work without a
+TTY:</p>
+<ul>
+<li>Never prompts; if input is needed, fail with exit code 2</li>
+<li>Writes structured logs</li>
+<li>Returns useful exit codes</li>
+<li>Supports <code>--json</code> output</li>
+</ul>
+<p>Commands the scheduler is allowed to call in v1:</p>
+<div class="sourceCode" id="cb11"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb11-1"><a href="#cb11-1" aria-hidden="true" tabindex="-1"></a><span class="ex">skills-manager</span> check <span class="at">--non-interactive</span> <span class="at">--quiet</span> <span class="at">--json</span></span>
+<span id="cb11-2"><a href="#cb11-2" aria-hidden="true" tabindex="-1"></a><span class="ex">skills-manager</span> summarize <span class="at">--pending</span> <span class="at">--auto</span> <span class="at">--non-interactive</span>  <span class="co"># only if provider configured</span></span></code></pre></div>
+<p><code>scan --auto-ingest</code> and watcher-driven ingest are not
+scheduled in v1. They can create catalog changes without an immediate
+human review loop.</p>
+<h2 id="why-no-manager-daemon">Why no manager daemon</h2>
+<p>Some skills-manager tools run their own background process. We do not
+by default, for these reasons:</p>
+<ul>
+<li>Cross-platform complexity: reliable daemons differ across macOS,
+Linux, and Windows</li>
+<li>Resource consumption: users do not need a resident process for
+occasional checks</li>
+<li>Inspection and debugging: a timer plus logs is easier to reason
+about</li>
+<li>Failure modes: long-running processes can die silently</li>
+</ul>
+<p>The optional filesystem watcher (<code>skills-manager watch</code>)
+is deferred until v0.3 and must remain opt-in.</p>
+<h2 id="future-cloud-and-adaptive-scheduling">Future: cloud and adaptive
+scheduling</h2>
+<p>Ideas worth tracking beyond v1:</p>
+<ul>
+<li>Cloud scheduling through Claude routines or Codex automations</li>
+<li>GitHub webhooks for repos that support them</li>
+<li>Adaptive cadence based on update frequency and recent tool
+usage</li>
+<li>Backoff on repeated source errors</li>
+</ul>
+<p>Cloud scheduling should return only after three conditions are
+true:</p>
+<ol type="1">
+<li>Local scheduled checks are useful enough that users ask for
+off-machine runs.</li>
+<li>Provider APIs are stable enough to document without churn.</li>
+<li>Result writeback can be done without broad credentials or fragile
+webhooks.</li>
+</ol>
+    <footer class="doc-footer">
+      <span>skills-manager · design doc</span>
+      <span><a href="SCHEDULING.md">view source (.md)</a></span>
+    </footer>
+  </main>
+</div>
+</body>
+</html>

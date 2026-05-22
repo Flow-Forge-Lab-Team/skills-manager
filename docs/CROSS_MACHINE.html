@@ -1,0 +1,433 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cross-machine sync — skills-manager</title>
+<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/styles/atom-one-dark.min.css">
+<script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/highlight.min.js"></script>
+<script>document.addEventListener('DOMContentLoaded', () => {
+  // Pandoc emits class="sourceCode <lang>"; normalize to language-<lang> for hljs.
+  document.querySelectorAll('pre code.sourceCode').forEach(el => {
+    const lang = [...el.classList].find(c => c !== 'sourceCode');
+    if (lang) {
+      el.classList.add('language-' + lang);
+      hljs.highlightElement(el);
+    }
+  });
+});</script>
+</head>
+<body>
+<div class="app">
+  <nav class="sidebar">
+    <a href="index.html" class="brand">
+      <span class="brand-logo">s</span>
+      <span class="brand-name">skills-manager</span>
+    </a>
+    <div class="nav-section">Foundation</div>
+    <a href="VISION.html" class="nav-item">Vision</a>
+    <a href="ARCHITECTURE.html" class="nav-item">Architecture</a>
+    <a href="ROADMAP.html" class="nav-item">Roadmap</a>
+    <a href="DATA_MODEL.html" class="nav-item">Data model</a>
+    <div class="nav-section">Surface</div>
+    <a href="CLI_REFERENCE.html" class="nav-item">CLI reference</a>
+    <a href="TAXONOMY.html" class="nav-item">Taxonomy</a>
+    <div class="nav-section">Subsystems</div>
+    <a href="COMPATIBILITY.html" class="nav-item">Compatibility</a>
+    <a href="INGEST_FLOW.html" class="nav-item">Ingest flow</a>
+    <a href="UPDATE_FLOW.html" class="nav-item">Update flow</a>
+    <a href="BUNDLED_SKILLS.html" class="nav-item">Bundled skills</a>
+    <a href="SCHEDULING.html" class="nav-item">Scheduling</a>
+    <a href="CROSS_MACHINE.html" class="nav-item active">Cross-machine sync</a>
+    <div class="nav-section">Out-of-band</div>
+    <a href="../mockup.html" class="nav-item">UI mockup ↗</a>
+    <a href="../README.html" class="nav-item">README</a>
+  </nav>
+  <main class="content">
+    <div class="doc-meta">
+      <span class="crumb"><a href="index.html">docs</a></span>
+      <span class="sep">/</span>
+      <span class="crumb">CROSS_MACHINE.md</span>
+    </div>
+<h1 id="cross-machine-sync">Cross-machine sync</h1>
+<p>How a single skill library stays consistent across multiple machines
+(laptop, desktop, server).</p>
+<h2 id="the-mechanism-git">The mechanism: git</h2>
+<p>The canonical library at <code>~/.skills-manager/library/</code> is a
+<strong>git repository</strong>. Every machine clones it from a remote.
+Sync is <code>git push</code> / <code>git pull</code>.</p>
+<p>That's it. No cloud service, no custom protocol. Use the same
+primitives developers already use for code.</p>
+<h2 id="setup">Setup</h2>
+<h3 id="first-machine">First machine</h3>
+<pre><code>$ skills-manager init-library
+
+Where should the canonical library live?
+
+  [g] GitHub (recommended for personal use)
+      Creates a private repo at github.com:&lt;you&gt;/skills-store
+  [c] Custom git remote (Gitea, GitLab, self-hosted)
+  [l] Local-only (no remote — not synced)
+
+&gt; g
+
+Creating private GitHub repo skills-store...
+  ✓ Created at github.com/greg/skills-store
+  ✓ Initialized ~/.skills-manager/library/ as git repo
+  ✓ Pushed initial commit (251 skills + catalog)
+  ✓ Set as origin/main
+
+Done. Other machines: clone this with `skills-manager join greg/skills-store`.</code></pre>
+<h3 id="additional-machines">Additional machines</h3>
+<pre><code>$ skills-manager join greg/skills-store
+
+Cloning github.com/greg/skills-store into ~/.skills-manager/library/...
+  ✓ Pulled 251 skills
+  ✓ Catalog synced
+  ✓ Machine registered as greg-macmini
+
+Library ready. Run `skills-manager install` in any project to use these skills.</code></pre>
+<p>The <code>join</code> command:</p>
+<ol type="1">
+<li>Clones the repo</li>
+<li>Verifies the catalog</li>
+<li>Adds this machine's identity to <code>library/.machines.yaml</code>
+(so cross-machine status views know about it)</li>
+</ol>
+<h2 id="whats-in-the-library-repo">What's in the library repo</h2>
+<pre><code>.git/
+catalog.yaml                  # registry of all skills
+.machines.yaml                # known machines + last-seen timestamps
+.gitignore                    # ignores transient files (notifications, logs, cache)
+&lt;skill-name&gt;/
+  SKILL.md
+  .skill-meta.yaml
+  ...</code></pre>
+<p>What's NOT in the library repo (lives in
+<code>~/.skills-manager/</code> but outside <code>library/</code>):</p>
+<ul>
+<li><code>state.db</code> — derived from the library; machine-local</li>
+<li><code>manifests/</code> — per-machine project installs</li>
+<li><code>logs/</code> — machine-local</li>
+<li><code>notifications/</code> — machine-local</li>
+<li><code>summaries/</code> — could optionally be in library, but
+defaults to local</li>
+<li><code>config.yaml</code> — per-machine settings</li>
+</ul>
+<p>This split is important: <strong>the library is the shared truth;
+everything else is per-machine state.</strong></p>
+<h2 id="sync-flow">Sync flow</h2>
+<h3 id="pull-most-common">Pull (most common)</h3>
+<pre><code>$ skills-manager sync-library
+
+Fetching from origin...
+  3 new commits since last sync
+
+Changes:
+  • pdf: v1.4.2 → v1.5.0 (accepted on greg-laptop 2h ago)
+  • code-reviewer: new skill (ingested on greg-laptop 5h ago)
+  • qa: pinned to v2.3.4 (declined update on greg-laptop yesterday)
+
+Merging into local library...
+  ✓ pdf updated
+  ✓ code-reviewer added
+  ✓ qa pinning honored
+
+Propagating to local projects (3 projects using these skills):
+  ✓ ~/dev/my-saas-app   (pdf refreshed)
+  ✓ ~/dev/blog          (pdf refreshed)
+  ✓ ~/dev/scratch       (no relevant changes)</code></pre>
+<h3 id="push-after-local-changes">Push (after local changes)</h3>
+<pre><code>$ skills-manager sync-library --push
+
+Local changes:
+  • Added skill: email-summarizer (ingested today)
+  • Updated category for invoice-organizer
+
+Pushing to origin/main...
+  ✓ Pushed 2 commits
+  ✓ Other machines will see these on their next sync</code></pre>
+<h3 id="auto-sync-on-operations">Auto-sync on operations</h3>
+<p>Optionally, the manager can auto-pull/push on certain operations:</p>
+<div class="sourceCode" id="cb6"><pre
+class="sourceCode yaml"><code class="sourceCode yaml"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a><span class="co"># config.yaml</span></span>
+<span id="cb6-2"><a href="#cb6-2" aria-hidden="true" tabindex="-1"></a><span class="fu">library_sync</span><span class="kw">:</span></span>
+<span id="cb6-3"><a href="#cb6-3" aria-hidden="true" tabindex="-1"></a><span class="at">  </span><span class="fu">auto_pull_before</span><span class="kw">:</span><span class="at"> </span><span class="kw">[</span><span class="at">check</span><span class="kw">,</span><span class="at"> update</span><span class="kw">,</span><span class="at"> install</span><span class="kw">]</span><span class="co">   # ensure fresh state</span></span>
+<span id="cb6-4"><a href="#cb6-4" aria-hidden="true" tabindex="-1"></a><span class="at">  </span><span class="fu">auto_push_after</span><span class="kw">:</span><span class="at"> </span><span class="kw">[</span><span class="at">add</span><span class="kw">,</span><span class="at"> accept-update</span><span class="kw">,</span><span class="at"> remove</span><span class="kw">]</span><span class="co"> # share changes</span></span></code></pre></div>
+<p>Default: manual. Auto-sync is opt-in because it can hide
+conflicts.</p>
+<h2 id="drift-detection">Drift detection</h2>
+<p>The manager tracks <code>last_synced</code> per machine in
+<code>library/.machines.yaml</code>:</p>
+<div class="sourceCode" id="cb7"><pre
+class="sourceCode yaml"><code class="sourceCode yaml"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a><span class="fu">machines</span><span class="kw">:</span></span>
+<span id="cb7-2"><a href="#cb7-2" aria-hidden="true" tabindex="-1"></a><span class="at">  </span><span class="fu">greg-laptop</span><span class="kw">:</span></span>
+<span id="cb7-3"><a href="#cb7-3" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="fu">last_synced</span><span class="kw">:</span><span class="at"> 2026-05-22T14:30:00Z</span></span>
+<span id="cb7-4"><a href="#cb7-4" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="fu">last_commit</span><span class="kw">:</span><span class="at"> abc123def</span></span>
+<span id="cb7-5"><a href="#cb7-5" aria-hidden="true" tabindex="-1"></a><span class="at">  </span><span class="fu">greg-macmini</span><span class="kw">:</span></span>
+<span id="cb7-6"><a href="#cb7-6" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="fu">last_synced</span><span class="kw">:</span><span class="at"> 2026-05-22T09:15:00Z</span></span>
+<span id="cb7-7"><a href="#cb7-7" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="fu">last_commit</span><span class="kw">:</span><span class="at"> abc123def</span></span>
+<span id="cb7-8"><a href="#cb7-8" aria-hidden="true" tabindex="-1"></a><span class="at">  </span><span class="fu">greg-cloud-dev</span><span class="kw">:</span></span>
+<span id="cb7-9"><a href="#cb7-9" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="fu">last_synced</span><span class="kw">:</span><span class="at"> 2026-05-19T11:00:00Z</span><span class="co">   # 3 days old</span></span>
+<span id="cb7-10"><a href="#cb7-10" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="fu">last_commit</span><span class="kw">:</span><span class="at"> 987abc456</span></span></code></pre></div>
+<p><code>skills-manager machines</code> shows this:</p>
+<pre><code>$ skills-manager machines
+
+● greg-laptop      (this)        ✓ in sync         12m ago
+● greg-macmini                   ⚠ 3 behind        2h ago
+○ greg-cloud-dev                 ✗ stale           3d ago</code></pre>
+<h2 id="conflict-handling">Conflict handling</h2>
+<p>When two machines change the same skill before syncing, you get a
+normal git merge conflict.</p>
+<pre><code>$ skills-manager sync-library
+
+Fetching from origin...
+⚠ Merge conflict on:
+  library/pdf/SKILL.md
+  
+Cause:
+  greg-laptop accepted pdf v1.5.0 update at 14:30
+  greg-macmini accepted pdf v1.4.3-patch update at 14:25
+  
+Both touched the same file. You need to choose.
+
+Options:
+  [t] Take theirs (greg-laptop&#39;s v1.5.0)
+  [m] Keep mine (greg-macmini&#39;s v1.4.3-patch)
+  [d] Show 3-way diff
+  [r] Resolve manually (opens $EDITOR)</code></pre>
+<p>The manager uses git's merge under the hood. Three-way merge is shown
+for SKILL.md files where conflicts are content-level (vs
+structural).</p>
+<h2 id="what-gets-synced-vs-not">What gets synced vs not</h2>
+<table>
+<thead>
+<tr>
+<th>File</th>
+<th>Synced via library repo</th>
+<th>Reason</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>SKILL.md</code> for each skill</td>
+<td>✓</td>
+<td>The whole point</td>
+</tr>
+<tr>
+<td><code>.skill-meta.yaml</code></td>
+<td>✓</td>
+<td>Origin/version info should be consistent</td>
+</tr>
+<tr>
+<td><code>.variants.yaml</code> + variant files</td>
+<td>✓</td>
+<td>Ported variants are part of the skill</td>
+</tr>
+<tr>
+<td><code>catalog.yaml</code></td>
+<td>✓</td>
+<td>Index of what's in the library</td>
+</tr>
+<tr>
+<td><code>.machines.yaml</code></td>
+<td>✓</td>
+<td>Cross-machine view needs it</td>
+</tr>
+<tr>
+<td><code>state.db</code></td>
+<td>✗</td>
+<td>Derived from library + machine-local usage</td>
+</tr>
+<tr>
+<td><code>manifests/&lt;project&gt;.json</code></td>
+<td>✗</td>
+<td>Per-machine project installs</td>
+</tr>
+<tr>
+<td><code>logs/</code></td>
+<td>✗</td>
+<td>Machine-local diagnostics</td>
+</tr>
+<tr>
+<td><code>summaries/&lt;skill&gt;.md</code></td>
+<td>optional</td>
+<td>Could share, but cheap to regenerate</td>
+</tr>
+<tr>
+<td><code>notifications/</code></td>
+<td>✗</td>
+<td>Machine-local</td>
+</tr>
+<tr>
+<td><code>config.yaml</code></td>
+<td>✗</td>
+<td>Per-machine settings</td>
+</tr>
+</tbody>
+</table>
+<p>The principle: <strong>anything derived or machine-specific stays
+local. The library is the shared content.</strong></p>
+<h2 id="project-configs-across-machines">Project configs across
+machines</h2>
+<p><code>&lt;project&gt;/.skills/project.yaml</code> and
+<code>&lt;project&gt;/.skills/installed.lock</code> are in the
+<strong>project's</strong> git repo, not the library repo. They travel
+with the project naturally.</p>
+<p>The lockfile is a requested skill set, not proof that every teammate
+already has those skills in their personal library. Install must fail
+clearly when the local library is missing a locked skill.</p>
+<p>So when you check out a project on a new machine:</p>
+<pre><code>$ cd ~/dev/my-saas-app    # cloned from github
+$ skills-manager install
+
+Reading .skills/project.yaml...
+Reading .skills/installed.lock...
+
+Resolving from library... (will pull library if not present)
+  ✓ shadcn-ui v0.8.0 — in library
+  ✓ qa v2.3.4 — in library
+  ✓ verification-before-completion v3.0.0 — in library
+  ...
+
+Populating harness paths...
+  ✓ Done. 18 skills installed across 3 harnesses.</code></pre>
+<p>If a locked skill is missing locally:</p>
+<pre><code>Resolving from library...
+  ✗ acme-style-guide v1.2.0 — missing from this machine&#39;s library
+
+Options:
+  [p] Pull/sync library remote and retry
+  [a] Add from origin recorded in lockfile
+  [s] Skip this skill for now (writes local warning, does not edit lockfile)</code></pre>
+<p>The lockfile should include enough origin data for a missing skill to
+be retrieved when possible. If the origin is private or unavailable, the
+failure is explicit and does not partially install that skill.</p>
+<p>The combination — project repo carries project config, library repo
+carries skill content — means everything is reproducible.</p>
+<h2 id="what-if-a-teammate-doesnt-use-skills-manager">What if a teammate
+doesn't use skills-manager?</h2>
+<p>The project's <code>.claude/skills/</code> (etc.) directories might
+be gitignored (they're populated by the manager). For teammates who
+don't run the manager:</p>
+<p><strong>Option A: Commit harness dirs.</strong> Set
+<code>gitignore_harness_dirs: false</code> in project config. Now
+<code>.claude/skills/</code> is committed. Teammates without the manager
+still get the skills, they just don't get update tracking.</p>
+<p><strong>Option B: Run the manager.</strong> Provide a one-liner:
+<code>npm install -g skills-manager &amp;&amp; skills-manager install</code>.</p>
+<p><strong>Option C: Hybrid.</strong> Commit the harness dirs for
+non-manager users; the manager owns them when it's around. Manifest
+tracking still works (manager respects the existing files via
+<code>preserve_existing: true</code>).</p>
+<h2 id="library-backups">Library backups</h2>
+<p>The library is git, so:</p>
+<ul>
+<li>Every machine that clones it is a backup</li>
+<li>The remote (GitHub) is a backup</li>
+<li>Specific versions are recoverable via
+<code>git checkout &lt;commit&gt;</code></li>
+</ul>
+<p>The manager can also explicitly archive:</p>
+<pre><code>$ skills-manager backup-library --to ~/Dropbox/skills-backup-2026-05-22.tar.gz
+
+Creating tarball of ~/.skills-manager/library...
+  ✓ 251 skills, 14MB compressed
+  ✓ Saved to ~/Dropbox/skills-backup-2026-05-22.tar.gz</code></pre>
+<h2 id="multi-user-libraries-out-of-scope-for-v1">Multi-user libraries
+(out of scope for v1)</h2>
+<p>If multiple developers on a team want a shared library:</p>
+<ul>
+<li>They share a git remote</li>
+<li>They have read/write access per their git permissions</li>
+<li>Conflicts work the same way</li>
+</ul>
+<p>But for v1 we assume single-user (you across your machines).
+Multi-user adds complications:</p>
+<ul>
+<li>Whose <code>.skill-meta.yaml</code> wins on conflict?</li>
+<li>How do you handle one user editing a skill another considers
+stable?</li>
+<li>Who owns the catalog?</li>
+</ul>
+<p>We'll design that if/when there's demand. For now: one library = one
+person.</p>
+<h2 id="cloud-only-scheduling-and-sync">Cloud-only scheduling and
+sync</h2>
+<p>Deferred beyond v1. If cloud scheduling returns later, result
+writeback should use the same library git remote and must not require
+broad credentials or a long-lived local webhook. Until then,
+cross-machine state changes happen from a real machine running
+<code>sync-library</code>.</p>
+<h2 id="the-minimum-viable-cross-machine-workflow">The minimum viable
+cross-machine workflow</h2>
+<p>If a user has two machines and wants them in sync:</p>
+<pre><code># On machine 1
+$ skills-manager init-library --provider github
+# (sets up repo, pushes initial library)
+
+# On machine 2
+$ skills-manager join greg/skills-store
+# (clones library, registers machine)
+
+# Daily on both machines
+$ skills-manager sync-library
+# (pull latest, push local changes)
+
+# That&#39;s it.</code></pre>
+<p>Cross-machine sync requires nothing beyond the git knowledge they
+already have.</p>
+<h2 id="failure-modes">Failure modes</h2>
+<table>
+<thead>
+<tr>
+<th>Case</th>
+<th>Behavior</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Remote unreachable</td>
+<td>Sync fails clearly, machine continues working locally; queues
+changes for next push</td>
+</tr>
+<tr>
+<td>Merge conflict</td>
+<td>Surfaces in <code>sync-library</code>; user resolves source files
+manually; generated metadata should be regenerated when possible</td>
+</tr>
+<tr>
+<td><code>catalog.yaml</code> conflict</td>
+<td>Rebuild from <code>SKILL.md</code> + sidecars instead of
+hand-merging when possible</td>
+</tr>
+<tr>
+<td><code>.machines.yaml</code> conflict</td>
+<td>Merge by machine key, keep newest <code>last_synced</code> per
+key</td>
+</tr>
+<tr>
+<td>Library out of sync with state.db</td>
+<td><code>skills-manager doctor</code> detects, offers to rebuild
+state.db from library</td>
+</tr>
+<tr>
+<td>Library is corrupted</td>
+<td>Machine clones fresh from origin (after backing up local state)</td>
+</tr>
+<tr>
+<td>User has no git skills</td>
+<td>The wizard handles 95% of cases; for the 5% it falls back to "ask
+the user"</td>
+</tr>
+</tbody>
+</table>
+    <footer class="doc-footer">
+      <span>skills-manager · design doc</span>
+      <span><a href="CROSS_MACHINE.md">view source (.md)</a></span>
+    </footer>
+  </main>
+</div>
+</body>
+</html>
