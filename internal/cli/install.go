@@ -200,6 +200,21 @@ func runInstall(args []string, stdout io.Writer, stderr io.Writer, syncMode bool
 						fmt.Fprintf(stdout, "  preserve %s (already exists, unmanaged)\n", relTarget)
 						continue
 					}
+					expected := files[relTarget]
+					if expected != "" {
+						actual, err := fingerprintDir(target)
+						if err != nil {
+							fmt.Fprintf(stderr, "fingerprint %s: %v\n", relTarget, err)
+							return 3
+						}
+						if actual != expected {
+							fmt.Fprintf(stdout, "  preserve %s (manager-owned copy has local edits)\n", relTarget)
+							continue
+						}
+					}
+				} else if !errors.Is(err, os.ErrNotExist) {
+					fmt.Fprintf(stderr, "stat %s: %v\n", relTarget, err)
+					return 3
 				}
 				fmt.Fprintf(stdout, "  copy %s -> %s\n", candidate.Skill.Name, relTarget)
 				continue
@@ -329,6 +344,7 @@ func runUninstall(args []string, stdout io.Writer, stderr io.Writer) int {
 			return 3
 		}
 		pruneEmptyParents(projectPath, filepath.Dir(target))
+		delete(manifest.Files, rel)
 	}
 	if len(remaining) > 0 {
 		manifest.ManagedPaths = sortedKeys(remaining)

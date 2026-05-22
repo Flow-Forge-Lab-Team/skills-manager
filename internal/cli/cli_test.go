@@ -161,6 +161,19 @@ skills:
 
 	stdout.Reset()
 	stderr.Reset()
+	code = Run([]string{"install", "--project", project, "--dry-run"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("dry-run returned %d, want 0\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "preserve .claude/skills/review (manager-owned copy has local edits)") {
+		t.Fatalf("stdout = %q, want local edit preserve preview", stdout.String())
+	}
+	if strings.Contains(stdout.String(), "copy review -> .claude/skills/review") {
+		t.Fatalf("stdout = %q, should not preview copy over local edits", stdout.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
 	code = Run([]string{"sync", "--project", project}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("sync returned %d, want 0\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
@@ -397,6 +410,66 @@ skills:
 	}
 	if !strings.Contains(stdout.String(), "manager-owned copy has local edits") {
 		t.Fatalf("stdout = %q, want local edit preserve message", stdout.String())
+	}
+}
+
+func TestPartialUninstallRemovesFingerprintsForDeletedPaths(t *testing.T) {
+	home := t.TempDir()
+	project := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+
+	writeFile(t, filepath.Join(project, ".skills", "project.yaml"), `version: 1
+name: demo
+categories: [Engineering]
+harnesses: [claude]
+`)
+	writeFile(t, filepath.Join(home, "library", "catalog.yaml"), `version: 1
+skills:
+  - name: alpha
+    categories: [Engineering]
+    compatibility:
+      mode: portable
+    requirements:
+      tools: []
+  - name: beta
+    categories: [Engineering]
+    compatibility:
+      mode: portable
+    requirements:
+      tools: []
+`)
+	writeFile(t, filepath.Join(home, "library", "alpha", "SKILL.md"), "alpha\n")
+	writeFile(t, filepath.Join(home, "library", "beta", "SKILL.md"), "beta\n")
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := Run([]string{"install", "--project", project}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("install returned %d, want 0\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+	}
+	writeFile(t, filepath.Join(project, ".claude", "skills", "beta", "local.md"), "local edit\n")
+
+	stdout.Reset()
+	stderr.Reset()
+	code = Run([]string{"uninstall", "--project", project, "--confirm"}, &stdout, &stderr)
+	if code != 4 {
+		t.Fatalf("uninstall returned %d, want 4\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+	}
+
+	manifestPath := filepath.Join(home, "manifests", projectSlug(project)+".json")
+	data, err := os.ReadFile(manifestPath)
+	if err != nil {
+		t.Fatalf("read manifest: %v", err)
+	}
+	var manifest installManifest
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		t.Fatalf("unmarshal manifest: %v", err)
+	}
+	if _, ok := manifest.Files[".claude/skills/alpha"]; ok {
+		t.Fatalf("removed alpha fingerprint still recorded: %#v", manifest.Files)
+	}
+	if _, ok := manifest.Files[".claude/skills/beta"]; !ok {
+		t.Fatalf("preserved beta fingerprint missing: %#v", manifest.Files)
 	}
 }
 
