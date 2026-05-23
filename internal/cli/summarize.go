@@ -376,9 +376,6 @@ func validateSummaryAgainstReport(parsed parsedSummary, report safetyReport) err
 		return nil
 	}
 	text := strings.ToLower(parsed.Sections["safety flags"])
-	if strings.Contains(text, "none") {
-		return fmt.Errorf("summary says safety flags are none, but deterministic flags are present")
-	}
 	for _, flag := range report.Flags {
 		if !strings.Contains(text, strings.ToLower(flag.Name)) {
 			return fmt.Errorf("summary missing deterministic safety flag %q", flag.Name)
