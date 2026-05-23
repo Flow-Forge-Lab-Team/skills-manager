@@ -85,12 +85,12 @@ type installCandidate struct {
 }
 
 type installLockEntry struct {
-	Name       string
-	Version    string
-	Commit     string
+	Name        string
+	Version     string
+	Commit      string
 	Fingerprint string
 	InstalledAt string
-	Harnesses  []string
+	Harnesses   []string
 }
 
 type installLock struct {
@@ -900,22 +900,22 @@ func writeInstallLock(path string, lock installLock) error {
 
 // buildInstallLock produces the lock content to write after this run.
 //
-//   desired: the full set of skills that should appear in the new lock.
-//     - mode 1 (lock-driven): only the candidates we re-evaluated this run.
-//       preserveOld carries the skills we left alone (--only-excluded,
-//       never_include, blocked, etc.)
-//     - modes 2/4 (bootstrap/sync): the full project.yaml-matched set.
-//   skipped: subset of desired we did NOT install this run (blocked tools,
-//     no compatible harness). For these we either preserve the old lock
-//     entry (honest: bytes didn't change) or synthesize from library+catalog
-//     if there's no old entry to preserve. Synthesizing with library
-//     fingerprint is correct because the lock describes the desired set;
-//     a teammate with the tool will install the library content.
-//   managed: target paths the manager currently owns. Used to decide which
-//     of a skill's harnesses count as "managed" — only those advance to the
-//     current library fingerprint.
-//   preserveOld: names whose old lock entry should survive unchanged even
-//     if the skill isn't in desired (--only excludes, never_include, etc.).
+//	desired: the full set of skills that should appear in the new lock.
+//	  - mode 1 (lock-driven): only the candidates we re-evaluated this run.
+//	    preserveOld carries the skills we left alone (--only-excluded,
+//	    never_include, blocked, etc.)
+//	  - modes 2/4 (bootstrap/sync): the full project.yaml-matched set.
+//	skipped: subset of desired we did NOT install this run (blocked tools,
+//	  no compatible harness). For these we either preserve the old lock
+//	  entry (honest: bytes didn't change) or synthesize from library+catalog
+//	  if there's no old entry to preserve. Synthesizing with library
+//	  fingerprint is correct because the lock describes the desired set;
+//	  a teammate with the tool will install the library content.
+//	managed: target paths the manager currently owns. Used to decide which
+//	  of a skill's harnesses count as "managed" — only those advance to the
+//	  current library fingerprint.
+//	preserveOld: names whose old lock entry should survive unchanged even
+//	  if the skill isn't in desired (--only excludes, never_include, etc.).
 func buildInstallLock(desired []installCandidate, skipped map[string]bool, actedOn map[string]bool, libraryPath string, oldLock installLock, managed map[string]bool, preserveOld map[string]bool) (installLock, error) {
 	newLock := installLock{
 		Version:     1,
