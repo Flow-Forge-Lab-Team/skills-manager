@@ -204,6 +204,19 @@ Flags:
 Show details for a single skill, including requirements and install locations.
 
 ` + globalFlagHelp()
+	case "set":
+		return `skills-manager set <skill> --compatibility <mode> [flags]
+
+Update a skill's compatibility declaration. Rewrites SKILL.md frontmatter and
+.skill-meta.yaml, then refreshes catalog.yaml.
+
+Flags:
+  --compatibility <mode>     portable | compatible | exclusive  (required)
+  --harness <name>           target harness (required for exclusive)
+  --harnesses <a,b,c>        target harnesses (required for compatible)
+  --reason "<text>"          optional human note (exclusive mode)
+
+` + globalFlagHelp()
 	}
 	return `skills-manager: AI skill library manager
 
@@ -215,6 +228,7 @@ Commands:
   uninstall   remove managed skills from a project
   list        list skills in the canonical library
   show        show details for a single skill
+  set         update a skill's compatibility declaration
   help        show help for a command
 
 ` + globalFlagHelp()
