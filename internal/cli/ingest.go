@@ -398,8 +398,20 @@ func ingestFromSource(src ingestSource, opts ingestOptions, home string, out io.
 		meta.Compatibility.Detected = map[string]detectionResult{
 			"skills-ingest": {Confidence: fromOut.Confidence.Compatibility, Reasons: []string{llmReason}},
 		}
-		// Do NOT overwrite Mode/Harness/Harnesses from frontmatter declarations.
-		// LLM output only contributes to the Detected map; frontmatter Declared is authoritative.
+		// Respect explicit frontmatter declarations (Declared != nil means the SKILL.md had compatible:/exclusive:).
+		// If there was no frontmatter declaration, apply the LLM-suggested mode/harnesses so that
+		// install and matching actually see the handoff-provided restrictions.
+		if meta.Compatibility.Declared == nil {
+			if m := fromOut.Compatibility.Mode; m != "" {
+				meta.Compatibility.Mode = m
+			}
+			if h := fromOut.Compatibility.Harness; h != "" {
+				meta.Compatibility.Harness = h
+			}
+			if len(fromOut.Compatibility.Harnesses) > 0 {
+				meta.Compatibility.Harnesses = fromOut.Compatibility.Harnesses
+			}
+		}
 		meta.Requirements = reqs
 	} else {
 		meta.Compatibility.Detected = compatResults
