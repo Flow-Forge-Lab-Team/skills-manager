@@ -96,3 +96,63 @@ func TestUpdateSafetyNoFlagsForBenignBodyEdit(t *testing.T) {
 		t.Fatalf("stdout = %q, want no flags", stdout.String())
 	}
 }
+
+func TestUpdateAcceptAllSafeAppliesSafeUpdates(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+	skillDir := filepath.Join(home, "library", "notes")
+	root := filepath.Join(skillDir, ".update-pending")
+	writeFile(t, filepath.Join(skillDir, "SKILL.md"), "---\nname: notes\ndescription: Take notes\n---\nOld body\n")
+	writeFile(t, filepath.Join(skillDir, "stale.md"), "stale\n")
+	writeFile(t, filepath.Join(root, "from", "SKILL.md"), "---\nname: notes\ndescription: Take notes\n---\nOld body\n")
+	writeFile(t, filepath.Join(root, "to", "SKILL.md"), "---\nname: notes\ndescription: Take notes\n---\nNew body\n")
+	writeFile(t, filepath.Join(root, "to", "references", "example.md"), "example\n")
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := Run([]string{"update", "--accept-all-safe"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("Run returned %d, want 0\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+	}
+	assertFileContent(t, filepath.Join(skillDir, "SKILL.md"), "---\nname: notes\ndescription: Take notes\n---\nNew body\n")
+	assertFileContent(t, filepath.Join(skillDir, "references", "example.md"), "example\n")
+	if _, err := os.Stat(filepath.Join(skillDir, "stale.md")); !os.IsNotExist(err) {
+		t.Fatalf("expected stale file removed, got err %v", err)
+	}
+	if _, err := os.Stat(root); !os.IsNotExist(err) {
+		t.Fatalf("expected pending update removed, got err %v", err)
+	}
+	if !strings.Contains(stdout.String(), "notes: accepted") {
+		t.Fatalf("stdout missing accepted skill:\n%s", stdout.String())
+	}
+}
+
+func TestUpdateSafetyIgnoresTopLevelMetadataAfterRequirements(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+	root := filepath.Join(home, "library", "notes", ".update-pending")
+	writeFile(t, filepath.Join(root, "from", "SKILL.md"), "---\nname: notes\ndescription: Take notes\n---\nBody\n")
+	writeFile(t, filepath.Join(root, "to", "SKILL.md"), "---\nname: notes\ndescription: Take notes\n---\nBody\n")
+	writeFile(t, filepath.Join(root, "from", ".skill-meta.yaml"), `version: 1
+requirements:
+  tools: ["git"]
+summary: "old"
+local_changes: false
+`)
+	writeFile(t, filepath.Join(root, "to", ".skill-meta.yaml"), `version: 1
+requirements:
+  tools: ["git"]
+summary: "new"
+local_changes: true
+`)
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := Run([]string{"update", "--safety", "notes"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("Run returned %d, want 0\nstderr:\n%s", code, stderr.String())
+	}
+	if strings.Contains(stdout.String(), "requirements-changed") {
+		t.Fatalf("stdout has false requirements flag:\n%s", stdout.String())
+	}
+}

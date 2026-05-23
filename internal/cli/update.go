@@ -24,9 +24,10 @@ type safetyReport struct {
 }
 
 type pendingUpdatePaths struct {
-	Root string
-	From string
-	To   string
+	Skill string
+	Root  string
+	From  string
+	To    string
 }
 
 func runUpdate(args []string, stdout io.Writer, stderr io.Writer) int {
@@ -74,7 +75,7 @@ func analyzePendingUpdate(skill string, stderr io.Writer) (safetyReport, pending
 		fmt.Fprintf(stderr, "ensure library: %v\n", err)
 		return safetyReport{}, pendingUpdatePaths{}, 3
 	}
-	pending, err := findPendingUpdate(filepath.Join(libraryPath, skill, ".update-pending"))
+	pending, err := findPendingUpdate(skill, filepath.Join(libraryPath, skill, ".update-pending"))
 	if err != nil {
 		fmt.Fprintf(stderr, "pending update for %s: %v\n", skill, err)
 		return safetyReport{}, pendingUpdatePaths{}, 3
@@ -104,13 +105,13 @@ func runAcceptAllSafe(stdout io.Writer, stderr io.Writer) int {
 		return 3
 	}
 	var blocked []string
-	var safe []string
+	var safe []pendingUpdatePaths
 	for _, entry := range entries {
 		if !entry.IsDir() {
 			continue
 		}
 		pendingRoot := filepath.Join(libraryPath, entry.Name(), ".update-pending")
-		pending, err := findPendingUpdate(pendingRoot)
+		pending, err := findPendingUpdate(entry.Name(), pendingRoot)
 		if err != nil {
 			continue
 		}
@@ -128,11 +129,11 @@ func runAcceptAllSafe(stdout io.Writer, stderr io.Writer) int {
 		if hasBlockingFlags(report) {
 			blocked = append(blocked, entry.Name())
 		} else {
-			safe = append(safe, entry.Name())
+			safe = append(safe, pending)
 		}
 	}
 	sort.Strings(blocked)
-	sort.Strings(safe)
+	sort.Slice(safe, func(i, j int) bool { return safe[i].Skill < safe[j].Skill })
 	if len(blocked) > 0 {
 		fmt.Fprintf(stdout, "Refusing --accept-all-safe: %d update(s) have blocking safety flags\n", len(blocked))
 		for _, skill := range blocked {
@@ -140,8 +141,43 @@ func runAcceptAllSafe(stdout io.Writer, stderr io.Writer) int {
 		}
 		return 4
 	}
-	fmt.Fprintf(stdout, "All pending updates are safe (%d).\n", len(safe))
+	for _, pending := range safe {
+		if err := applyPendingUpdate(pending); err != nil {
+			fmt.Fprintf(stderr, "accept update for %s: %v\n", pending.Skill, err)
+			return 3
+		}
+		fmt.Fprintf(stdout, "- %s: accepted\n", pending.Skill)
+	}
+	fmt.Fprintf(stdout, "All pending updates accepted (%d).\n", len(safe))
 	return 0
+}
+
+func applyPendingUpdate(pending pendingUpdatePaths) error {
+	skillDir := filepath.Dir(pending.Root)
+	tmp, err := os.MkdirTemp("", "skills-manager-update-*")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(tmp)
+	if err := copyDir(pending.To, tmp); err != nil {
+		return err
+	}
+	entries, err := os.ReadDir(skillDir)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if entry.Name() == ".update-pending" {
+			continue
+		}
+		if err := os.RemoveAll(filepath.Join(skillDir, entry.Name())); err != nil {
+			return err
+		}
+	}
+	if err := copyDir(tmp, skillDir); err != nil {
+		return err
+	}
+	return os.RemoveAll(pending.Root)
 }
 
 func printSafetyReport(report safetyReport, stdout io.Writer) {
@@ -176,7 +212,7 @@ func hasBlockingFlags(report safetyReport) bool {
 	return false
 }
 
-func findPendingUpdate(root string) (pendingUpdatePaths, error) {
+func findPendingUpdate(skill string, root string) (pendingUpdatePaths, error) {
 	stat, err := os.Stat(root)
 	if err != nil {
 		return pendingUpdatePaths{}, err
@@ -185,7 +221,7 @@ func findPendingUpdate(root string) (pendingUpdatePaths, error) {
 		return pendingUpdatePaths{}, fmt.Errorf("%s is not a directory", root)
 	}
 
-	pending := pendingUpdatePaths{Root: root}
+	pending := pendingUpdatePaths{Skill: skill, Root: root}
 	for _, name := range []string{"from", "from-current"} {
 		path := filepath.Join(root, name)
 		if _, err := os.Stat(path); err == nil {
@@ -468,8 +504,17 @@ func parseMetaText(text string) map[string][]string {
 		if trimmed == "" {
 			continue
 		}
-		if !strings.HasPrefix(line, " ") && strings.HasSuffix(trimmed, ":") {
-			section = strings.TrimSuffix(trimmed, ":")
+		if indent(line) == 0 {
+			key, _, ok := splitYAMLKey(line)
+			if !ok {
+				section = ""
+				continue
+			}
+			if key == "compatibility" || key == "requirements" {
+				section = key
+			} else {
+				section = ""
+			}
 			continue
 		}
 		if section == "compatibility" || section == "requirements" {
@@ -477,18 +522,6 @@ func parseMetaText(text string) map[string][]string {
 		}
 	}
 	return out
-}
-
-func stringSlicesEqual(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
 }
 
 func lineCount(text string) int {
