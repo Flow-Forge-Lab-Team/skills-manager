@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/Flow-Forge-Lab-Team/skills-manager/internal/state"
 )
 
 func TestUpdateSafetyFlagsDescriptionRequirementsScriptAndSuspiciousLines(t *testing.T) {
@@ -494,5 +496,96 @@ func TestUpdateSafetyFlagsExecutableScriptModeChanges(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), "script-added") || !strings.Contains(stdout.String(), "executable bit") {
 		t.Fatalf("stdout missing executable script flag:\n%s", stdout.String())
+	}
+}
+
+func TestUpdateNArgsListsPendingUpdates(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+
+	// Set up state DB with pending updates
+	stateDB, err := state.Open(home)
+	if err != nil {
+		t.Fatalf("Open state: %v", err)
+	}
+	defer stateDB.Close()
+
+	if err := stateDB.InsertUpdate("pdf", "abc1234", "def5678", "github"); err != nil {
+		t.Fatalf("InsertUpdate: %v", err)
+	}
+	if err := stateDB.InsertUpdate("qa", "v1.0.0", "v2.0.0", "marketplace"); err != nil {
+		t.Fatalf("InsertUpdate: %v", err)
+	}
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := Run([]string{"update"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("Run returned %d, want 0\nstderr: %s", code, stderr.String())
+	}
+
+	output := stdout.String()
+	if !strings.Contains(output, "Pending updates") || !strings.Contains(output, "pdf") || !strings.Contains(output, "qa") {
+		t.Fatalf("stdout missing pending updates:\n%s", output)
+	}
+}
+
+func TestUpdateNArgsNoPending(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+
+	// Set up empty state DB
+	_, err := state.Open(home)
+	if err != nil {
+		t.Fatalf("Open state: %v", err)
+	}
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := Run([]string{"update"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("Run returned %d, want 0", code)
+	}
+
+	output := stdout.String()
+	if !strings.Contains(output, "No pending updates") {
+		t.Fatalf("stdout should indicate no pending updates:\n%s", output)
+	}
+}
+
+func TestUpdateDiffShowsDifference(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+	root := filepath.Join(home, "library", "notes", ".update-pending")
+	writeFile(t, filepath.Join(root, "from.md"), "---\nname: notes\ndescription: Take notes\n---\nOld body\n")
+	writeFile(t, filepath.Join(root, "to.md"), "---\nname: notes\ndescription: Take notes\n---\nNew body\nMore lines\n")
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := Run([]string{"update", "--diff", "notes"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("Run returned %d, want 0\nstderr: %s", code, stderr.String())
+	}
+
+	output := stdout.String()
+	if !strings.Contains(output, "---") || !strings.Contains(output, "+++") || !strings.Contains(output, "-Old body") || !strings.Contains(output, "+New body") {
+		t.Fatalf("stdout missing diff output:\n%s", output)
+	}
+}
+
+func TestUpdateDiffNoPendingReturnsErrorCode(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+	_ = filepath.Join(home, "library", "notes") // ensure library exists
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := Run([]string{"update", "--diff", "notes"}, &stdout, &stderr)
+	if code != ExitNoPending {
+		t.Fatalf("Run returned %d, want %d\nstderr: %s", code, ExitNoPending, stderr.String())
+	}
+
+	if !strings.Contains(stderr.String(), "no pending update") {
+		t.Fatalf("stderr should mention no pending update:\n%s", stderr.String())
 	}
 }

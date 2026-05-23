@@ -17,6 +17,7 @@ const (
 	ExitUsageError = 2
 	ExitOpError    = 3
 	ExitPartial    = 4
+	ExitNoPending  = 5
 )
 
 // globalFlags captures the flags every subcommand honors.
@@ -204,17 +205,32 @@ Flags:
 Show details for a single skill, including requirements and install locations.
 
 ` + globalFlagHelp()
+	case "check":
+		return `skills-manager check [flags]
+
+Poll GitHub for new commits on skills with github-sourced origins.
+Stages pending updates under library/<skill>/.update-pending/ when new commits are found.
+
+Flags:
+  --skill <name>   check only this skill (default: check all)
+  --force          bypass 24-hour lazy-skip and poll anyway
+
+` + globalFlagHelp()
 	case "update":
-		return `skills-manager update --safety <skill>
+		return `skills-manager update [flags]
+       skills-manager update --safety <skill>
+       skills-manager update --diff <skill>
        skills-manager update --accept-all-safe
 
 Review and accept pending library updates staged under
 library/<skill>/.update-pending/.
 
 Forms:
-  --safety <skill>     print a safety report for one pending update
-  --accept-all-safe    apply every pending update that has no blocking flags;
-                       refuses (exit 4) if any update is blocked
+  (no args)           list all pending updates
+  --diff <skill>      print unified diff between from.md and to.md
+  --safety <skill>    print a safety report for one pending update
+  --accept-all-safe   apply every pending update that has no blocking flags;
+                      refuses (exit 4) if any update is blocked
 
 ` + globalFlagHelp()
 	case "set":
@@ -236,6 +252,7 @@ Flags:
 Usage: skills-manager <command> [flags]
 
 Commands:
+  check       poll GitHub for new commits on skills
   install     install matching skills into a project
   sync        re-run install to pick up library updates
   uninstall   remove managed skills from a project

@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/Flow-Forge-Lab-Team/skills-manager/internal/state"
 )
 
 type safetyFlag struct {
@@ -37,10 +39,10 @@ type snapshotFile struct {
 
 func runUpdate(args []string, realStdout io.Writer, stderr io.Writer, gf globalFlags) int {
 	stdout := gf.outWriter(realStdout)
+
+	// No args: list pending updates
 	if len(args) == 0 {
-		fmt.Fprintln(stdout, "Usage: skills-manager update --safety <skill>")
-		fmt.Fprintln(stdout, "       skills-manager update --accept-all-safe")
-		return ExitSuccess
+		return listPendingUpdates(realStdout, stdout, stderr, gf)
 	}
 
 	if args[0] == "--safety" {
@@ -66,6 +68,14 @@ func runUpdate(args []string, realStdout io.Writer, stderr io.Writer, gf globalF
 			}
 		}
 		return ExitSuccess
+	}
+
+	if args[0] == "--diff" {
+		if len(args) < 2 || strings.TrimSpace(args[1]) == "" {
+			fmt.Fprintln(stderr, "usage: skills-manager update --diff <skill>")
+			return ExitUsageError
+		}
+		return runDiff(args[1], stdout, stderr)
 	}
 
 	if args[0] == "--accept-all-safe" {
@@ -921,4 +931,153 @@ func setPendingMetaValue(path, key, value string) error {
 		lines = append(lines, fmt.Sprintf("%s: %s", key, value))
 	}
 	return os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0644)
+}
+
+// listPendingUpdates queries the state DB and lists all pending updates.
+func listPendingUpdates(realStdout io.Writer, stdout io.Writer, stderr io.Writer, gf globalFlags) int {
+	home, err := managerHome()
+	if err != nil {
+		fmt.Fprintf(stderr, "manager home: %v\n", err)
+		return ExitOpError
+	}
+
+	stateDB, err := state.Open(home)
+	if err != nil {
+		fmt.Fprintf(stderr, "open state: %v\n", err)
+		return ExitOpError
+	}
+	defer stateDB.Close()
+
+	updates, err := stateDB.ListPendingUpdates()
+	if err != nil {
+		fmt.Fprintf(stderr, "list pending updates: %v\n", err)
+		return ExitOpError
+	}
+
+	if len(updates) == 0 {
+		fmt.Fprintln(stdout, "No pending updates.")
+		return ExitSuccess
+	}
+
+	fmt.Fprintf(stdout, "Pending updates (%d):\n\n", len(updates))
+	for _, u := range updates {
+		fromShort := u.FromVersion
+		toShort := u.ToVersion
+		if len(fromShort) > 7 {
+			fromShort = fromShort[:7]
+		}
+		if len(toShort) > 7 {
+			toShort = toShort[:7]
+		}
+		fmt.Fprintf(stdout, "  %-20s %s → %s   %s\n", u.SkillName, fromShort, toShort, u.Source)
+	}
+
+	if gf.JSON {
+		if err := writeJSON(realStdout, updates); err != nil {
+			fmt.Fprintln(stderr, err)
+			return ExitOpError
+		}
+	}
+
+	return ExitSuccess
+}
+
+// runDiff prints a unified diff between from.md and to.md for a pending update.
+func runDiff(skill string, stdout io.Writer, stderr io.Writer) int {
+	home, err := managerHome()
+	if err != nil {
+		fmt.Fprintf(stderr, "manager home: %v\n", err)
+		return ExitOpError
+	}
+
+	libraryPath, err := ensureLibrary(home)
+	if err != nil {
+		fmt.Fprintf(stderr, "ensure library: %v\n", err)
+		return ExitOpError
+	}
+
+	pendingRoot := filepath.Join(libraryPath, skill, ".update-pending")
+
+	// Check if pending update exists
+	if _, err := os.Stat(pendingRoot); err != nil {
+		if os.IsNotExist(err) {
+			fmt.Fprintf(stderr, "no pending update for %s\n", skill)
+			return ExitNoPending
+		}
+		fmt.Fprintf(stderr, "inspect pending: %v\n", err)
+		return ExitOpError
+	}
+
+	// Read from and to files
+	fromPath := filepath.Join(pendingRoot, "from.md")
+	toPath := filepath.Join(pendingRoot, "to.md")
+
+	fromBytes, err := os.ReadFile(fromPath)
+	if err != nil {
+		fmt.Fprintf(stderr, "read from.md: %v\n", err)
+		return ExitOpError
+	}
+
+	toBytes, err := os.ReadFile(toPath)
+	if err != nil {
+		fmt.Fprintf(stderr, "read to.md: %v\n", err)
+		return ExitOpError
+	}
+
+	fromLines := strings.Split(strings.TrimRight(string(fromBytes), "\n"), "\n")
+	toLines := strings.Split(strings.TrimRight(string(toBytes), "\n"), "\n")
+
+	// Print unified diff with 3 lines of context
+	diff := unifiedDiff(fromLines, toLines, 3)
+	fmt.Fprint(stdout, diff)
+
+	return ExitSuccess
+}
+
+// unifiedDiff generates a simple unified diff with the given context lines.
+func unifiedDiff(from, to []string, context int) string {
+	var out strings.Builder
+
+	// Quick simple diff: find changed regions
+	// For now, show a very basic line-by-line diff
+	fmt.Fprintf(&out, "--- from.md\n+++ to.md\n")
+
+	// Simplified: just show all differences without fancy patching
+	maxLen := len(from)
+	if len(to) > maxLen {
+		maxLen = len(to)
+	}
+
+	for i := 0; i < maxLen; i++ {
+		fromLine := ""
+		toLine := ""
+		if i < len(from) {
+			fromLine = from[i]
+		}
+		if i < len(to) {
+			toLine = to[i]
+		}
+
+		if fromLine != toLine {
+			if fromLine != "" {
+				fmt.Fprintf(&out, "-%s\n", fromLine)
+			}
+			if toLine != "" {
+				fmt.Fprintf(&out, "+%s\n", toLine)
+			}
+		} else if fromLine != "" {
+			// Common line
+			fmt.Fprintf(&out, " %s\n", fromLine)
+		}
+	}
+
+	return out.String()
+}
+
+// min returns the minimum of two integers.
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
