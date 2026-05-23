@@ -10,6 +10,15 @@ import (
 	"time"
 )
 
+// stdinIsTTY checks whether stdin is connected to a terminal.
+func stdinIsTTY() bool {
+	info, err := os.Stdin.Stat()
+	if err != nil {
+		return false
+	}
+	return (info.Mode() & os.ModeCharDevice) != 0
+}
+
 // Exit code conventions (see docs/CLI_REFERENCE.md).
 const (
 	ExitSuccess    = 0
@@ -259,12 +268,43 @@ Check manifests, fingerprints, catalog/state drift, required tools/MCP/credentia
 Rebuild derived state or catalog if requested. Non-zero exit on problems.
 
 ` + globalFlagHelp()
+	case "add":
+		return `skills-manager add <source> [flags]
+
+Bring a skill into the library from GitHub, a local path, or the marketplace cache.
+
+Flags:
+  --auto                  auto-ingest only high-confidence skills
+  --yes                   accept all suggestions without prompting
+  --name <name>           override the skill name
+
+` + globalFlagHelp()
+	case "scan":
+		return `skills-manager scan [flags]
+
+Discover and report skills in harness skill directories.
+
+Flags:
+  --paths <dirs>          comma-separated list of directories to scan (overrides defaults)
+  --ingest                interactively ingest unregistered skills
+  --auto-ingest           auto-ingest high-confidence unregistered skills
+
+` + globalFlagHelp()
+	case "new":
+		return `skills-manager new <name>
+
+Create a new skill and open it in $EDITOR. Name must be 3-64 alphanumeric chars + dashes.
+
+` + globalFlagHelp()
 	}
 	return `skills-manager: AI skill library manager
 
 Usage: skills-manager <command> [flags]
 
 Commands:
+  add         bring a skill into the library
+  scan        discover skills in harness directories
+  new         create a new skill
   check       poll GitHub for new commits on skills
   install     install matching skills into a project
   sync        re-run install to pick up library updates
