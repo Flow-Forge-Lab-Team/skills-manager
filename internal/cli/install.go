@@ -749,9 +749,15 @@ func readInstallLock(path string) (installLock, error) {
 			// Per-skill keys
 			switch key {
 			case "version":
-				currentSkill.Version = unquote(value)
+				v := unquote(value)
+				if v != "~" {
+					currentSkill.Version = v
+				}
 			case "commit":
-				currentSkill.Commit = unquote(value)
+				v := unquote(value)
+				if v != "~" {
+					currentSkill.Commit = v
+				}
 			case "fingerprint":
 				fp := unquote(value)
 				if fp != "~" {
@@ -810,29 +816,24 @@ func writeInstallLock(path string, lock installLock) error {
 func buildInstallLock(candidates []installCandidate, files map[string]string, libraryPath string, oldLock installLock, managed map[string]bool, preserveOld map[string]bool) (installLock, error) {
 	newLock := installLock{
 		Version:     1,
-		GeneratedAt: time.Now().UTC().Format(time.RFC3339),
 		GeneratedBy: fmt.Sprintf("skills-manager %s", Version),
 		Skills:      []installLockEntry{},
 	}
+	now := time.Now().UTC().Format(time.RFC3339)
 
-	// Build an index of old lock entries for fallback lookups.
 	oldByName := map[string]installLockEntry{}
 	for _, e := range oldLock.Skills {
 		oldByName[e.Name] = e
 	}
 
-	// Track which skills are accounted for in newLock (by name) so the
-	// final old-entry pass doesn't double-add.
 	written := map[string]bool{}
 
 	for _, candidate := range candidates {
-		// Compute library fingerprint (canonical source-of-truth)
 		libFP, err := fingerprintDir(filepath.Join(libraryPath, candidate.Skill.Name))
 		if err != nil {
 			return newLock, fmt.Errorf("fingerprint library skill %q: %w", candidate.Skill.Name, err)
 		}
 
-		// Filter harnesses to only those that were actually managed
 		var managedHarnesses []string
 		for _, harness := range candidate.Harnesses {
 			targetBase, ok := harnessProjectPaths[harness]
@@ -846,12 +847,19 @@ func buildInstallLock(candidates []installCandidate, files map[string]string, li
 		}
 
 		if len(managedHarnesses) > 0 {
+			old, hadOld := oldByName[candidate.Skill.Name]
+			// Reuse old installed_at when nothing semantic changed,
+			// so committed lockfiles stay clean across idempotent installs.
+			installedAt := now
+			if hadOld && old.Fingerprint == libFP && stringSlicesEqual(old.Harnesses, managedHarnesses) {
+				installedAt = old.InstalledAt
+			}
 			newLock.Skills = append(newLock.Skills, installLockEntry{
 				Name:        candidate.Skill.Name,
 				Version:     "",
 				Commit:      "",
 				Fingerprint: libFP,
-				InstalledAt: time.Now().UTC().Format(time.RFC3339),
+				InstalledAt: installedAt,
 				Harnesses:   managedHarnesses,
 			})
 			written[candidate.Skill.Name] = true
@@ -859,17 +867,13 @@ func buildInstallLock(candidates []installCandidate, files map[string]string, li
 		}
 
 		// All target harnesses were preserved-as-unmanaged (existing
-		// committed copies). Don't silently drop the locked entry — keep
-		// the old lock entry so the commit stays reproducible.
+		// committed copies). Don't silently drop the locked entry.
 		if old, ok := oldByName[candidate.Skill.Name]; ok {
 			newLock.Skills = append(newLock.Skills, old)
 			written[candidate.Skill.Name] = true
 		}
 	}
 
-	// Preserve old lock entries only for skills the caller explicitly flagged
-	// (lock problems with --skip-missing-locked, never_include, inactive harnesses, --only filter).
-	// Sync recomputes from catalog, so its preserveOld is empty and stale entries are dropped.
 	for _, oldEntry := range oldLock.Skills {
 		if written[oldEntry.Name] {
 			continue
@@ -879,12 +883,46 @@ func buildInstallLock(candidates []installCandidate, files map[string]string, li
 		}
 	}
 
-	// Sort by skill name for deterministic output
 	sort.Slice(newLock.Skills, func(i, j int) bool {
 		return newLock.Skills[i].Name < newLock.Skills[j].Name
 	})
 
+	// Preserve old generated_at when the skill set is byte-identical.
+	// Lock is committed; idempotent installs should not churn the file.
+	if oldLock.GeneratedAt != "" && lockEntriesEqual(newLock.Skills, oldLock.Skills) {
+		newLock.GeneratedAt = oldLock.GeneratedAt
+	} else {
+		newLock.GeneratedAt = now
+	}
+
 	return newLock, nil
+}
+
+func stringSlicesEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func lockEntriesEqual(a, b []installLockEntry) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i].Name != b[i].Name || a[i].Version != b[i].Version ||
+			a[i].Commit != b[i].Commit || a[i].Fingerprint != b[i].Fingerprint ||
+			a[i].InstalledAt != b[i].InstalledAt ||
+			!stringSlicesEqual(a[i].Harnesses, b[i].Harnesses) {
+			return false
+		}
+	}
+	return true
 }
 
 func readProjectConfig(path string) (projectConfig, error) {

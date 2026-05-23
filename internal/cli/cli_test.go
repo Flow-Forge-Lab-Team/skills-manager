@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestVersion(t *testing.T) {
@@ -1365,6 +1366,53 @@ skills:
 	}
 	if len(lock.Skills) != 1 || lock.Skills[0].Name != "alpha" {
 		t.Fatalf("expected only alpha in lock after sync, got %+v", lock.Skills)
+	}
+}
+
+func TestIdempotentInstallDoesNotChurnLockTimestamps(t *testing.T) {
+	home := t.TempDir()
+	project := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+
+	writeFile(t, filepath.Join(project, ".skills", "project.yaml"), `version: 1
+name: demo
+categories: [Engineering]
+harnesses: [claude]
+`)
+	writeFile(t, filepath.Join(home, "library", "catalog.yaml"), `version: 1
+skills:
+  - name: alpha
+    categories: [Engineering]
+    compatibility:
+      mode: portable
+    requirements:
+      tools: []
+`)
+	writeFile(t, filepath.Join(home, "library", "alpha", "SKILL.md"), "alpha\n")
+
+	var stdout, stderr bytes.Buffer
+	if code := Run([]string{"install", "--project", project}, &stdout, &stderr); code != 0 {
+		t.Fatalf("first install returned %d, want 0\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+	}
+	first, err := os.ReadFile(filepath.Join(project, ".skills", "installed.lock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Sleep at least one second so a re-write would produce a different RFC3339 timestamp.
+	time.Sleep(1100 * time.Millisecond)
+
+	stdout.Reset()
+	stderr.Reset()
+	if code := Run([]string{"install", "--project", project}, &stdout, &stderr); code != 0 {
+		t.Fatalf("second install returned %d, want 0\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+	}
+	second, err := os.ReadFile(filepath.Join(project, ".skills", "installed.lock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(first) != string(second) {
+		t.Fatalf("idempotent install changed lock contents.\nfirst:\n%s\nsecond:\n%s", first, second)
 	}
 }
 
