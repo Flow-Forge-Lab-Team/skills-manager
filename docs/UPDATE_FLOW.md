@@ -227,14 +227,20 @@ local edits and local-only files would be silently destroyed.
 
 To prevent that, `--accept-all-safe` compares each live skill directory
 against the `from/` snapshot (the "what the live state was supposed to look
-like when the update was staged") before applying:
+like when the update was staged") before applying. The guard branches on the
+same key the apply step uses (the `to` snapshot's shape), so its view of
+what apply will touch is always aligned:
 
-- Live content is compared byte-for-byte against `from/`.
-- Executable bits are compared.
-- `.update-pending/` and `.skill-meta.yaml` on the live side are excluded
-  (the staged base never includes them).
-- Any extra file, missing file, modified content, or executable-bit
-  difference is treated as divergence.
+- **If `to/` is a directory** (apply wipes and replaces): compare every file
+  in the live dir against the base. Any extra, missing, modified, or
+  exec-bit-changed file is divergence.
+- **If `to` is a single file** (apply only rewrites `SKILL.md`): compare
+  only the live `SKILL.md` against the base. Other live files are untouched
+  by apply, so they don't count as divergence.
+- `.skill-meta.yaml` is excluded symmetrically on both sides — apply
+  preserves the local sidecar across updates rather than overwriting it.
+- `.update-pending/` is excluded from the live side (it is the staging area
+  itself).
 
 If any pending update diverges, the whole batch is refused with exit code
 `4` (partial) — mirroring the all-or-nothing behavior used when any update

@@ -199,7 +199,7 @@ func runAcceptAllSafe(realStdout io.Writer, stdout io.Writer, stderr io.Writer, 
 	conflictReasons := map[string]string{}
 	for _, pending := range safe {
 		skillDir := filepath.Dir(pending.Root)
-		diverged, reason, err := liveDivergesFromBase(skillDir, pending.From)
+		diverged, reason, err := liveDivergesFromBase(skillDir, pending.From, pending.To)
 		if err != nil {
 			fmt.Fprintf(stderr, "check divergence for %s: %v\n", pending.Skill, err)
 			return ExitOpError
@@ -662,28 +662,41 @@ func snapshotFiles(path string) (map[string]snapshotFile, error) {
 // the time we are about to accept it. Refusing to apply in that case prevents
 // the accept step from silently wiping local edits or local-only files.
 //
-// .update-pending/ and .skill-meta.yaml are excluded from the live side: the
-// staged base was captured before the pending dir existed and never includes
-// the local meta sidecar.
-func liveDivergesFromBase(skillDir, fromPath string) (bool, string, error) {
-	info, err := os.Stat(fromPath)
+// The branch matches applyPendingUpdate's: applyPendingUpdate keys on whether
+// toPath is a directory, and that decides whether the live dir gets wiped or
+// only SKILL.md is replaced. The guard must use the same key so it covers the
+// scenarios apply will actually touch — including the from-file/to-directory
+// case where a single-file skill grows reference files in its next version
+// (apply takes the wipe branch; the guard must enumerate the live dir).
+//
+// .skill-meta.yaml is excluded symmetrically: apply preserves the local
+// sidecar across updates rather than overwriting it, and the staged base
+// historically may or may not carry one. .update-pending is excluded from
+// the live side because it is the staging area itself.
+func liveDivergesFromBase(skillDir, fromPath, toPath string) (bool, string, error) {
+	toInfo, err := os.Stat(toPath)
 	if err != nil {
 		return false, "", err
 	}
-	if !info.IsDir() {
-		liveSkillMd := filepath.Join(skillDir, "SKILL.md")
-		liveData, err := os.ReadFile(liveSkillMd)
+	if !toInfo.IsDir() {
+		// File-form update: apply only rewrites SKILL.md. Other live files
+		// are left alone, so only SKILL.md divergence matters.
+		liveData, err := os.ReadFile(filepath.Join(skillDir, "SKILL.md"))
 		if err != nil {
 			if os.IsNotExist(err) {
 				return true, "SKILL.md missing from live skill directory", nil
 			}
 			return false, "", err
 		}
-		baseData, err := os.ReadFile(fromPath)
+		baseSKILL, err := readBaseSKILLMD(fromPath)
 		if err != nil {
 			return false, "", err
 		}
-		if string(liveData) != string(baseData) {
+		if baseSKILL == nil {
+			// No base SKILL.md to compare against; cannot determine divergence.
+			return false, "", nil
+		}
+		if string(liveData) != *baseSKILL {
 			return true, "SKILL.md modified since update was staged", nil
 		}
 		return false, "", nil
@@ -692,6 +705,7 @@ func liveDivergesFromBase(skillDir, fromPath string) (bool, string, error) {
 	if err != nil {
 		return false, "", err
 	}
+	delete(base, ".skill-meta.yaml")
 	live, err := snapshotLiveSkillDir(skillDir)
 	if err != nil {
 		return false, "", err
@@ -715,6 +729,30 @@ func liveDivergesFromBase(skillDir, fromPath string) (bool, string, error) {
 		}
 	}
 	return false, "", nil
+}
+
+func readBaseSKILLMD(fromPath string) (*string, error) {
+	info, err := os.Stat(fromPath)
+	if err != nil {
+		return nil, err
+	}
+	if !info.IsDir() {
+		data, err := os.ReadFile(fromPath)
+		if err != nil {
+			return nil, err
+		}
+		s := string(data)
+		return &s, nil
+	}
+	data, err := os.ReadFile(filepath.Join(fromPath, "SKILL.md"))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	s := string(data)
+	return &s, nil
 }
 
 func snapshotLiveSkillDir(skillDir string) (map[string]snapshotFile, error) {

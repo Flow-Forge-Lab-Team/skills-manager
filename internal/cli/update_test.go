@@ -351,6 +351,60 @@ func TestUpdateAcceptAllSafeProceedsWhenLiveMatchesBase(t *testing.T) {
 	assertFileContent(t, filepath.Join(skillDir, "references", "keep.md"), "keep\n")
 }
 
+func TestUpdateAcceptAllSafeProceedsWhenBaseHasMetaSidecar(t *testing.T) {
+	// Regression: the divergence guard must exclude .skill-meta.yaml from
+	// the staged base too, not only from the live snapshot. Otherwise any
+	// directory update whose from/ carries a meta sidecar (the realistic
+	// case — safety review depends on from/.skill-meta.yaml) is falsely
+	// refused as diverged.
+	home := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+	skillDir := filepath.Join(home, "library", "notes")
+	root := filepath.Join(skillDir, ".update-pending")
+	writeFile(t, filepath.Join(skillDir, "SKILL.md"), "---\nname: notes\ndescription: Take notes\n---\nOld body\n")
+	writeFile(t, filepath.Join(skillDir, ".skill-meta.yaml"), "version: 1\norigin:\n  type: github\n")
+	writeFile(t, filepath.Join(root, "from", "SKILL.md"), "---\nname: notes\ndescription: Take notes\n---\nOld body\n")
+	writeFile(t, filepath.Join(root, "from", ".skill-meta.yaml"), "version: 1\ncompatibility:\n  mode: portable\nrequirements:\n  tools: [\"git\"]\n")
+	writeFile(t, filepath.Join(root, "to", "SKILL.md"), "---\nname: notes\ndescription: Take notes\n---\nNew body\n")
+	writeFile(t, filepath.Join(root, "to", ".skill-meta.yaml"), "version: 1\ncompatibility:\n  mode: portable\nrequirements:\n  tools: [\"git\"]\n")
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := Run([]string{"update", "--accept-all-safe"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("Run returned %d, want 0\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+	}
+	assertFileContent(t, filepath.Join(skillDir, "SKILL.md"), "---\nname: notes\ndescription: Take notes\n---\nNew body\n")
+}
+
+func TestUpdateAcceptAllSafeRefusesFromFileToDirWithLocalOnlyFile(t *testing.T) {
+	// Regression for the from-FILE + to-DIRECTORY mismatch: a single-file
+	// skill upgrading to a multi-file layout. applyPendingUpdate takes the
+	// wipe-and-replace branch (keyed on to), so the guard must too — a
+	// guard keyed on from would short-circuit through the file path and
+	// miss local-only files in the live dir that apply will then destroy.
+	home := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+	skillDir := filepath.Join(home, "library", "notes")
+	root := filepath.Join(skillDir, ".update-pending")
+	writeFile(t, filepath.Join(skillDir, "SKILL.md"), "---\nname: notes\ndescription: Take notes\n---\nOld body\n")
+	writeFile(t, filepath.Join(skillDir, "local-notes.md"), "private notes\n")
+	writeFile(t, filepath.Join(root, "from-v1.0.0.md"), "---\nname: notes\ndescription: Take notes\n---\nOld body\n")
+	writeFile(t, filepath.Join(root, "to", "SKILL.md"), "---\nname: notes\ndescription: Take notes\n---\nNew body\n")
+	writeFile(t, filepath.Join(root, "to", "references", "example.md"), "example\n")
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := Run([]string{"update", "--accept-all-safe"}, &stdout, &stderr)
+	if code != 4 {
+		t.Fatalf("Run returned %d, want 4\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "diverged from staged base") {
+		t.Fatalf("stdout missing divergence refusal:\n%s", stdout.String())
+	}
+	assertFileContent(t, filepath.Join(skillDir, "local-notes.md"), "private notes\n")
+}
+
 func TestUpdateSafetyFlagsMultilineDescriptionChanges(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("SKILLS_MANAGER_HOME", home)
