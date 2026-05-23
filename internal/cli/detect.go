@@ -217,6 +217,17 @@ func matchPattern(pattern, text string) bool {
 		re := regexp.MustCompile(`mcp__[a-f0-9]+__`)
 		return re.MatchString(text)
 	}
+
+	// Support simple ^ anchor (start of text or start of line)
+	if strings.HasPrefix(pattern, "^") {
+		rest := pattern[1:]
+		if strings.HasPrefix(text, rest) {
+			return true
+		}
+		// Also allow after a newline (common in multi-line skill bodies)
+		return strings.Contains(text, "\n"+rest)
+	}
+
 	// Simple substring match for all other patterns
 	return strings.Contains(text, pattern)
 }
