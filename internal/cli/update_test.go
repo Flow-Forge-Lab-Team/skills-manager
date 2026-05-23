@@ -157,6 +157,34 @@ local_changes: true
 	}
 }
 
+func TestUpdateAcceptAllSafeRefusesMalformedPendingUpdates(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+	malformedRoot := filepath.Join(home, "library", "broken", ".update-pending")
+	safeSkillDir := filepath.Join(home, "library", "notes")
+	safeRoot := filepath.Join(safeSkillDir, ".update-pending")
+	if err := os.MkdirAll(malformedRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(safeSkillDir, "SKILL.md"), "---\nname: notes\ndescription: Take notes\n---\nOld body\n")
+	writeFile(t, filepath.Join(safeRoot, "from", "SKILL.md"), "---\nname: notes\ndescription: Take notes\n---\nOld body\n")
+	writeFile(t, filepath.Join(safeRoot, "to", "SKILL.md"), "---\nname: notes\ndescription: Take notes\n---\nNew body\n")
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := Run([]string{"update", "--accept-all-safe"}, &stdout, &stderr)
+	if code != 4 {
+		t.Fatalf("Run returned %d, want 4\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "pending update for broken") {
+		t.Fatalf("stderr missing malformed pending update:\n%s", stderr.String())
+	}
+	assertFileContent(t, filepath.Join(safeSkillDir, "SKILL.md"), "---\nname: notes\ndescription: Take notes\n---\nOld body\n")
+	if _, err := os.Stat(safeRoot); err != nil {
+		t.Fatalf("safe pending update should remain unapplied: %v", err)
+	}
+}
+
 func TestUpdateAcceptAllSafeAppliesFileSnapshots(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("SKILLS_MANAGER_HOME", home)

@@ -116,9 +116,17 @@ func runAcceptAllSafe(stdout io.Writer, stderr io.Writer) int {
 			continue
 		}
 		pendingRoot := filepath.Join(libraryPath, entry.Name(), ".update-pending")
+		if _, err := os.Stat(pendingRoot); err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			fmt.Fprintf(stderr, "inspect pending update for %s: %v\n", entry.Name(), err)
+			return 3
+		}
 		pending, err := findPendingUpdate(entry.Name(), pendingRoot)
 		if err != nil {
-			continue
+			fmt.Fprintf(stderr, "pending update for %s: %v\n", entry.Name(), err)
+			return 4
 		}
 		report, err := computeSafetyReport(entry.Name(), pending.From, pending.To)
 		if err != nil {
