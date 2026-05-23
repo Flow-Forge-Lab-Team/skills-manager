@@ -1351,18 +1351,23 @@ func readCatalog(path string) (catalog, error) {
 	var current *catalogSkill
 	var section string
 	var tool *toolRequirement
+	var skillBaseIndent int = -1
 	for i := 0; i < len(lines); i++ {
 		raw := stripComment(lines[i])
 		if strings.TrimSpace(raw) == "" {
 			continue
 		}
 		trimmed := strings.TrimSpace(raw)
-		// Only treat a leading "- name:" as the start of a new top-level skill
-		// when we are not currently inside a requirements/tools/mcp_servers block
-		// for the current skill. This prevents bogus skills from being created
-		// when the catalog emits detailed "- name: / required:" entries under
-		// mcp_servers or tools.
-		if strings.HasPrefix(trimmed, "- name:") && section == "" {
+		lineIndent := indent(raw)
+
+		// A leading "- name:" at the same or lower indent as the first skill we saw
+		// is the start of a new top-level catalog skill. This is more robust than
+		// checking section == "" (which can be left non-empty after processing
+		// a skill's requirements/compatibility block).
+		isTopLevelSkillStart := strings.HasPrefix(trimmed, "- name:") &&
+			(skillBaseIndent == -1 || lineIndent <= skillBaseIndent)
+
+		if isTopLevelSkillStart {
 			if current != nil {
 				if tool != nil {
 					current.Requirements.Tools = append(current.Requirements.Tools, *tool)
@@ -1372,6 +1377,9 @@ func readCatalog(path string) (catalog, error) {
 			current = &catalogSkill{Name: unquote(strings.TrimSpace(strings.TrimPrefix(trimmed, "- name:")))}
 			section = ""
 			tool = nil
+			if skillBaseIndent == -1 {
+				skillBaseIndent = lineIndent
+			}
 			continue
 		}
 		if current == nil {
