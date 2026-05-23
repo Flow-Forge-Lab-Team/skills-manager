@@ -61,6 +61,8 @@ func Run(args []string, stdout io.Writer, stderr io.Writer) int {
 		code = runUninstall(cmdArgs, stdout, stderr, gf)
 	case "list":
 		code = runList(cmdArgs, stdout, stderr, gf)
+	case "match":
+		code = runMatch(cmdArgs, stdout, stderr, gf)
 	case "show":
 		code = runShow(cmdArgs, stdout, stderr, gf)
 	case "update":

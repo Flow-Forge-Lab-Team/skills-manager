@@ -208,6 +208,17 @@ Flags:
   --rebuild           rebuild catalog.yaml from library before listing
 
 ` + globalFlagHelp()
+	case "match":
+		return `skills-manager match [flags]
+
+Preview ranked skills matching the project's categories+tags (read-only; no install).
+
+Flags:
+  --project <path>   project to preview for (default: current dir)
+  --explain          show reasons, overlaps, negative signals, missing requirements per candidate
+  --suggest          hide skills already present in .skills/installed.lock
+
+` + globalFlagHelp()
 	case "show":
 		return `skills-manager show <skill> [flags]
 
@@ -310,6 +321,7 @@ Commands:
   sync        re-run install to pick up library updates
   uninstall   remove managed skills from a project
   list        list skills in the canonical library
+  match       preview ranked skills matching project categories+tags (with --explain --suggest)
   show        show details for a single skill
   update      review and accept pending library updates
   status      show library counts, pending, unregistered, scheduled state
