@@ -571,6 +571,9 @@ func rebuildCatalogFromLibrary(libraryPath string) (catalog, error) {
 			meta, _ = readSkillMeta(metaPath)
 		}
 
+		// Read skill body once for detection and inference
+		skillBody, _ := readSkillBody(skillMdPath)
+
 		// If there's a declaration in SKILL.md frontmatter, use it and update meta
 		if compDecl.Mode != "" {
 			meta.Compatibility.Declared = &compDecl
@@ -578,17 +581,33 @@ func rebuildCatalogFromLibrary(libraryPath string) (catalog, error) {
 			meta.Compatibility.Harness = compDecl.Harness
 			meta.Compatibility.Harnesses = compDecl.Harnesses
 		} else {
-			// No declaration: run detection and populate detected block
-			skillBody, _ := readSkillBody(skillMdPath)
+			// No declaration: run detection and apply auto-classification
 			detected := detectCompatibility(detectors, skillBody)
 			if len(detected) > 0 {
 				meta.Compatibility.Detected = detected
+				// Apply auto-classification rule to set effective mode/harness/harnesses
+				autoClass := applyAutoClassification(detected)
+				meta.Compatibility.Mode = autoClass.Mode
+				meta.Compatibility.Harness = autoClass.Harness
+				meta.Compatibility.Harnesses = autoClass.Harnesses
+			} else {
+				// No detection signals: default to portable
+				meta.Compatibility.Mode = "portable"
 			}
+		}
+
+		// Infer requirements if not explicitly provided
+		if len(meta.Requirements.Tools) == 0 {
+			inferred := inferRequirements(detectors, skillBody)
+			meta.Requirements.Tools = inferred
 		}
 
 		if meta.Compatibility.Mode == "" {
 			meta.Compatibility.Mode = "portable"
 		}
+
+		// Persist the updated meta back to .skill-meta.yaml
+		_ = writeSkillMeta(metaPath, meta)
 
 		summary := meta.Summary
 		if summary == "" {
