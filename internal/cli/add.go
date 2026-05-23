@@ -152,6 +152,8 @@ func runAdd(args []string, stdout io.Writer, stderr io.Writer, gf globalFlags) i
 
 	if gf.JSON {
 		writeJSON(stdout, result)
+	} else if strings.Contains(result.Reason, "handoff") {
+		fmt.Fprintf(humanOut, "Handoff prompt written to %s\n", result.LibraryPath)
 	} else if !result.Skipped {
 		fmt.Fprintf(humanOut, "Ingested %s to %s\n", result.Name, result.LibraryPath)
 	} else {
