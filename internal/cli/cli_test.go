@@ -158,6 +158,10 @@ skills:
 	}
 	writeFile(t, filepath.Join(project, ".claude", "skills", "review", "local.md"), "local edit\n")
 	writeFile(t, filepath.Join(home, "library", "review", "SKILL.md"), "second\n")
+	// Clear the lock since we changed the library content; simulates library update scenario
+	if err := os.Remove(filepath.Join(project, ".skills", "installed.lock")); err != nil && !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
 
 	stdout.Reset()
 	stderr.Reset()
@@ -178,6 +182,8 @@ skills:
 	if code != 0 {
 		t.Fatalf("sync returned %d, want 0\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
 	}
+	// Note: after clearing the lock and syncing, local.md prevents the overwrite of SKILL.md
+	// So the original "first\n" is preserved
 	assertFileContent(t, filepath.Join(project, ".claude", "skills", "review", "SKILL.md"), "first\n")
 	if !strings.Contains(stdout.String(), "local edits") {
 		t.Fatalf("stdout = %q, want local edit preserve message", stdout.String())
@@ -734,7 +740,7 @@ skills:
 `)
 	writeFile(t, filepath.Join(home, "library", "review", "SKILL.md"), "review\n")
 
-	// Pre-write a lock file that includes the review skill
+	// Pre-write a lock file that includes the review skill (legacy lock with empty fingerprint)
 	lockContent := `version: 1
 generated_at: "2026-01-01T00:00:00Z"
 generated_by: "skills-manager 0.1.0-dev"
@@ -742,7 +748,7 @@ skills:
   - name: review
     version: ~
     commit: ~
-    fingerprint: "abc123"
+    fingerprint: ~
     installed_at: "2026-01-01T00:00:00Z"
     harnesses:
       - claude
@@ -795,7 +801,7 @@ skills:
   - name: missing-skill
     version: ~
     commit: ~
-    fingerprint: "abc123"
+    fingerprint: ~
     installed_at: "2026-01-01T00:00:00Z"
     harnesses:
       - claude
@@ -809,7 +815,7 @@ skills:
 	if code != 3 {
 		t.Fatalf("Run returned %d, want 3\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
 	}
-	if !strings.Contains(stderr.String(), "missing from the library") {
+	if !strings.Contains(stderr.String(), "missing from library") {
 		t.Fatalf("stderr = %q, want missing skill message", stderr.String())
 	}
 	if !strings.Contains(stderr.String(), "sync-library") {
@@ -844,7 +850,7 @@ skills:
 `)
 	writeFile(t, filepath.Join(home, "library", "available", "SKILL.md"), "available\n")
 
-	// Pre-write a lock file that references a missing skill
+	// Pre-write a lock file that references a missing skill and available skill
 	lockContent := `version: 1
 generated_at: "2026-01-01T00:00:00Z"
 generated_by: "skills-manager 0.1.0-dev"
@@ -852,14 +858,14 @@ skills:
   - name: missing-skill
     version: ~
     commit: ~
-    fingerprint: "abc123"
+    fingerprint: ~
     installed_at: "2026-01-01T00:00:00Z"
     harnesses:
       - claude
   - name: available
     version: ~
     commit: ~
-    fingerprint: "def456"
+    fingerprint: ~
     installed_at: "2026-01-01T00:00:00Z"
     harnesses:
       - claude
@@ -909,5 +915,215 @@ func assertFileContent(t *testing.T, path string, want string) {
 	}
 	if string(data) != want {
 		t.Fatalf("%s = %q, want %q", path, string(data), want)
+	}
+}
+
+func TestInstallFailsOnLockFingerprintDivergence(t *testing.T) {
+	home := t.TempDir()
+	project := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+
+	writeFile(t, filepath.Join(project, ".skills", "project.yaml"), `version: 1
+name: demo
+categories: [Engineering]
+harnesses: [claude]
+`)
+	writeFile(t, filepath.Join(home, "library", "catalog.yaml"), `version: 1
+skills:
+  - name: review
+    categories: [Engineering]
+    compatibility:
+      mode: portable
+    requirements:
+      tools: []
+`)
+	writeFile(t, filepath.Join(home, "library", "review", "SKILL.md"), "actual content\n")
+
+	// Pre-write a lock with a fingerprint that doesn't match the library
+	lockContent := `version: 1
+generated_at: "2026-01-01T00:00:00Z"
+generated_by: "skills-manager 0.1.0-dev"
+skills:
+  - name: review
+    version: ~
+    commit: ~
+    fingerprint: "0000000000000000000000000000000000000000000000000000000000000000"
+    installed_at: "2026-01-01T00:00:00Z"
+    harnesses:
+      - claude
+`
+	writeFile(t, filepath.Join(project, ".skills", "installed.lock"), lockContent)
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := Run([]string{"install", "--project", project}, &stdout, &stderr)
+
+	if code != 3 {
+		t.Fatalf("Run returned %d, want 3\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "review") {
+		t.Fatalf("stderr should mention skill name review: %s", stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "lock=000000") {
+		t.Fatalf("stderr should show lock fingerprint prefix: %s", stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "library=") {
+		t.Fatalf("stderr should show library fingerprint prefix: %s", stderr.String())
+	}
+	if _, err := os.Stat(filepath.Join(project, ".claude", "skills", "review")); !os.IsNotExist(err) {
+		t.Fatalf("expected no skill copied on fingerprint divergence")
+	}
+
+	// Now test with --skip-missing-locked
+	stdout.Reset()
+	stderr.Reset()
+	code = Run([]string{"install", "--project", project, "--skip-missing-locked"}, &stdout, &stderr)
+
+	if code != 4 {
+		t.Fatalf("Run returned %d, want 4 (partial)\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+	}
+
+	// Check that lock entry was preserved unchanged
+	lockPath := filepath.Join(project, ".skills", "installed.lock")
+	data, err := os.ReadFile(lockPath)
+	if err != nil {
+		t.Fatalf("read lock: %v", err)
+	}
+	newLockContent := string(data)
+	if !strings.Contains(newLockContent, "review") {
+		t.Fatalf("review should remain in lock when skipped: %s", newLockContent)
+	}
+}
+
+func TestInstallPartialWhenAllLockedSkipped(t *testing.T) {
+	home := t.TempDir()
+	project := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+
+	writeFile(t, filepath.Join(project, ".skills", "project.yaml"), `version: 1
+name: demo
+categories: [Engineering]
+harnesses: [claude]
+`)
+	writeFile(t, filepath.Join(home, "library", "catalog.yaml"), `version: 1
+skills:
+  - name: available
+    categories: [Engineering]
+    compatibility:
+      mode: portable
+    requirements:
+      tools: []
+`)
+	writeFile(t, filepath.Join(home, "library", "available", "SKILL.md"), "available\n")
+
+	// Pre-write a lock with one skill that's missing from library
+	lockContent := `version: 1
+generated_at: "2026-01-01T00:00:00Z"
+generated_by: "skills-manager 0.1.0-dev"
+skills:
+  - name: missing-skill
+    version: ~
+    commit: ~
+    fingerprint: "abc123"
+    installed_at: "2026-01-01T00:00:00Z"
+    harnesses:
+      - claude
+`
+	writeFile(t, filepath.Join(project, ".skills", "installed.lock"), lockContent)
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := Run([]string{"install", "--project", project, "--skip-missing-locked"}, &stdout, &stderr)
+
+	// Should exit 4 (partial) even though no other candidates exist
+	if code != 4 {
+		t.Fatalf("Run returned %d, want 4 (partial)\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+	}
+}
+
+func TestLockFingerprintReflectsLibrary(t *testing.T) {
+	home := t.TempDir()
+	project := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+
+	writeFile(t, filepath.Join(project, ".skills", "project.yaml"), `version: 1
+name: demo
+categories: [Engineering]
+harnesses: [claude]
+`)
+	writeFile(t, filepath.Join(home, "library", "catalog.yaml"), `version: 1
+skills:
+  - name: skill-x
+    categories: [Engineering]
+    compatibility:
+      mode: portable
+    requirements:
+      tools: []
+`)
+	writeFile(t, filepath.Join(home, "library", "skill-x", "SKILL.md"), "skill content\n")
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := Run([]string{"install", "--project", project}, &stdout, &stderr)
+
+	if code != 0 {
+		t.Fatalf("Run returned %d, want 0\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+	}
+
+	lockPath := filepath.Join(project, ".skills", "installed.lock")
+	_, err := os.ReadFile(lockPath)
+	if err != nil {
+		t.Fatalf("read lock: %v", err)
+	}
+
+	// Extract the fingerprint from the lock (it's quoted)
+	var lock installLock
+	lock, err = readInstallLock(lockPath)
+	if err != nil {
+		t.Fatalf("read lock: %v", err)
+	}
+	if len(lock.Skills) == 0 {
+		t.Fatalf("lock has no skills")
+	}
+
+	lockFP := lock.Skills[0].Fingerprint
+	if lockFP == "" {
+		t.Fatalf("lock fingerprint is empty")
+	}
+
+	// Compute the expected library fingerprint
+	libFP, err := fingerprintDir(filepath.Join(home, "library", "skill-x"))
+	if err != nil {
+		t.Fatalf("fingerprint library: %v", err)
+	}
+
+	if lockFP != libFP {
+		t.Fatalf("lock fingerprint = %s, want library fingerprint %s", lockFP, libFP)
+	}
+
+	// Verify that reinstalling preserves the lock fingerprint (stability test)
+	stdout.Reset()
+	stderr.Reset()
+	code = Run([]string{"install", "--project", project}, &stdout, &stderr)
+
+	if code != 0 {
+		t.Fatalf("reinstall returned %d, want 0\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+	}
+
+	_, err = os.ReadFile(lockPath)
+	if err != nil {
+		t.Fatalf("read lock after reinstall: %v", err)
+	}
+	lock, err = readInstallLock(lockPath)
+	if err != nil {
+		t.Fatalf("read lock: %v", err)
+	}
+	if len(lock.Skills) == 0 {
+		t.Fatalf("lock has no skills after reinstall")
+	}
+
+	newLockFP := lock.Skills[0].Fingerprint
+	if newLockFP != lockFP {
+		t.Fatalf("lock fingerprint changed after reinstall: %s -> %s", lockFP, newLockFP)
 	}
 }

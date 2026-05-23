@@ -25,6 +25,12 @@ type installOptions struct {
 	confirm                  bool
 }
 
+type lockProblem struct {
+	name   string
+	kind   string // "missing" or "divergence"
+	detail string
+}
+
 type projectConfig struct {
 	Name          string
 	Categories    []string
@@ -161,19 +167,9 @@ func runInstall(args []string, stdout io.Writer, stderr io.Writer, syncMode bool
 	var skippedLockedSkills bool
 	if len(lock.Skills) > 0 {
 		// Lock exists: use it to determine candidates
-		missing := missingLockedSkills(lock, catalog)
-		if len(missing) > 0 && !opts.skipMissingLocked {
-			fmt.Fprintf(stderr, "the following skills in .skills/installed.lock are missing from the library:\n")
-			for _, name := range missing {
-				fmt.Fprintf(stderr, "  - %s\n", name)
-			}
-			fmt.Fprintf(stderr, "suggest:\n")
-			fmt.Fprintf(stderr, "  - run: skills-manager sync-library\n")
-			fmt.Fprintf(stderr, "  - or: skills-manager install --skip-missing-locked\n")
-			return 3
-		}
+		var lockProblems []lockProblem
 
-		// Build candidates from lock: skip missing, apply --only filter, apply never_include
+		// Build candidates from lock: skip missing, check fingerprints, apply --only filter, apply never_include
 		never := set(project.NeverInclude)
 		for _, lockSkill := range lock.Skills {
 			if opts.onlySkill != "" && lockSkill.Name != opts.onlySkill {
@@ -192,13 +188,48 @@ func runInstall(args []string, stdout io.Writer, stderr io.Writer, syncMode bool
 				}
 			}
 			if catalogSkill == nil {
+				lockProblems = append(lockProblems, lockProblem{
+					name:   lockSkill.Name,
+					kind:   "missing",
+					detail: "skill in lock but not in catalog",
+				})
 				if opts.skipMissingLocked {
 					skippedLockedSkills = true
+				}
+				continue
+			}
+
+			// Check fingerprint if present in lock
+			if lockSkill.Fingerprint != "" {
+				libFP, err := fingerprintDir(filepath.Join(libraryPath, lockSkill.Name))
+				if err != nil {
+					fmt.Fprintf(stderr, "fingerprint library skill %q: %v\n", lockSkill.Name, err)
+					return 3
+				}
+				if libFP != lockSkill.Fingerprint {
+					prefix1 := lockSkill.Fingerprint
+					if len(prefix1) > 12 {
+						prefix1 = prefix1[:12]
+					}
+					prefix2 := libFP
+					if len(prefix2) > 12 {
+						prefix2 = prefix2[:12]
+					}
+					lockProblems = append(lockProblems, lockProblem{
+						name:   lockSkill.Name,
+						kind:   "divergence",
+						detail: fmt.Sprintf("lock=%s, library=%s", prefix1, prefix2),
+					})
+					if opts.skipMissingLocked {
+						skippedLockedSkills = true
+					}
 					continue
 				}
-				fmt.Fprintf(stderr, "skill %q in lock but not in catalog\n", lockSkill.Name)
-				return 3
+			} else {
+				// Legacy lock with no fingerprint: warn once
+				fmt.Fprintf(stderr, "lock entry for %s has no fingerprint; accepting library content as-is\n", lockSkill.Name)
 			}
+
 			// Recompute compatible harnesses based on current catalog (not locked harnesses)
 			// This allows the install to adapt to compatibility changes
 			harnesses := compatibleHarnesses(catalogSkill.Compatibility, project.Harnesses)
@@ -207,6 +238,24 @@ func runInstall(args []string, stdout io.Writer, stderr io.Writer, syncMode bool
 				Harnesses: harnesses,
 				Reason:    "locked skill",
 			})
+		}
+
+		// Report lock problems
+		if len(lockProblems) > 0 {
+			if !opts.skipMissingLocked {
+				fmt.Fprintf(stderr, "problems with skills in .skills/installed.lock:\n")
+				for _, prob := range lockProblems {
+					if prob.kind == "missing" {
+						fmt.Fprintf(stderr, "  - %s: missing from library\n", prob.name)
+					} else {
+						fmt.Fprintf(stderr, "  - %s: library content differs from lock (%s)\n", prob.name, prob.detail)
+					}
+				}
+				fmt.Fprintf(stderr, "suggest:\n")
+				fmt.Fprintf(stderr, "  - run: skills-manager sync-library\n")
+				fmt.Fprintf(stderr, "  - or: skills-manager install --skip-missing-locked\n")
+				return 3
+			}
 		}
 	} else {
 		// No lock: use normal selection from catalog + project config
@@ -350,7 +399,11 @@ func runInstall(args []string, stdout io.Writer, stderr io.Writer, syncMode bool
 
 		// Write installed.lock after successful manifest write
 		if len(lock.Skills) > 0 || len(candidates) > 0 {
-			newLock := buildInstallLock(candidates, files, libraryPath, lock)
+			newLock, err := buildInstallLock(candidates, files, libraryPath, lock, managed)
+			if err != nil {
+				fmt.Fprintf(stderr, "build lock: %v\n", err)
+				return 3
+			}
 			if err := writeInstallLock(lockPath, newLock); err != nil {
 				fmt.Fprintf(stderr, "write lock: %v\n", err)
 				return 3
@@ -358,7 +411,7 @@ func runInstall(args []string, stdout io.Writer, stderr io.Writer, syncMode bool
 		}
 	}
 
-	if skippedLockedSkills && installed > 0 {
+	if skippedLockedSkills {
 		partial = true
 	}
 
@@ -660,7 +713,10 @@ func readInstallLock(path string) (installLock, error) {
 			case "commit":
 				currentSkill.Commit = unquote(value)
 			case "fingerprint":
-				currentSkill.Fingerprint = unquote(value)
+				fp := unquote(value)
+				if fp != "~" {
+					currentSkill.Fingerprint = fp
+				}
 			case "installed_at":
 				currentSkill.InstalledAt = unquote(value)
 			case "harnesses":
@@ -711,7 +767,7 @@ func writeInstallLock(path string, lock installLock) error {
 	return os.WriteFile(path, []byte(buf.String()), 0o644)
 }
 
-func buildInstallLock(candidates []installCandidate, files map[string]string, libraryPath string, oldLock installLock) installLock {
+func buildInstallLock(candidates []installCandidate, files map[string]string, libraryPath string, oldLock installLock, managed map[string]bool) (installLock, error) {
 	newLock := installLock{
 		Version:     1,
 		GeneratedAt: time.Now().UTC().Format(time.RFC3339),
@@ -725,24 +781,37 @@ func buildInstallLock(candidates []installCandidate, files map[string]string, li
 	for _, candidate := range candidates {
 		newSkillNames[candidate.Skill.Name] = true
 
-		// Get fingerprint from the first target base (they should all be identical)
-		targetBases := targetBases(candidate.Harnesses)
-		var fingerprint string
-		if len(targetBases) > 0 {
-			relTarget := filepath.ToSlash(filepath.Join(targetBases[0], candidate.Skill.Name))
-			fingerprint = files[relTarget]
+		// Compute library fingerprint (canonical source-of-truth)
+		libFP, err := fingerprintDir(filepath.Join(libraryPath, candidate.Skill.Name))
+		if err != nil {
+			return newLock, fmt.Errorf("fingerprint library skill %q: %w", candidate.Skill.Name, err)
 		}
 
-		// Harnesses are already sorted from compatibleHarnesses
-		entry := installLockEntry{
-			Name:        candidate.Skill.Name,
-			Version:     "",
-			Commit:      "",
-			Fingerprint: fingerprint,
-			InstalledAt: time.Now().UTC().Format(time.RFC3339),
-			Harnesses:   candidate.Harnesses,
+		// Filter harnesses to only those that were actually managed
+		var managedHarnesses []string
+		for _, harness := range candidate.Harnesses {
+			targetBase, ok := harnessProjectPaths[harness]
+			if !ok {
+				continue
+			}
+			relTarget := filepath.ToSlash(filepath.Join(targetBase, candidate.Skill.Name))
+			if managed[relTarget] {
+				managedHarnesses = append(managedHarnesses, harness)
+			}
 		}
-		newLock.Skills = append(newLock.Skills, entry)
+
+		// Only add to lock if there are harnesses that were actually managed
+		if len(managedHarnesses) > 0 {
+			entry := installLockEntry{
+				Name:        candidate.Skill.Name,
+				Version:     "",
+				Commit:      "",
+				Fingerprint: libFP,
+				InstalledAt: time.Now().UTC().Format(time.RFC3339),
+				Harnesses:   managedHarnesses,
+			}
+			newLock.Skills = append(newLock.Skills, entry)
+		}
 	}
 
 	// Preserve entries from the old lock that were skipped (not in new candidates)
@@ -757,7 +826,7 @@ func buildInstallLock(candidates []installCandidate, files map[string]string, li
 		return newLock.Skills[i].Name < newLock.Skills[j].Name
 	})
 
-	return newLock
+	return newLock, nil
 }
 
 func readProjectConfig(path string) (projectConfig, error) {
