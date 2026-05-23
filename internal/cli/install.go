@@ -1952,6 +1952,10 @@ func copyDir(src, dst string) error {
 		if err != nil {
 			return err
 		}
+		// Skip symlinks
+		if info.Mode()&os.ModeSymlink != 0 {
+			return nil
+		}
 		if entry.IsDir() {
 			return os.MkdirAll(target, info.Mode())
 		}
@@ -1984,6 +1988,10 @@ func fingerprintDir(path string) (string, error) {
 			return walkErr
 		}
 		if entry.IsDir() {
+			return nil
+		}
+		// Skip symlinks
+		if entry.Type()&os.ModeSymlink != 0 {
 			return nil
 		}
 		rel, err := filepath.Rel(path, current)

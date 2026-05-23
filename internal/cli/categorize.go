@@ -1,6 +1,9 @@
 package cli
 
-import "strings"
+import (
+	"sort"
+	"strings"
+)
 
 var categoryKeywords = map[string][]string{
 	"Documents":   {"pdf", "docx", "document", "ocr"},
@@ -34,6 +37,10 @@ func suggestCategories(name, description string) ([]string, []string, int) {
 	for tag := range tagSet {
 		tags = append(tags, tag)
 	}
+
+	// Sort for deterministic output
+	sort.Strings(categories)
+	sort.Strings(tags)
 
 	return categories, tags, hitCount
 }

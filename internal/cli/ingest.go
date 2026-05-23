@@ -374,7 +374,18 @@ func copySkillDirWithoutGit(srcDir, dstDir string) error {
 		srcPath := filepath.Join(srcDir, entry.Name())
 		dstPath := filepath.Join(dstDir, entry.Name())
 
-		if entry.IsDir() {
+		// Use Lstat to detect symlinks without following them
+		info, err := os.Lstat(srcPath)
+		if err != nil {
+			return err
+		}
+
+		// Skip symlinks
+		if info.Mode()&os.ModeSymlink != 0 {
+			continue
+		}
+
+		if info.IsDir() {
 			if err := os.MkdirAll(dstPath, 0755); err != nil {
 				return err
 			}
@@ -382,7 +393,6 @@ func copySkillDirWithoutGit(srcDir, dstDir string) error {
 				return err
 			}
 		} else {
-			info, _ := os.Stat(srcPath)
 			if err := copyFile(srcPath, dstPath, info.Mode()); err != nil {
 				return err
 			}

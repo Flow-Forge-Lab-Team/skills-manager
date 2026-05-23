@@ -166,6 +166,11 @@ func classifyAddArgument(arg string) (string, error) {
 		return "local", nil
 	}
 
+	// ~user/... is local (will be rejected by expandTilde with proper error)
+	if strings.HasPrefix(arg, "~") {
+		return "local", nil
+	}
+
 	// Marketplace: contains exactly one "/" and no ":" and no "."
 	slashCount := strings.Count(arg, "/")
 	if slashCount == 1 && !strings.Contains(arg, ":") && !strings.Contains(arg, ".") {

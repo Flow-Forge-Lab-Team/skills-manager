@@ -256,3 +256,58 @@ func TestNormalizeGitHubURL(t *testing.T) {
 		})
 	}
 }
+
+func TestClassifyAddArgumentTildeUser(t *testing.T) {
+	// Test that ~user/skill is classified as "local" (not "marketplace")
+	kind, err := classifyAddArgument("~alice/skill")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if kind != "local" {
+		t.Errorf("~alice/skill classification = %q, want %q", kind, "local")
+	}
+
+	// Also test bare ~user (no slash)
+	kind, err = classifyAddArgument("~bob")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if kind != "local" {
+		t.Errorf("~bob classification = %q, want %q", kind, "local")
+	}
+}
+
+func TestAddTildeUserExpansionError(t *testing.T) {
+	// Test that runAdd with ~user/ path returns the proper expandTilde error
+	home := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+
+	args := []string{"~alice/skill", "--yes"}
+	var stdout, stderr bytes.Buffer
+	gf := globalFlags{JSON: false}
+
+	code := runAdd(args, &stdout, &stderr, gf)
+
+	if code == ExitSuccess {
+		t.Errorf("expected failure for ~user/ path, got success")
+	}
+
+	stderrStr := stderr.String()
+	if len(stderrStr) == 0 {
+		t.Errorf("expected error message in stderr")
+	}
+
+	// Verify it's the expandTilde error, not a marketplace error
+	if !stringContains(stderrStr, "~user expansion not supported") {
+		t.Errorf("stderr should contain '~user expansion not supported', got: %s", stderrStr)
+	}
+}
+
+func stringContains(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
+}

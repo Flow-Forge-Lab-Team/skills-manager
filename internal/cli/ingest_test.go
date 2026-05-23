@@ -672,3 +672,79 @@ This is a test skill.
 		t.Errorf("retry after rollback should succeed, but got: %s", result2.Reason)
 	}
 }
+
+func TestIngestSkipsSymlinks(t *testing.T) {
+	home := t.TempDir()
+	sourceDir := t.TempDir()
+
+	skillMdContent := `---
+name: symlink-test-skill
+description: A test skill with symlinks
+---
+
+# symlink-test-skill
+
+This is a test skill.
+`
+
+	if err := os.WriteFile(filepath.Join(sourceDir, "SKILL.md"), []byte(skillMdContent), 0644); err != nil {
+		t.Fatalf("write SKILL.md: %v", err)
+	}
+
+	// Create a regular file to link to
+	regularFile := filepath.Join(sourceDir, "regular_file.txt")
+	if err := os.WriteFile(regularFile, []byte("regular content"), 0644); err != nil {
+		t.Fatalf("write regular file: %v", err)
+	}
+
+	// Create a symlink pointing to the regular file
+	symlink := filepath.Join(sourceDir, "evil")
+	if err := os.Symlink(regularFile, symlink); err != nil {
+		t.Fatalf("create symlink: %v", err)
+	}
+
+	src := ingestSource{
+		kind:  "local",
+		raw:   sourceDir,
+		path:  sourceDir,
+		label: sourceDir,
+	}
+
+	opts := ingestOptions{
+		yes:         true,
+		interactive: false,
+	}
+
+	var out bytes.Buffer
+	result := ingestFromSource(src, opts, home, &out)
+
+	if result.Skipped {
+		t.Fatalf("ingest skipped: %s", result.Reason)
+	}
+
+	if result.Name != "symlink-test-skill" {
+		t.Errorf("name = %q, want %q", result.Name, "symlink-test-skill")
+	}
+
+	// Verify the symlink was not copied into the library
+	libraryPath := filepath.Join(home, "library", "symlink-test-skill")
+	evilPath := filepath.Join(libraryPath, "evil")
+
+	// Check that "evil" does not exist in the library
+	if _, err := os.Stat(evilPath); err == nil {
+		t.Errorf("symlink should not be copied to library, but file exists at %s", evilPath)
+	} else if !os.IsNotExist(err) {
+		t.Fatalf("unexpected stat error: %v", err)
+	}
+
+	// Verify SKILL.md and regular file were copied
+	skillPath := filepath.Join(libraryPath, "SKILL.md")
+	if _, err := os.Stat(skillPath); err != nil {
+		t.Errorf("SKILL.md should be copied: %v", err)
+	}
+
+	regularPath := filepath.Join(libraryPath, "regular_file.txt")
+	if _, err := os.Stat(regularPath); err != nil {
+		t.Errorf("regular_file.txt should be copied: %v", err)
+	}
+}
