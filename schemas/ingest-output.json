@@ -1,0 +1,120 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "skills-ingest Output",
+  "type": "object",
+  "required": ["categories", "tags", "compatibility", "requirements", "confidence"],
+  "additionalProperties": false,
+  "properties": {
+    "categories": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "Engineering",
+          "Quality",
+          "Operations",
+          "Data",
+          "Design",
+          "Documents",
+          "Writing",
+          "Business",
+          "Productivity",
+          "Agent-tooling"
+        ]
+      },
+      "minItems": 1,
+      "maxItems": 3
+    },
+    "tags": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "compatibility": {
+      "type": "object",
+      "required": ["mode"],
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": ["portable", "compatible", "exclusive"]
+        },
+        "harnesses": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "harness": { "type": "string" },
+        "reason": { "type": "string" }
+      }
+    },
+    "requirements": {
+      "type": "object",
+      "properties": {
+        "model": {
+          "type": "object",
+          "properties": {
+            "tool_use": { "type": "string", "enum": ["required", "optional", "none"] },
+            "min_context_tokens": { "type": "integer" },
+            "reasoning": { "type": "string" },
+            "notes": { "type": "string" }
+          }
+        },
+        "tools": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name"],
+            "properties": {
+              "name": { "type": "string" },
+              "required": { "type": "boolean" },
+              "check": { "type": "string" }
+            }
+          }
+        },
+        "mcp_servers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name"],
+            "properties": {
+              "name": { "type": "string" },
+              "required": { "type": "boolean" },
+              "config_hint": { "type": "string" }
+            }
+          }
+        },
+        "credentials": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name"],
+            "properties": {
+              "name": { "type": "string" },
+              "source": { "type": "string" },
+              "required": { "type": "boolean" }
+            }
+          }
+        },
+        "scripts": {
+          "type": "object",
+          "properties": {
+            "allow_auto_run": { "type": "boolean" },
+            "required_runtimes": { "type": "array", "items": { "type": "string" } }
+          }
+        }
+      }
+    },
+    "confidence": {
+      "type": "object",
+      "required": ["categories", "tags", "compatibility", "requirements"],
+      "properties": {
+        "categories": { "type": "string", "enum": ["high", "medium", "low"] },
+        "tags": { "type": "string", "enum": ["high", "medium", "low"] },
+        "compatibility": { "type": "string", "enum": ["high", "medium", "low"] },
+        "requirements": { "type": "string", "enum": ["high", "medium", "low"] }
+      }
+    },
+    "notes": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  }
+}
