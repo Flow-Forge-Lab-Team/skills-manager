@@ -598,3 +598,77 @@ This skill uses ffmpeg for video processing.
 		t.Fatalf("expected --yes to bypass missing tool check: %s", result2.Reason)
 	}
 }
+
+func TestIngestRollsBackOnCopyFailure(t *testing.T) {
+	home := t.TempDir()
+	sourceDir := t.TempDir()
+
+	skillMdContent := `---
+name: rollback-test
+description: A skill to test rollback
+---
+
+# rollback-test
+
+This is a test skill.
+`
+
+	skillMdPath := filepath.Join(sourceDir, "SKILL.md")
+	if err := os.WriteFile(skillMdPath, []byte(skillMdContent), 0644); err != nil {
+		t.Fatalf("write SKILL.md: %v", err)
+	}
+
+	// Create library directory
+	libraryPath := filepath.Join(home, "library")
+	if err := os.MkdirAll(libraryPath, 0755); err != nil {
+		t.Fatalf("mkdir library: %v", err)
+	}
+
+	src := ingestSource{
+		kind:  "local",
+		raw:   sourceDir,
+		path:  sourceDir,
+		label: sourceDir,
+	}
+
+	opts := ingestOptions{
+		yes:         true,
+		interactive: false,
+	}
+
+	// Make the library directory read-only to cause copy failure
+	// The MkdirAll for the target will succeed (it happens before Chmod),
+	// but the copy will fail when trying to write files
+	if err := os.Chmod(libraryPath, 0555); err != nil {
+		t.Fatalf("chmod library: %v", err)
+	}
+	defer os.Chmod(libraryPath, 0755) // restore
+
+	targetDir := filepath.Join(libraryPath, "rollback-test")
+
+	// Try to ingest; MkdirAll might fail or copy will fail
+	var out bytes.Buffer
+	result := ingestFromSource(src, opts, home, &out)
+
+	// Restore permissions for verification
+	os.Chmod(libraryPath, 0755)
+
+	// Verify the ingest failed
+	if !result.Skipped {
+		t.Fatalf("ingest should fail due to permission issue")
+	}
+
+	// Verify the target directory was rolled back (removed)
+	if _, err := os.Stat(targetDir); err == nil {
+		t.Errorf("target directory should have been rolled back after failure, but still exists")
+	} else if !os.IsNotExist(err) {
+		t.Fatalf("unexpected stat error: %v", err)
+	}
+
+	// Verify a subsequent valid ingest succeeds
+	var out2 bytes.Buffer
+	result2 := ingestFromSource(src, opts, home, &out2)
+	if result2.Skipped {
+		t.Errorf("retry after rollback should succeed, but got: %s", result2.Reason)
+	}
+}

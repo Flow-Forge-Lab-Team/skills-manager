@@ -223,6 +223,13 @@ func ingestFromSource(src ingestSource, opts ingestOptions, home string, out io.
 	}
 
 	// 9. Commit
+	committed := false
+	defer func() {
+		if !committed {
+			os.RemoveAll(targetDir)
+		}
+	}()
+
 	if err := os.MkdirAll(targetDir, 0755); err != nil {
 		return ingestResult{
 			Name:    decl.name,
@@ -308,6 +315,7 @@ func ingestFromSource(src ingestSource, opts ingestOptions, home string, out io.
 	}
 
 	result.LibraryPath = targetDir
+	committed = true
 	return result
 }
 

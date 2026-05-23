@@ -162,10 +162,12 @@ func runScan(args []string, stdout io.Writer, stderr io.Writer, gf globalFlags) 
 	// Handle --ingest or --auto-ingest
 	if ingest || autoIngest {
 		home, _ := managerHome()
-		interactive := ingest && !autoIngest && !gf.NonInteractive
+		interactive := ingest && !autoIngest && !gf.NonInteractive && !gf.JSON && !gf.Quiet
 		// If stdin is not a TTY, require explicit consent
 		if !stdinIsTTY() && interactive {
-			interactive = false
+			// Return error: --ingest requires interactive stdin
+			fmt.Fprintf(stderr, "error: scan --ingest requires interactive stdin; use --auto-ingest for non-interactive mode\n")
+			return ExitUsageError
 		}
 		opts := ingestOptions{
 			auto:        autoIngest,
@@ -186,7 +188,7 @@ func runScan(args []string, stdout io.Writer, stderr io.Writer, gf globalFlags) 
 				label: r.Path,
 			}
 
-			if ingest && !autoIngest {
+			if interactive {
 				fmt.Fprintf(humanOut, "\nIngest %s? [Y/n/s] ", r.Name)
 				var response string
 				_, err := fmt.Scanln(&response)

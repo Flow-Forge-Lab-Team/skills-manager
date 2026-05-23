@@ -318,3 +318,63 @@ Test.
 		t.Errorf("foo not found in results")
 	}
 }
+
+func TestScanIngestWithQuietNoPrompts(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+
+	// Create library directory
+	libraryPath := filepath.Join(home, "library")
+	if err := os.MkdirAll(libraryPath, 0755); err != nil {
+		t.Fatalf("create library dir: %v", err)
+	}
+
+	// Create catalog
+	if err := os.WriteFile(filepath.Join(libraryPath, "catalog.json"), []byte("{}"), 0644); err != nil {
+		t.Fatalf("write catalog: %v", err)
+	}
+
+	// Create skills directory with an unregistered skill
+	skillsDir := filepath.Join(home, ".claude", "skills")
+	if err := os.MkdirAll(skillsDir, 0755); err != nil {
+		t.Fatalf("create skills dir: %v", err)
+	}
+
+	fooDir := filepath.Join(skillsDir, "foo")
+	if err := os.MkdirAll(fooDir, 0755); err != nil {
+		t.Fatalf("create foo dir: %v", err)
+	}
+
+	skillMd := `---
+name: foo
+description: A test skill
+---
+
+# foo
+
+Test.
+`
+
+	if err := os.WriteFile(filepath.Join(fooDir, "SKILL.md"), []byte(skillMd), 0644); err != nil {
+		t.Fatalf("write SKILL.md: %v", err)
+	}
+
+	// Test that --ingest with --quiet doesn't prompt and completes successfully
+	args := []string{"--ingest", "--quiet", "--paths=" + skillsDir}
+	var stdout, stderr bytes.Buffer
+	gf := globalFlags{Quiet: true}
+
+	code := runScan(args, &stdout, &stderr, gf)
+
+	// Should succeed (or at least not error on usage)
+	if code == ExitUsageError {
+		t.Errorf("--ingest --quiet should not return ExitUsageError, got %d", code)
+	}
+
+	// Verify no prompts were output (stdout/stderr should be empty from quiet mode)
+	// The key is that --quiet suppresses output AND non-interactive mode shouldn't prompt
+	output := stdout.String()
+	if strings.Contains(output, "Ingest") || strings.Contains(output, "Y/n") {
+		t.Errorf("should not prompt in quiet mode, got output: %s", output)
+	}
+}

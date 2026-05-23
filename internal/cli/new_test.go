@@ -79,7 +79,9 @@ func TestNewCreatesSkillWhenEdited(t *testing.T) {
 	editorScript := filepath.Join(tmpDir, "editor.sh")
 	editorContent := `#!/bin/sh
 file="$1"
-sed -i '' 's/TODO — one sentence about when to invoke this skill/A real description of this skill/' "$file"
+tmp="$(mktemp)"
+sed 's/TODO — one sentence about when to invoke this skill/A real description of this skill/' "$file" > "$tmp"
+mv "$tmp" "$file"
 exit 0
 `
 
