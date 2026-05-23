@@ -17,7 +17,7 @@ type setOptions struct {
 	json              bool
 }
 
-func runSet(args []string, stdout io.Writer, stderr io.Writer, gf globalFlags) int {
+func runSet(args []string, realStdout io.Writer, stderr io.Writer, gf globalFlags) int {
 	opts := setOptions{}
 
 	for i := 0; i < len(args); i++ {
@@ -27,12 +27,12 @@ func runSet(args []string, stdout io.Writer, stderr io.Writer, gf globalFlags) i
 		}
 
 		if arg == "--help" || arg == "-h" {
-			fmt.Fprintln(stdout, helpText("set"))
+			fmt.Fprintln(gf.outWriter(realStdout), helpText("set"))
 			return ExitSuccess
 		}
 
 		if arg == "--json" {
-			opts.json = true
+			// Global --json is handled by gf, skip local parsing
 			continue
 		}
 
@@ -198,48 +198,68 @@ func runSet(args []string, stdout io.Writer, stderr io.Writer, gf globalFlags) i
 		return 1
 	}
 
-	// Update .skill-meta.yaml if it exists
-	if _, err := os.Stat(metaPath); err == nil {
-		meta, _ := readSkillMeta(metaPath)
+	// Update .skill-meta.yaml (create if missing)
+	meta, _ := readSkillMeta(metaPath)
 
-		// Update declared block
-		if opts.compatibilityMode == "portable" {
-			meta.Compatibility.Declared = nil
-		} else {
-			if meta.Compatibility.Declared == nil {
-				meta.Compatibility.Declared = &compatibilityDeclaration{}
-			}
-			meta.Compatibility.Declared.Mode = opts.compatibilityMode
-			if opts.compatibilityMode == "exclusive" {
-				meta.Compatibility.Declared.Harness = opts.harness
-				meta.Compatibility.Declared.Reason = opts.reason
-			} else if opts.compatibilityMode == "compatible" {
-				meta.Compatibility.Declared.Harnesses = strings.Split(opts.harnesses, ",")
-				for i := range meta.Compatibility.Declared.Harnesses {
-					meta.Compatibility.Declared.Harnesses[i] = strings.TrimSpace(meta.Compatibility.Declared.Harnesses[i])
-				}
+	// Clear declared block for portable mode, otherwise ensure it exists and zero all fields
+	if opts.compatibilityMode == "portable" {
+		meta.Compatibility.Declared = nil
+	} else {
+		if meta.Compatibility.Declared == nil {
+			meta.Compatibility.Declared = &compatibilityDeclaration{}
+		}
+		// Zero out all mode-specific fields before setting new ones (issue #3)
+		meta.Compatibility.Declared.Mode = ""
+		meta.Compatibility.Declared.Harness = ""
+		meta.Compatibility.Declared.Harnesses = nil
+		meta.Compatibility.Declared.Reason = ""
+
+		// Set fields appropriate for the new mode
+		meta.Compatibility.Declared.Mode = opts.compatibilityMode
+		if opts.compatibilityMode == "exclusive" {
+			meta.Compatibility.Declared.Harness = opts.harness
+			meta.Compatibility.Declared.Reason = opts.reason
+		} else if opts.compatibilityMode == "compatible" {
+			meta.Compatibility.Declared.Harnesses = strings.Split(opts.harnesses, ",")
+			for i := range meta.Compatibility.Declared.Harnesses {
+				meta.Compatibility.Declared.Harnesses[i] = strings.TrimSpace(meta.Compatibility.Declared.Harnesses[i])
 			}
 		}
-
-		// Update effective state
-		meta.Compatibility.Mode = opts.compatibilityMode
-		meta.Compatibility.Harness = opts.harness
-		if opts.compatibilityMode == "compatible" {
-			meta.Compatibility.Harnesses = strings.Split(opts.harnesses, ",")
-			for i := range meta.Compatibility.Harnesses {
-				meta.Compatibility.Harnesses[i] = strings.TrimSpace(meta.Compatibility.Harnesses[i])
-			}
-		} else {
-			meta.Compatibility.Harnesses = nil
-		}
-
-		writeSkillMeta(metaPath, meta)
 	}
 
-	if opts.json {
-		fmt.Fprintf(stdout, "{\"skill\":%q,\"mode\":%q}\n", opts.skillName, opts.compatibilityMode)
+	// Update effective state, zeroing out mode-specific fields
+	meta.Compatibility.Mode = opts.compatibilityMode
+	meta.Compatibility.Harness = ""
+	meta.Compatibility.Harnesses = nil
+
+	if opts.compatibilityMode == "exclusive" {
+		meta.Compatibility.Harness = opts.harness
+	} else if opts.compatibilityMode == "compatible" {
+		meta.Compatibility.Harnesses = strings.Split(opts.harnesses, ",")
+		for i := range meta.Compatibility.Harnesses {
+			meta.Compatibility.Harnesses[i] = strings.TrimSpace(meta.Compatibility.Harnesses[i])
+		}
+	}
+
+	writeSkillMeta(metaPath, meta)
+
+	// Rebuild catalog to refresh library/catalog.yaml (issue #1)
+	catalogPath := filepath.Join(libraryPath, "catalog.yaml")
+	updatedCatalog, err := rebuildCatalogFromLibrary(libraryPath)
+	if err != nil {
+		fmt.Fprintf(stderr, "warning: failed to rebuild catalog: %v\n", err)
 	} else {
-		fmt.Fprintf(stdout, "Set %s compatibility to %s\n", opts.skillName, opts.compatibilityMode)
+		if err := writeCatalog(catalogPath, updatedCatalog); err != nil {
+			fmt.Fprintf(stderr, "warning: failed to write catalog: %v\n", err)
+		}
+	}
+
+	// Use global flags for JSON and quiet (issue #2)
+	humanOut := gf.outWriter(realStdout)
+	if gf.JSON {
+		fmt.Fprintf(realStdout, "{\"skill\":%q,\"mode\":%q}\n", opts.skillName, opts.compatibilityMode)
+	} else {
+		fmt.Fprintf(humanOut, "Set %s compatibility to %s\n", opts.skillName, opts.compatibilityMode)
 	}
 
 	return ExitSuccess

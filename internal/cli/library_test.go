@@ -1034,3 +1034,221 @@ description: A test skill
 		t.Fatalf("error should mention --harness, got: %s", stderr.String())
 	}
 }
+
+// Test Fix #1: set refreshes catalog after updating skill files
+func TestSetCommand_RefreshesCatalog(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+
+	libraryPath := filepath.Join(home, "library")
+	skillDir := filepath.Join(libraryPath, "test-skill")
+	if err := os.MkdirAll(skillDir, 0755); err != nil {
+		t.Fatalf("mkdir failed: %v", err)
+	}
+
+	skillMdPath := filepath.Join(skillDir, "SKILL.md")
+	skillMdContent := `---
+name: test-skill
+description: A test skill
+---
+# Test Skill
+`
+	if err := os.WriteFile(skillMdPath, []byte(skillMdContent), 0644); err != nil {
+		t.Fatalf("write SKILL.md failed: %v", err)
+	}
+
+	// Call set to update compatibility
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := runSet([]string{"test-skill", "--compatibility", "exclusive", "--harness", "claude"}, &stdout, &stderr, globalFlags{})
+
+	if code != 0 {
+		t.Fatalf("runSet returned %d, want 0\nstderr: %s", code, stderr.String())
+	}
+
+	// Read catalog directly and verify it was updated
+	catalogPath := filepath.Join(libraryPath, "catalog.yaml")
+	catRead, err := readCatalog(catalogPath)
+	if err != nil {
+		t.Fatalf("read catalog failed: %v", err)
+	}
+
+	if len(catRead.Skills) != 1 {
+		t.Fatalf("expected 1 skill in catalog, got %d", len(catRead.Skills))
+	}
+
+	skill := catRead.Skills[0]
+	if skill.Name != "test-skill" {
+		t.Errorf("skill name = %q, want test-skill", skill.Name)
+	}
+	if skill.Compatibility.Mode != "exclusive" {
+		t.Errorf("compatibility mode in catalog = %q, want exclusive", skill.Compatibility.Mode)
+	}
+	if skill.Compatibility.Harness != "claude" {
+		t.Errorf("harness in catalog = %q, want claude", skill.Compatibility.Harness)
+	}
+}
+
+// Test Fix #2: set respects global --json and --quiet flags
+func TestSetCommand_RespectsGlobalFlags(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+
+	libraryPath := filepath.Join(home, "library")
+	skillDir := filepath.Join(libraryPath, "test-skill")
+	if err := os.MkdirAll(skillDir, 0755); err != nil {
+		t.Fatalf("mkdir failed: %v", err)
+	}
+
+	skillMdPath := filepath.Join(skillDir, "SKILL.md")
+	skillMdContent := `---
+name: test-skill
+description: A test skill
+---
+`
+	if err := os.WriteFile(skillMdPath, []byte(skillMdContent), 0644); err != nil {
+		t.Fatalf("write SKILL.md failed: %v", err)
+	}
+
+	t.Run("JSON flag", func(t *testing.T) {
+		var stdout bytes.Buffer
+		var stderr bytes.Buffer
+		code := runSet([]string{"test-skill", "--compatibility", "compatible", "--harnesses", "claude,codex"}, &stdout, &stderr, globalFlags{JSON: true})
+
+		if code != 0 {
+			t.Fatalf("runSet returned %d, want 0\nstderr: %s", code, stderr.String())
+		}
+
+		output := stdout.String()
+		var result map[string]interface{}
+		if err := json.Unmarshal([]byte(output), &result); err != nil {
+			t.Fatalf("output not valid JSON: %v\noutput: %s", err, output)
+		}
+		if result["skill"] != "test-skill" {
+			t.Errorf("JSON skill = %v, want test-skill", result["skill"])
+		}
+		if result["mode"] != "compatible" {
+			t.Errorf("JSON mode = %v, want compatible", result["mode"])
+		}
+	})
+
+	t.Run("Quiet flag", func(t *testing.T) {
+		var stdout bytes.Buffer
+		var stderr bytes.Buffer
+		code := runSet([]string{"test-skill", "--compatibility", "portable"}, &stdout, &stderr, globalFlags{Quiet: true})
+
+		if code != 0 {
+			t.Fatalf("runSet returned %d, want 0\nstderr: %s", code, stderr.String())
+		}
+
+		// With --quiet, human text should not appear on stdout
+		output := stdout.String()
+		if strings.Contains(output, "Set test-skill") {
+			t.Errorf("human text appeared on stdout despite --quiet: %s", output)
+		}
+	})
+}
+
+// Test Fix #3: switching modes clears stale declared fields
+func TestSetCommand_ClearsStaleFields(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+
+	libraryPath := filepath.Join(home, "library")
+	skillDir := filepath.Join(libraryPath, "test-skill")
+	if err := os.MkdirAll(skillDir, 0755); err != nil {
+		t.Fatalf("mkdir failed: %v", err)
+	}
+
+	skillMdPath := filepath.Join(skillDir, "SKILL.md")
+	skillMdContent := `---
+name: test-skill
+description: A test skill
+---
+`
+	if err := os.WriteFile(skillMdPath, []byte(skillMdContent), 0644); err != nil {
+		t.Fatalf("write SKILL.md failed: %v", err)
+	}
+
+	// First set to exclusive mode
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := runSet([]string{"test-skill", "--compatibility", "exclusive", "--harness", "claude", "--reason", "First"}, &stdout, &stderr, globalFlags{})
+
+	if code != 0 {
+		t.Fatalf("first runSet returned %d, want 0\nstderr: %s", code, stderr.String())
+	}
+
+	// Now switch to compatible mode
+	stdout.Reset()
+	stderr.Reset()
+	code = runSet([]string{"test-skill", "--compatibility", "compatible", "--harnesses", "codex,grok"}, &stdout, &stderr, globalFlags{})
+
+	if code != 0 {
+		t.Fatalf("second runSet returned %d, want 0\nstderr: %s", code, stderr.String())
+	}
+
+	// Read .skill-meta.yaml and check that stale fields were cleared
+	metaPath := filepath.Join(skillDir, ".skill-meta.yaml")
+	meta, err := readSkillMeta(metaPath)
+	if err != nil {
+		t.Fatalf("readSkillMeta failed: %v", err)
+	}
+
+	if meta.Compatibility.Declared == nil {
+		t.Fatalf("declared block should exist")
+	}
+
+	// Should have compatible harnesses, not exclusive harness
+	if meta.Compatibility.Declared.Harness != "" {
+		t.Errorf("declared.Harness should be empty after switching to compatible, got %q", meta.Compatibility.Declared.Harness)
+	}
+	if meta.Compatibility.Declared.Reason != "" {
+		t.Errorf("declared.Reason should be empty after switching to compatible, got %q", meta.Compatibility.Declared.Reason)
+	}
+	if len(meta.Compatibility.Declared.Harnesses) != 2 {
+		t.Errorf("declared.Harnesses length = %d, want 2", len(meta.Compatibility.Declared.Harnesses))
+	}
+
+	// Also verify effective state doesn't have leftover harness
+	if meta.Compatibility.Harness != "" {
+		t.Errorf("effective Harness should be empty in compatible mode, got %q", meta.Compatibility.Harness)
+	}
+	if len(meta.Compatibility.Harnesses) != 2 {
+		t.Errorf("effective Harnesses length = %d, want 2", len(meta.Compatibility.Harnesses))
+	}
+
+	// Test switching back to exclusive to ensure compatible harnesses are cleared
+	stdout.Reset()
+	stderr.Reset()
+	code = runSet([]string{"test-skill", "--compatibility", "exclusive", "--harness", "grok", "--reason", "Final"}, &stdout, &stderr, globalFlags{})
+
+	if code != 0 {
+		t.Fatalf("third runSet returned %d, want 0\nstderr: %s", code, stderr.String())
+	}
+
+	meta, err = readSkillMeta(metaPath)
+	if err != nil {
+		t.Fatalf("readSkillMeta failed: %v", err)
+	}
+
+	if meta.Compatibility.Declared == nil {
+		t.Fatalf("declared block should exist")
+	}
+
+	// Should have exclusive harness, not compatible harnesses
+	if meta.Compatibility.Declared.Harness != "grok" {
+		t.Errorf("declared.Harness = %q, want grok", meta.Compatibility.Declared.Harness)
+	}
+	if len(meta.Compatibility.Declared.Harnesses) != 0 {
+		t.Errorf("declared.Harnesses should be empty after switching to exclusive, got %v", meta.Compatibility.Declared.Harnesses)
+	}
+
+	// Verify effective state is clean too
+	if meta.Compatibility.Harness != "grok" {
+		t.Errorf("effective Harness = %q, want grok", meta.Compatibility.Harness)
+	}
+	if len(meta.Compatibility.Harnesses) != 0 {
+		t.Errorf("effective Harnesses should be empty in exclusive mode, got %v", meta.Compatibility.Harnesses)
+	}
+}
