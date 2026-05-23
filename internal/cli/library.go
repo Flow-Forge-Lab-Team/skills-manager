@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
 )
@@ -725,9 +726,11 @@ func rebuildCatalogFromLibrary(libraryPath string) (catalog, error) {
 			meta.Requirements.Model.ToolUse != ""
 		if meta.Requirements.Inferred || !hasExplicitRequirements {
 			inferred := inferRequirements(detectors, skillBody)
-			meta.Requirements = inferred
-			meta.Requirements.Inferred = true
-			needsWrite = true
+			if !reflect.DeepEqual(meta.Requirements, inferred) {
+				meta.Requirements = inferred
+				meta.Requirements.Inferred = true
+				needsWrite = true
+			}
 		}
 
 		if meta.Compatibility.Mode == "" {
