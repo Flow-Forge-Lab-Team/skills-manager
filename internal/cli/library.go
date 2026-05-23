@@ -909,9 +909,9 @@ func rebuildCatalogFromLibrary(libraryPath string) (catalog, error) {
 		// In that case, do not overwrite with inference.
 		if meta.Requirements.Inferred || (!hasExplicitRequirements && !sidecarExisted) {
 			inferred := inferRequirements(detectors, skillBody)
+			inferred.Inferred = true // normalize so DeepEqual only cares about modeled data
 			if !reflect.DeepEqual(meta.Requirements, inferred) {
 				meta.Requirements = inferred
-				meta.Requirements.Inferred = true
 				requirementsChanged = true
 			}
 		}

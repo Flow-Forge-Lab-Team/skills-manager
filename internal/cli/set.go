@@ -293,7 +293,7 @@ func runSet(args []string, realStdout io.Writer, stderr io.Writer, gf globalFlag
 	// This is consistent with the safety discipline we applied to the rebuild path
 	// and prevents unnecessary rewrites that drop unmodeled sidecar fields.
 	if !reflect.DeepEqual(oldCompat, meta.Compatibility) {
-		writeSkillMeta(metaPath, meta)
+		updateCompatibilitySection(metaPath, meta)
 	}
 
 	// Rebuild catalog to refresh library/catalog.yaml (issue #1)
