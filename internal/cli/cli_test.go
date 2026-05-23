@@ -1680,3 +1680,307 @@ skills:
 		t.Fatalf("skill should not be installed when required tool missing")
 	}
 }
+
+// --- FLO-232 redesign: lock-as-desired-set contract -------------------------
+//
+// The lock is the project's committed desired install set. Partial runs
+// (--only, blocked, no-compatible-harness) MUST NOT silently shrink it.
+//
+// The five tests below pin the contract:
+//   1. Bootstrap install (no lock, no --only): lock includes ALL desired
+//      skills, even ones blocked on this machine.
+//   2. After bootstrap, fixing the tool lets a plain install (now
+//      lock-driven) install the previously-blocked skill from the lock.
+//   3. Bootstrap with --only does NOT write a lock at all (surgical: this
+//      is not authoritative for the project).
+//   4. Lock-driven install with --only preserves all other lock entries.
+//   5. Sync with --only rewrites the lock to the full project.yaml set,
+//      not just the named skill.
+
+func TestBootstrapLockIncludesBlockedSkills(t *testing.T) {
+	home := t.TempDir()
+	project := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+
+	writeFile(t, filepath.Join(project, ".skills", "project.yaml"), `version: 1
+name: demo
+categories: [Engineering]
+harnesses: [claude]
+`)
+	writeFile(t, filepath.Join(home, "library", "catalog.yaml"), `version: 1
+skills:
+  - name: alpha
+    categories: [Engineering]
+    compatibility:
+      mode: portable
+    requirements:
+      tools: []
+  - name: beta
+    categories: [Engineering]
+    compatibility:
+      mode: portable
+    requirements:
+      tools:
+        - name: definitely-missing-tool-xyz
+          required: true
+`)
+	writeFile(t, filepath.Join(home, "library", "alpha", "SKILL.md"), "alpha\n")
+	writeFile(t, filepath.Join(home, "library", "beta", "SKILL.md"), "beta\n")
+
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{"install", "--project", project}, &stdout, &stderr)
+	// beta is blocked, alpha installed: partial.
+	if code != 4 {
+		t.Fatalf("Run returned %d, want 4 (partial: alpha installed, beta blocked)\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+	}
+
+	lock, err := readInstallLock(filepath.Join(project, ".skills", "installed.lock"))
+	if err != nil {
+		t.Fatalf("read lock: %v", err)
+	}
+	names := map[string]bool{}
+	for _, s := range lock.Skills {
+		names[s.Name] = true
+	}
+	if !names["alpha"] || !names["beta"] {
+		t.Fatalf("bootstrap lock must include the FULL desired set (alpha + beta) even when beta was blocked; got %+v", lock.Skills)
+	}
+
+	betaFP := ""
+	for _, s := range lock.Skills {
+		if s.Name == "beta" {
+			betaFP = s.Fingerprint
+		}
+	}
+	libFP, err := fingerprintDir(filepath.Join(home, "library", "beta"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if betaFP != libFP {
+		t.Fatalf("blocked-skill lock entry should carry the library fingerprint so teammates with the tool install the right bytes; lock=%s lib=%s", betaFP, libFP)
+	}
+}
+
+func TestBootstrapWithOnlyDoesNotWriteLock(t *testing.T) {
+	home := t.TempDir()
+	project := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+
+	writeFile(t, filepath.Join(project, ".skills", "project.yaml"), `version: 1
+name: demo
+categories: [Engineering]
+harnesses: [claude]
+`)
+	writeFile(t, filepath.Join(home, "library", "catalog.yaml"), `version: 1
+skills:
+  - name: alpha
+    categories: [Engineering]
+    compatibility:
+      mode: portable
+    requirements:
+      tools: []
+  - name: beta
+    categories: [Engineering]
+    compatibility:
+      mode: portable
+    requirements:
+      tools: []
+`)
+	writeFile(t, filepath.Join(home, "library", "alpha", "SKILL.md"), "alpha\n")
+	writeFile(t, filepath.Join(home, "library", "beta", "SKILL.md"), "beta\n")
+
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{"install", "--project", project, "--only", "alpha"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("Run returned %d, want 0\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+	}
+
+	if _, err := os.Stat(filepath.Join(project, ".claude", "skills", "alpha", "SKILL.md")); err != nil {
+		t.Fatalf("--only alpha should have installed alpha: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(project, ".claude", "skills", "beta")); !os.IsNotExist(err) {
+		t.Fatalf("--only alpha must not install beta")
+	}
+
+	lockPath := filepath.Join(project, ".skills", "installed.lock")
+	if _, err := os.Stat(lockPath); !os.IsNotExist(err) {
+		t.Fatalf("--only without an existing lock must NOT bootstrap a lock (a one-skill action shouldn't freeze a project-wide desired set); got: %v", err)
+	}
+}
+
+func TestPlainInstallAfterBlockedBootstrapInstallsPreviouslyBlocked(t *testing.T) {
+	// After bootstrap put a blocked skill in the lock with the library
+	// fingerprint, fixing the tool and running plain install should now
+	// install it via the lock-driven path. This is the regression target:
+	// previously, a partial bootstrap shrank the lock to just the installed
+	// skill, so the blocked one never got reconsidered.
+	home := t.TempDir()
+	project := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+
+	writeFile(t, filepath.Join(project, ".skills", "project.yaml"), `version: 1
+name: demo
+categories: [Engineering]
+harnesses: [claude]
+`)
+	writeFile(t, filepath.Join(home, "library", "catalog.yaml"), `version: 1
+skills:
+  - name: alpha
+    categories: [Engineering]
+    compatibility:
+      mode: portable
+    requirements:
+      tools: []
+  - name: gated
+    categories: [Engineering]
+    compatibility:
+      mode: portable
+    requirements:
+      tools:
+        - name: definitely-missing-tool-xyz
+          required: true
+`)
+	writeFile(t, filepath.Join(home, "library", "alpha", "SKILL.md"), "alpha\n")
+	writeFile(t, filepath.Join(home, "library", "gated", "SKILL.md"), "gated\n")
+
+	var stdout, stderr bytes.Buffer
+	if code := Run([]string{"install", "--project", project}, &stdout, &stderr); code != 4 {
+		t.Fatalf("bootstrap returned %d, want 4 (partial)\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+	}
+
+	// "Fix" the requirement by overriding it. This stands in for "install
+	// the missing tool". We use --allow-missing-requirements to make this
+	// reproducible without depending on the host environment.
+	stdout.Reset()
+	stderr.Reset()
+	code := Run([]string{"install", "--project", project, "--allow-missing-requirements"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("second install returned %d, want 0\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+	}
+	if _, err := os.Stat(filepath.Join(project, ".claude", "skills", "gated", "SKILL.md")); err != nil {
+		t.Fatalf("gated skill must be installed by lock-driven install once requirements are satisfied: %v", err)
+	}
+}
+
+func TestLockDrivenOnlyPreservesOtherLockEntries(t *testing.T) {
+	home := t.TempDir()
+	project := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+
+	writeFile(t, filepath.Join(project, ".skills", "project.yaml"), `version: 1
+name: demo
+categories: [Engineering]
+harnesses: [claude]
+`)
+	writeFile(t, filepath.Join(home, "library", "catalog.yaml"), `version: 1
+skills:
+  - name: alpha
+    categories: [Engineering]
+    compatibility:
+      mode: portable
+    requirements:
+      tools: []
+  - name: beta
+    categories: [Engineering]
+    compatibility:
+      mode: portable
+    requirements:
+      tools: []
+`)
+	writeFile(t, filepath.Join(home, "library", "alpha", "SKILL.md"), "alpha\n")
+	writeFile(t, filepath.Join(home, "library", "beta", "SKILL.md"), "beta\n")
+
+	var stdout, stderr bytes.Buffer
+	if code := Run([]string{"install", "--project", project}, &stdout, &stderr); code != 0 {
+		t.Fatalf("bootstrap returned %d, want 0\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+	}
+
+	before, err := readInstallLock(filepath.Join(project, ".skills", "installed.lock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforeNames := map[string]string{}
+	for _, s := range before.Skills {
+		beforeNames[s.Name] = s.Fingerprint
+	}
+	if len(beforeNames) != 2 {
+		t.Fatalf("expected 2 skills in lock after bootstrap, got %+v", before.Skills)
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	if code := Run([]string{"install", "--project", project, "--only", "alpha"}, &stdout, &stderr); code != 0 {
+		t.Fatalf("install --only alpha returned %d, want 0\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+	}
+
+	after, err := readInstallLock(filepath.Join(project, ".skills", "installed.lock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	afterNames := map[string]string{}
+	for _, s := range after.Skills {
+		afterNames[s.Name] = s.Fingerprint
+	}
+	if len(afterNames) != 2 {
+		t.Fatalf("lock-driven --only must NOT shrink the lock; before=%v after=%v", beforeNames, afterNames)
+	}
+	if afterNames["beta"] != beforeNames["beta"] {
+		t.Fatalf("beta lock entry should be preserved unchanged; before=%q after=%q", beforeNames["beta"], afterNames["beta"])
+	}
+}
+
+func TestSyncWithOnlyKeepsFullDesiredSetInLock(t *testing.T) {
+	home := t.TempDir()
+	project := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+
+	writeFile(t, filepath.Join(project, ".skills", "project.yaml"), `version: 1
+name: demo
+categories: [Engineering]
+harnesses: [claude]
+`)
+	writeFile(t, filepath.Join(home, "library", "catalog.yaml"), `version: 1
+skills:
+  - name: alpha
+    categories: [Engineering]
+    compatibility:
+      mode: portable
+    requirements:
+      tools: []
+  - name: beta
+    categories: [Engineering]
+    compatibility:
+      mode: portable
+    requirements:
+      tools: []
+`)
+	writeFile(t, filepath.Join(home, "library", "alpha", "SKILL.md"), "alpha\n")
+	writeFile(t, filepath.Join(home, "library", "beta", "SKILL.md"), "beta\n")
+
+	var stdout, stderr bytes.Buffer
+	if code := Run([]string{"install", "--project", project}, &stdout, &stderr); code != 0 {
+		t.Fatalf("bootstrap returned %d, want 0\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	if code := Run([]string{"sync", "--project", project, "--only", "alpha"}, &stdout, &stderr); code != 0 {
+		t.Fatalf("sync --only alpha returned %d, want 0\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+	}
+
+	lock, err := readInstallLock(filepath.Join(project, ".skills", "installed.lock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	names := map[string]bool{}
+	for _, s := range lock.Skills {
+		names[s.Name] = true
+	}
+	if !names["alpha"] || !names["beta"] {
+		t.Fatalf("sync --only must preserve beta in the lock (it's still desired by project.yaml); got %+v", lock.Skills)
+	}
+	// beta managed copy must still exist (was not pruned by --only sync).
+	if _, err := os.Stat(filepath.Join(project, ".claude", "skills", "beta", "SKILL.md")); err != nil {
+		t.Fatalf("sync --only alpha must not prune beta's managed copy: %v", err)
+	}
+}

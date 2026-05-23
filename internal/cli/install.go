@@ -163,15 +163,49 @@ func runInstall(args []string, stdout io.Writer, stderr io.Writer, syncMode bool
 		return 3
 	}
 
+	// Lock contract:
+	//
+	//   installed.lock is the committed desired install set for this project.
+	//   It represents "this is the full set of skills that should be installed
+	//   for full reproducibility across machines." It is not a record of what
+	//   any individual install run happened to copy.
+	//
+	// Modes:
+	//
+	//   1. lock-driven install (lock exists, not sync): candidates come from
+	//      the lock; the lock is authoritative. --only filters which entries
+	//      get re-evaluated on disk this run; non-matching entries are
+	//      preserved unchanged in the rewritten lock. Blocked/incompatible
+	//      entries also preserve their old lock entry.
+	//
+	//   2. bootstrap install (no lock, not sync, no --only): candidates come
+	//      from project.yaml matches. The new lock contains the full desired
+	//      set, including blocked-this-run skills (with library fingerprint +
+	//      compatible harnesses), so a teammate with the tool gets them.
+	//      Zero-compatible-harness skills are not added to the lock.
+	//
+	//   3. surgical install (no lock, not sync, --only): act on the named
+	//      skill only; do NOT bootstrap a lock. The user's intent is "install
+	//      this one thing", not "freeze a project-wide desired set."
+	//
+	//   4. sync (with or without --only): always recomputes desired set from
+	//      project.yaml and rewrites the lock to match. --only still filters
+	//      which entries get touched on disk; the rest of the desired set is
+	//      written to the lock from catalog + library.
+	//
+	// authoritativeLock controls whether buildInstallLock can synthesize
+	// entries for blocked/incompatible candidates from the library, vs.
+	// only writing entries we actually installed this run. True for
+	// bootstrap and sync (modes 2 and 4); false for surgical (mode 3).
+	authoritativeLock := !(opts.onlySkill != "" && len(lock.Skills) == 0 && !syncMode)
+
 	var candidates []installCandidate
 	var skippedLockedSkills bool
 	preserveLockEntries := map[string]bool{}
 	if len(lock.Skills) > 0 && !syncMode {
-		// Lock exists and we're not syncing: use it to determine candidates.
-		// (Sync mode recomputes from catalog to adapt to library changes.)
+		// Mode 1: lock-driven install.
 		var lockProblems []lockProblem
 
-		// Build candidates from lock: skip missing, check fingerprints, apply --only filter, apply never_include
 		never := set(project.NeverInclude)
 		for _, lockSkill := range lock.Skills {
 			if opts.onlySkill != "" && lockSkill.Name != opts.onlySkill {
@@ -183,7 +217,6 @@ func runInstall(args []string, stdout io.Writer, stderr io.Writer, syncMode bool
 				preserveLockEntries[lockSkill.Name] = true
 				continue
 			}
-			// Find skill in catalog to get the definition
 			var catalogSkill *catalogSkill
 			for i, s := range catalog.Skills {
 				if s.Name == lockSkill.Name {
@@ -204,7 +237,6 @@ func runInstall(args []string, stdout io.Writer, stderr io.Writer, syncMode bool
 				continue
 			}
 
-			// Check fingerprint if present in lock
 			if lockSkill.Fingerprint != "" {
 				libFP, err := fingerprintDir(filepath.Join(libraryPath, lockSkill.Name))
 				if err != nil {
@@ -232,22 +264,19 @@ func runInstall(args []string, stdout io.Writer, stderr io.Writer, syncMode bool
 					continue
 				}
 			} else {
-				// Legacy lock with no fingerprint: warn once
 				fmt.Fprintf(stderr, "lock entry for %s has no fingerprint; accepting library content as-is\n", lockSkill.Name)
 			}
 
-			// Use locked harnesses intersected with active project harnesses.
-			// If lock has no harnesses (legacy), fall back to recomputing from catalog.
+			// Locked harnesses intersected with active project harnesses.
+			// (Legacy locks without harness data fall back to catalog.)
 			var harnesses []string
 			if len(lockSkill.Harnesses) > 0 {
-				// Intersect: only use locked harnesses that are still active in project
 				projectHarnessSet := set(project.Harnesses)
 				for _, h := range lockSkill.Harnesses {
 					if projectHarnessSet[h] {
 						harnesses = append(harnesses, h)
 					}
 				}
-				// If no locked harnesses are active, skip with warning
 				if len(harnesses) == 0 {
 					fmt.Fprintf(stdout, "- %s: skipped, no locked harnesses are active in project.yaml\n", lockSkill.Name)
 					skippedLockedSkills = true
@@ -255,7 +284,6 @@ func runInstall(args []string, stdout io.Writer, stderr io.Writer, syncMode bool
 					continue
 				}
 			} else {
-				// Legacy lock without harness data: fall back to catalog compatibility
 				harnesses = compatibleHarnesses(catalogSkill.Compatibility, project.Harnesses)
 			}
 
@@ -266,26 +294,35 @@ func runInstall(args []string, stdout io.Writer, stderr io.Writer, syncMode bool
 			})
 		}
 
-		// Report lock problems
-		if len(lockProblems) > 0 {
-			if !opts.skipMissingLocked {
-				fmt.Fprintf(stderr, "problems with skills in .skills/installed.lock:\n")
-				for _, prob := range lockProblems {
-					if prob.kind == "missing" {
-						fmt.Fprintf(stderr, "  - %s: missing from library\n", prob.name)
-					} else {
-						fmt.Fprintf(stderr, "  - %s: library content differs from lock (%s)\n", prob.name, prob.detail)
-					}
+		if len(lockProblems) > 0 && !opts.skipMissingLocked {
+			fmt.Fprintf(stderr, "problems with skills in .skills/installed.lock:\n")
+			for _, prob := range lockProblems {
+				if prob.kind == "missing" {
+					fmt.Fprintf(stderr, "  - %s: missing from library\n", prob.name)
+				} else {
+					fmt.Fprintf(stderr, "  - %s: library content differs from lock (%s)\n", prob.name, prob.detail)
 				}
-				fmt.Fprintf(stderr, "suggest:\n")
-				fmt.Fprintf(stderr, "  - run: skills-manager sync-library\n")
-				fmt.Fprintf(stderr, "  - or: skills-manager install --skip-missing-locked\n")
-				return 3
 			}
+			fmt.Fprintf(stderr, "suggest:\n")
+			fmt.Fprintf(stderr, "  - run: skills-manager sync-library\n")
+			fmt.Fprintf(stderr, "  - or: skills-manager install --skip-missing-locked\n")
+			return 3
 		}
 	} else {
-		// No lock, or sync mode: use normal selection from catalog + project config
+		// Modes 2, 3, 4: candidates derive from project.yaml match.
 		candidates = selectInstallCandidates(catalog, project, opts.onlySkill)
+	}
+
+	// fullDesired is the unfiltered project.yaml-match set; used as the lock
+	// content in modes 2 (bootstrap) and 4 (sync) so --only or blocked tools
+	// don't silently shrink the committed desired set.
+	var fullDesired []installCandidate
+	if authoritativeLock && (len(lock.Skills) == 0 || syncMode) {
+		if opts.onlySkill != "" {
+			fullDesired = selectInstallCandidates(catalog, project, "")
+		} else {
+			fullDesired = candidates
+		}
 	}
 
 	if opts.onlySkill != "" && len(candidates) == 0 {
@@ -316,7 +353,14 @@ func runInstall(args []string, stdout io.Writer, stderr io.Writer, syncMode bool
 		fmt.Fprintln(stdout, "Installing skills:")
 	}
 
-	desired := desiredManagedPaths(candidates)
+	// For stale-pruning during sync we want every desired skill's target paths,
+	// not just the ones we acted on this run (--only would otherwise prune
+	// untouched managed skills).
+	desiredSource := candidates
+	if len(fullDesired) > 0 {
+		desiredSource = fullDesired
+	}
+	desired := desiredManagedPaths(desiredSource)
 	// The lock file is always desired when we're installing; it will be written/updated
 	if len(lock.Skills) > 0 || len(candidates) > 0 {
 		desired[".skills/installed.lock"] = true
@@ -420,10 +464,6 @@ func runInstall(args []string, stdout io.Writer, stderr io.Writer, syncMode bool
 
 	if !opts.dryRun {
 		if syncMode {
-			// The lock file is always desired when we're syncing; it will be written/updated
-			if len(lock.Skills) > 0 || len(candidates) > 0 {
-				desired[".skills/installed.lock"] = true
-			}
 			prunePartial, err := pruneStaleManaged(projectPath, managed, desired, preserved, files, stdout)
 			if err != nil {
 				fmt.Fprintf(stderr, "prune stale installs: %v\n", err)
@@ -434,28 +474,44 @@ func runInstall(args []string, stdout io.Writer, stderr io.Writer, syncMode bool
 			}
 		}
 
-		// Build and write installed.lock before saving manifest, so that on
-		// failure, the manifest doesn't claim a lock we didn't write.
-		// On success, we add .skills/installed.lock to managed, then save manifest.
-		// Filter out candidates skipped this run (blocked by missing tools,
-		// no compatible harnesses) so the lock isn't refreshed for skills
-		// whose installed bytes did not change.
-		lockCandidates := candidates
-		if len(skippedCandidates) > 0 {
-			lockCandidates = make([]installCandidate, 0, len(candidates))
-			for _, c := range candidates {
-				if !skippedCandidates[c.Skill.Name] {
-					lockCandidates = append(lockCandidates, c)
-				}
+		// Build and write installed.lock before saving manifest, so on a
+		// failure the manifest doesn't claim a lock we didn't write.
+		//
+		// Lock-content shape depends on the mode:
+		//   - mode 1 (lock-driven): lockInstalled is just candidates that ran;
+		//     skipped/blocked entries get their old lock entry preserved via
+		//     preserveLockEntries. The lock writer reuses managed[] to decide
+		//     which harnesses count as "installed" for fingerprint advance.
+		//   - mode 2 (bootstrap) + mode 4 (sync): the lock content is the full
+		//     desired set from project.yaml (fullDesired). Entries for skills
+		//     blocked this run get library fingerprint + compatible harnesses
+		//     synthesized — the lock is the desired set, not the action log.
+		//   - mode 3 (surgical --only with no existing lock): skip writing the
+		//     lock entirely; this run is not authoritative for the project.
+		var lockSkipped map[string]bool
+		var lockSource []installCandidate
+		actedOn := map[string]bool{}
+		for _, c := range candidates {
+			actedOn[c.Skill.Name] = true
+		}
+		if authoritativeLock && (len(lock.Skills) == 0 || syncMode) {
+			lockSource = fullDesired
+			lockSkipped = map[string]bool{}
+			for name := range skippedCandidates {
+				lockSkipped[name] = true
 			}
-			// Preserve old lock entries for skipped candidates so we don't
-			// silently drop them from a committed lock.
+		} else if authoritativeLock {
+			// Mode 1.
+			lockSource = candidates
+			lockSkipped = skippedCandidates
 			for name := range skippedCandidates {
 				preserveLockEntries[name] = true
 			}
 		}
-		if len(lock.Skills) > 0 || len(lockCandidates) > 0 {
-			newLock, err := buildInstallLock(lockCandidates, files, libraryPath, lock, managed, preserveLockEntries)
+
+		writeLock := authoritativeLock && (len(lock.Skills) > 0 || len(lockSource) > 0)
+		if writeLock {
+			newLock, err := buildInstallLock(lockSource, lockSkipped, actedOn, libraryPath, lock, managed, preserveLockEntries)
 			if err != nil {
 				fmt.Fprintf(stderr, "build lock: %v\n", err)
 				return 3
@@ -842,7 +898,25 @@ func writeInstallLock(path string, lock installLock) error {
 	return os.WriteFile(path, []byte(buf.String()), 0o644)
 }
 
-func buildInstallLock(candidates []installCandidate, files map[string]string, libraryPath string, oldLock installLock, managed map[string]bool, preserveOld map[string]bool) (installLock, error) {
+// buildInstallLock produces the lock content to write after this run.
+//
+//   desired: the full set of skills that should appear in the new lock.
+//     - mode 1 (lock-driven): only the candidates we re-evaluated this run.
+//       preserveOld carries the skills we left alone (--only-excluded,
+//       never_include, blocked, etc.)
+//     - modes 2/4 (bootstrap/sync): the full project.yaml-matched set.
+//   skipped: subset of desired we did NOT install this run (blocked tools,
+//     no compatible harness). For these we either preserve the old lock
+//     entry (honest: bytes didn't change) or synthesize from library+catalog
+//     if there's no old entry to preserve. Synthesizing with library
+//     fingerprint is correct because the lock describes the desired set;
+//     a teammate with the tool will install the library content.
+//   managed: target paths the manager currently owns. Used to decide which
+//     of a skill's harnesses count as "managed" — only those advance to the
+//     current library fingerprint.
+//   preserveOld: names whose old lock entry should survive unchanged even
+//     if the skill isn't in desired (--only excludes, never_include, etc.).
+func buildInstallLock(desired []installCandidate, skipped map[string]bool, actedOn map[string]bool, libraryPath string, oldLock installLock, managed map[string]bool, preserveOld map[string]bool) (installLock, error) {
 	newLock := installLock{
 		Version:     1,
 		GeneratedBy: fmt.Sprintf("skills-manager %s", Version),
@@ -857,10 +931,38 @@ func buildInstallLock(candidates []installCandidate, files map[string]string, li
 
 	written := map[string]bool{}
 
-	for _, candidate := range candidates {
-		libFP, err := fingerprintDir(filepath.Join(libraryPath, candidate.Skill.Name))
+	for _, candidate := range desired {
+		name := candidate.Skill.Name
+		if skipped[name] {
+			// Bytes didn't change on disk for this skill this run.
+			if old, ok := oldByName[name]; ok {
+				newLock.Skills = append(newLock.Skills, old)
+				written[name] = true
+				continue
+			}
+			// First-time bootstrap, blocked or no-harness this run.
+			// Skip lock entries that have no harnesses (incompatible) —
+			// nothing to install anywhere.
+			if len(candidate.Harnesses) == 0 {
+				continue
+			}
+			libFP, err := fingerprintDir(filepath.Join(libraryPath, name))
+			if err != nil {
+				return newLock, fmt.Errorf("fingerprint library skill %q: %w", name, err)
+			}
+			newLock.Skills = append(newLock.Skills, installLockEntry{
+				Name:        name,
+				Fingerprint: libFP,
+				InstalledAt: now,
+				Harnesses:   candidate.Harnesses,
+			})
+			written[name] = true
+			continue
+		}
+
+		libFP, err := fingerprintDir(filepath.Join(libraryPath, name))
 		if err != nil {
-			return newLock, fmt.Errorf("fingerprint library skill %q: %w", candidate.Skill.Name, err)
+			return newLock, fmt.Errorf("fingerprint library skill %q: %w", name, err)
 		}
 
 		var managedHarnesses []string
@@ -869,38 +971,73 @@ func buildInstallLock(candidates []installCandidate, files map[string]string, li
 			if !ok {
 				continue
 			}
-			relTarget := filepath.ToSlash(filepath.Join(targetBase, candidate.Skill.Name))
+			relTarget := filepath.ToSlash(filepath.Join(targetBase, name))
 			if managed[relTarget] {
 				managedHarnesses = append(managedHarnesses, harness)
 			}
 		}
 
 		if len(managedHarnesses) > 0 {
-			old, hadOld := oldByName[candidate.Skill.Name]
-			// Reuse old installed_at when nothing semantic changed,
-			// so committed lockfiles stay clean across idempotent installs.
+			old, hadOld := oldByName[name]
 			installedAt := now
 			if hadOld && old.Fingerprint == libFP && stringSlicesEqual(old.Harnesses, managedHarnesses) {
 				installedAt = old.InstalledAt
 			}
 			newLock.Skills = append(newLock.Skills, installLockEntry{
-				Name:        candidate.Skill.Name,
-				Version:     "",
-				Commit:      "",
+				Name:        name,
 				Fingerprint: libFP,
 				InstalledAt: installedAt,
 				Harnesses:   managedHarnesses,
 			})
-			written[candidate.Skill.Name] = true
+			written[name] = true
 			continue
 		}
 
 		// All target harnesses were preserved-as-unmanaged (existing
 		// committed copies). Don't silently drop the locked entry.
-		if old, ok := oldByName[candidate.Skill.Name]; ok {
+		if old, ok := oldByName[name]; ok {
 			newLock.Skills = append(newLock.Skills, old)
-			written[candidate.Skill.Name] = true
+			written[name] = true
 		}
+	}
+
+	// Desired skills we didn't act on this run (filtered out by --only in
+	// modes 2 or 4): keep the old entry if any, else synthesize from library
+	// + catalog-compatible harnesses. This is what makes the bootstrap lock
+	// represent the full project.yaml-matched set even when bootstrapped via
+	// `sync --only one-thing`.
+	//
+	// We intentionally skip skills that WERE acted on but ended up with no
+	// managed harnesses (target preserved as unmanaged / locally edited
+	// without an old lock entry). Those represent a real conflict between
+	// project.yaml's desired set and the user's local override; we respect
+	// the local override by leaving them out of the lock.
+	for _, c := range desired {
+		if written[c.Skill.Name] {
+			continue
+		}
+		if actedOn[c.Skill.Name] {
+			continue
+		}
+		if old, ok := oldByName[c.Skill.Name]; ok {
+			newLock.Skills = append(newLock.Skills, old)
+			written[c.Skill.Name] = true
+			continue
+		}
+		if len(c.Harnesses) == 0 {
+			continue
+		}
+		libFP, err := fingerprintDir(filepath.Join(libraryPath, c.Skill.Name))
+		if err != nil {
+			return newLock, fmt.Errorf("fingerprint library skill %q: %w", c.Skill.Name, err)
+		}
+		newLock.Skills = append(newLock.Skills, installLockEntry{
+			Name:        c.Skill.Name,
+			Fingerprint: libFP,
+			InstalledAt: now,
+			Harnesses:   c.Harnesses,
+		})
+		written[c.Skill.Name] = true
 	}
 
 	for _, oldEntry := range oldLock.Skills {
@@ -916,8 +1053,6 @@ func buildInstallLock(candidates []installCandidate, files map[string]string, li
 		return newLock.Skills[i].Name < newLock.Skills[j].Name
 	})
 
-	// Preserve old generated_at when the skill set is byte-identical.
-	// Lock is committed; idempotent installs should not churn the file.
 	if oldLock.GeneratedAt != "" && lockEntriesEqual(newLock.Skills, oldLock.Skills) {
 		newLock.GeneratedAt = oldLock.GeneratedAt
 	} else {
