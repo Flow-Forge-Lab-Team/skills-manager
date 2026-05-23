@@ -56,18 +56,45 @@ type catalogSkill struct {
 }
 
 type compatibility struct {
+	Mode             string                     `json:"mode,omitempty"`
+	Harness          string                     `json:"harness,omitempty"`
+	Harnesses        []string                   `json:"harnesses,omitempty"`
+	Declared         *compatibilityDeclaration  `json:"declared,omitempty"`
+	Detected         map[string]detectionResult `json:"detected,omitempty"`
+	ExplicitPortable bool                       `json:"explicit_portable,omitempty"`
+}
+
+type compatibilityDeclaration struct {
 	Mode      string   `json:"mode,omitempty"`
 	Harness   string   `json:"harness,omitempty"`
 	Harnesses []string `json:"harnesses,omitempty"`
+	Reason    string   `json:"reason,omitempty"`
+}
+
+type detectionResult struct {
+	Confidence string   `json:"confidence,omitempty"`
+	Reasons    []string `json:"reasons,omitempty"`
 }
 
 type requirements struct {
-	Tools []toolRequirement `json:"tools,omitempty"`
+	Tools      []toolRequirement `json:"tools,omitempty"`
+	MCPServers []mcpRequirement  `json:"mcp_servers,omitempty"`
+	Model      modelRequirement  `json:"model,omitempty"`
+	Inferred   bool              `json:"inferred,omitempty"`
 }
 
 type toolRequirement struct {
 	Name     string `json:"name"`
 	Required bool   `json:"required"`
+}
+
+type mcpRequirement struct {
+	Name     string `json:"name"`
+	Required bool   `json:"required"`
+}
+
+type modelRequirement struct {
+	ToolUse string `json:"tool_use,omitempty"`
 }
 
 type installManifest struct {
@@ -396,16 +423,40 @@ func runInstall(args []string, realStdout io.Writer, stderr io.Writer, syncMode 
 		}
 
 		missing := missingRequiredTools(candidate.Skill.Requirements)
+		missingMCP := missingRequiredMCPServers(candidate.Skill.Requirements)
+		missingModel := missingModelCapabilities(candidate.Skill.Requirements)
 		candidate.Missing = missing
-		if len(missing) > 0 && !opts.allowMissingRequirements {
+
+		allMissing := append(append(missing, missingMCP...), missingModel...)
+		if len(allMissing) > 0 && !opts.allowMissingRequirements {
 			blocked++
-			fmt.Fprintf(stdout, "- %s: blocked, missing required tools: %s\n", candidate.Skill.Name, strings.Join(missing, ", "))
+			var parts []string
+			if len(missing) > 0 {
+				parts = append(parts, "tools="+strings.Join(missing, ","))
+			}
+			if len(missingMCP) > 0 {
+				parts = append(parts, "mcp_servers="+strings.Join(missingMCP, ","))
+			}
+			if len(missingModel) > 0 {
+				parts = append(parts, "model="+strings.Join(missingModel, ","))
+			}
+			fmt.Fprintf(stdout, "- %s: blocked, missing required: %s\n", candidate.Skill.Name, strings.Join(parts, ", "))
 			skippedCandidates[candidate.Skill.Name] = true
 			blockedSkills = append(blockedSkills, candidate.Skill.Name)
 			continue
 		}
-		if len(missing) > 0 {
-			fmt.Fprintf(stdout, "- %s: warning, installing despite missing required tools: %s\n", candidate.Skill.Name, strings.Join(missing, ", "))
+		if len(allMissing) > 0 {
+			var parts []string
+			if len(missing) > 0 {
+				parts = append(parts, "tools="+strings.Join(missing, ","))
+			}
+			if len(missingMCP) > 0 {
+				parts = append(parts, "mcp_servers="+strings.Join(missingMCP, ","))
+			}
+			if len(missingModel) > 0 {
+				parts = append(parts, "model="+strings.Join(missingModel, ","))
+			}
+			fmt.Fprintf(stdout, "- %s: warning, installing despite missing required: %s\n", candidate.Skill.Name, strings.Join(parts, ", "))
 		}
 
 		fmt.Fprintf(stdout, "- %s: %s; harnesses: %s\n", candidate.Skill.Name, candidate.Reason, strings.Join(candidate.Harnesses, ", "))
@@ -1300,13 +1351,23 @@ func readCatalog(path string) (catalog, error) {
 	var current *catalogSkill
 	var section string
 	var tool *toolRequirement
+	var skillBaseIndent int = -1
 	for i := 0; i < len(lines); i++ {
 		raw := stripComment(lines[i])
 		if strings.TrimSpace(raw) == "" {
 			continue
 		}
 		trimmed := strings.TrimSpace(raw)
-		if strings.HasPrefix(trimmed, "- name:") {
+		lineIndent := indent(raw)
+
+		// A leading "- name:" at the same or lower indent as the first skill we saw
+		// is the start of a new top-level catalog skill. This is more robust than
+		// checking section == "" (which can be left non-empty after processing
+		// a skill's requirements/compatibility block).
+		isTopLevelSkillStart := strings.HasPrefix(trimmed, "- name:") &&
+			(skillBaseIndent == -1 || lineIndent <= skillBaseIndent)
+
+		if isTopLevelSkillStart {
 			if current != nil {
 				if tool != nil {
 					current.Requirements.Tools = append(current.Requirements.Tools, *tool)
@@ -1316,6 +1377,9 @@ func readCatalog(path string) (catalog, error) {
 			current = &catalogSkill{Name: unquote(strings.TrimSpace(strings.TrimPrefix(trimmed, "- name:")))}
 			section = ""
 			tool = nil
+			if skillBaseIndent == -1 {
+				skillBaseIndent = lineIndent
+			}
 			continue
 		}
 		if current == nil {
@@ -1353,7 +1417,8 @@ func readCatalog(path string) (catalog, error) {
 				current.Compatibility.Harnesses = items
 			}
 		case "tools":
-			if section == "requirements" {
+			if section == "requirements" || section == "requirements:model" {
+				section = "requirements"
 				if strings.HasPrefix(value, "[") && strings.HasSuffix(value, "]") {
 					current.Requirements.Tools = toolRequirementsFromNames(parseInlineList(value))
 				} else {
@@ -1361,6 +1426,35 @@ func readCatalog(path string) (catalog, error) {
 					i = next
 					current.Requirements.Tools = items
 				}
+			}
+		case "mcp_servers":
+			if section == "requirements" || section == "requirements:model" {
+				section = "requirements"
+				if strings.HasPrefix(value, "[") && strings.HasSuffix(value, "]") {
+					current.Requirements.MCPServers = mcpRequirementsFromNames(parseInlineList(value))
+				} else {
+					items, next := readMCPServerRequirements(lines, i)
+					i = next
+					current.Requirements.MCPServers = items
+				}
+			}
+		case "model":
+			if section == "requirements" {
+				section = "requirements:model"
+				// Support the documented inline form used in catalog entries:
+				//   model: {tool_use: required}
+				// Previously this dropped the value on the same line.
+				if strings.Contains(value, "tool_use") {
+					parts := strings.SplitN(value, "tool_use:", 2)
+					if len(parts) == 2 {
+						v := strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(parts[1]), "}"))
+						current.Requirements.Model.ToolUse = unquote(v)
+					}
+				}
+			}
+		case "tool_use":
+			if section == "requirements:model" {
+				current.Requirements.Model.ToolUse = unquote(value)
 			}
 		}
 	}
@@ -1483,6 +1577,62 @@ func toolRequirementsFromNames(names []string) []toolRequirement {
 	requirements := make([]toolRequirement, 0, len(names))
 	for _, name := range names {
 		requirements = append(requirements, toolRequirement{Name: name, Required: true})
+	}
+	return requirements
+}
+
+func readMCPServerRequirements(lines []string, index int) ([]mcpRequirement, int) {
+	var servers []mcpRequirement
+	baseIndent := indent(lines[index])
+	var current *mcpRequirement
+	for next := index + 1; next < len(lines); next++ {
+		line := stripComment(lines[next])
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		if indent(line) <= baseIndent {
+			if current != nil {
+				servers = append(servers, *current)
+			}
+			return servers, next - 1
+		}
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "- name:") {
+			if current != nil {
+				servers = append(servers, *current)
+			}
+			current = &mcpRequirement{Name: unquote(strings.TrimSpace(strings.TrimPrefix(trimmed, "- name:")))}
+			continue
+		}
+		if strings.HasPrefix(trimmed, "- ") {
+			if current != nil {
+				servers = append(servers, *current)
+				current = nil
+			}
+			servers = append(servers, mcpRequirement{
+				Name:     unquote(strings.TrimSpace(strings.TrimPrefix(trimmed, "- "))),
+				Required: true,
+			})
+			continue
+		}
+		if current == nil {
+			continue
+		}
+		key, value, ok := splitYAMLKey(line)
+		if ok && key == "required" {
+			current.Required = value == "true"
+		}
+	}
+	if current != nil {
+		servers = append(servers, *current)
+	}
+	return servers, len(lines) - 1
+}
+
+func mcpRequirementsFromNames(names []string) []mcpRequirement {
+	requirements := make([]mcpRequirement, 0, len(names))
+	for _, name := range names {
+		requirements = append(requirements, mcpRequirement{Name: name, Required: true})
 	}
 	return requirements
 }
@@ -1694,6 +1844,39 @@ func missingRequiredTools(req requirements) []string {
 		}
 	}
 	sort.Strings(missing)
+	return missing
+}
+
+func missingRequiredMCPServers(req requirements) []string {
+	var missing []string
+	for _, server := range req.MCPServers {
+		if !server.Required {
+			continue
+		}
+		// Stub MCP server presence check:
+		// - Env var SKILLS_MANAGER_MCP_<NAME_UPPERCASE>=available opts in (for testing/dev)
+		// - Config file ~/.skills-manager/mcp/<name>.yaml presence check (future)
+		// - Default: missing (blocks install unless --allow-missing-requirements)
+		envVar := "SKILLS_MANAGER_MCP_" + strings.ToUpper(strings.ReplaceAll(server.Name, "-", "_"))
+		if os.Getenv(envVar) == "available" {
+			continue
+		}
+		missing = append(missing, server.Name)
+	}
+	sort.Strings(missing)
+	return missing
+}
+
+func missingModelCapabilities(req requirements) []string {
+	var missing []string
+	if req.Model.ToolUse == "required" {
+		// Stub model capability check:
+		// - Env var SKILLS_MANAGER_MODEL_TOOL_USE=available opts in (for testing/dev)
+		// - Default: missing (blocks install unless --allow-missing-requirements)
+		if os.Getenv("SKILLS_MANAGER_MODEL_TOOL_USE") != "available" {
+			missing = append(missing, "tool_use")
+		}
+	}
 	return missing
 }
 

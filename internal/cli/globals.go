@@ -215,6 +215,17 @@ Forms:
   --safety <skill>     print a safety report for one pending update
   --accept-all-safe    apply every pending update that has no blocking flags;
                        refuses (exit 4) if any update is blocked
+	case "set":
+		return `skills-manager set <skill> --compatibility <mode> [flags]
+
+Update a skill's compatibility declaration. Rewrites SKILL.md frontmatter and
+.skill-meta.yaml, then refreshes catalog.yaml.
+
+Flags:
+  --compatibility <mode>     portable | compatible | exclusive  (required)
+  --harness <name>           target harness (required for exclusive)
+  --harnesses <a,b,c>        target harnesses (required for compatible)
+  --reason "<text>"          optional human note (exclusive mode)
 
 ` + globalFlagHelp()
 	}
@@ -229,6 +240,7 @@ Commands:
   list        list skills in the canonical library
   show        show details for a single skill
   update      review and accept pending library updates
+  set         update a skill's compatibility declaration
   help        show help for a command
 
 ` + globalFlagHelp()

@@ -1,0 +1,29 @@
+version: 1
+detectors:
+  - id: gh-cli
+    requirement:
+      kind: tool
+      name: gh
+      required: true
+    confidence: high
+    patterns:
+      - "gh pr"
+      - "gh api"
+      - "GitHub CLI"
+  - id: rg-ripgrep
+    requirement:
+      kind: tool
+      name: rg
+      required: true
+    confidence: medium
+    patterns:
+      - "rg "
+      - "ripgrep"
+  - id: ffmpeg
+    requirement:
+      kind: tool
+      name: ffmpeg
+      required: true
+    confidence: high
+    patterns:
+      - "ffmpeg"

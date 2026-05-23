@@ -1,0 +1,27 @@
+version: 1
+detectors:
+  - id: claude-skill-tool
+    harness: claude
+    confidence: high
+    patterns:
+      - "the Skill tool"
+      - "Agent tool with subagent_type"
+  - id: claude-ask-user-question
+    harness: claude
+    confidence: high
+    patterns:
+      - "AskUserQuestion"
+      - "ExitPlanMode"
+      - "Plan Mode"
+  - id: claude-bash-prefix
+    harness: claude
+    confidence: medium
+    patterns:
+      - "^! "
+  - id: claude-hook-config
+    harness: claude
+    confidence: high
+    patterns:
+      - "PreToolUse"
+      - "PostToolUse"
+      - "hook configs"

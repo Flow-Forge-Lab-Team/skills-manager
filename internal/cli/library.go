@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
 )
@@ -57,41 +58,57 @@ func ensureLibrary(home string) (string, error) {
 }
 
 func parseSkillFrontmatter(path string) (name, description string, err error) {
+	decl, _, _ := parseSkillFrontmatterFull(path)
+	return decl.name, decl.description, nil
+}
+
+type skillFrontmatterDeclaration struct {
+	name        string
+	description string
+	compatible  []string
+	exclusive   string
+	reason      string
+}
+
+func parseSkillFrontmatterFull(path string) (skillFrontmatterDeclaration, compatibilityDeclaration, error) {
 	file, err := os.Open(path)
 	if err != nil {
-		return "", "", err
+		return skillFrontmatterDeclaration{}, compatibilityDeclaration{}, err
 	}
 	defer file.Close()
 
 	content, err := io.ReadAll(file)
 	if err != nil {
-		return "", "", err
+		return skillFrontmatterDeclaration{}, compatibilityDeclaration{}, err
 	}
 
 	text := string(content)
 	if !strings.HasPrefix(text, "---") {
-		return "", "", nil
+		return skillFrontmatterDeclaration{}, compatibilityDeclaration{}, nil
 	}
 
 	endIdx := strings.Index(text[3:], "---")
 	if endIdx == -1 {
-		return "", "", nil
+		return skillFrontmatterDeclaration{}, compatibilityDeclaration{}, nil
 	}
 
 	frontmatter := text[3 : endIdx+3]
 	lines := strings.Split(frontmatter, "\n")
 
+	decl := skillFrontmatterDeclaration{}
 	var inDescription bool
 	var descLines []string
 
-	for _, line := range lines {
+	for i := 0; i < len(lines); i++ {
+		line := lines[i]
 		trimmed := strings.TrimSpace(line)
 		if trimmed == "" {
 			continue
 		}
 
 		if strings.HasPrefix(trimmed, "name:") {
-			name = unquote(strings.TrimSpace(strings.TrimPrefix(trimmed, "name:")))
+			decl.name = unquote(strings.TrimSpace(strings.TrimPrefix(trimmed, "name:")))
+			inDescription = false
 			continue
 		}
 
@@ -106,23 +123,61 @@ func parseSkillFrontmatter(path string) (name, description string, err error) {
 
 		if inDescription {
 			if strings.Contains(trimmed, ":") && !strings.HasPrefix(trimmed, "-") {
-				break
+				inDescription = false
+			} else {
+				if !strings.HasPrefix(trimmed, "-") {
+					descLines = append(descLines, trimmed)
+				}
+				continue
 			}
-			if !strings.HasPrefix(trimmed, "-") {
-				descLines = append(descLines, trimmed)
+		}
+
+		if strings.HasPrefix(trimmed, "compatible:") {
+			inDescription = false
+			rest := strings.TrimSpace(strings.TrimPrefix(trimmed, "compatible:"))
+			if strings.HasPrefix(rest, "[") && strings.HasSuffix(rest, "]") {
+				decl.compatible = parseInlineList(rest)
+			} else {
+				items, next := readYAMLStringList(lines, i, rest)
+				i = next
+				decl.compatible = items
 			}
+			continue
+		}
+
+		if strings.HasPrefix(trimmed, "exclusive:") {
+			inDescription = false
+			decl.exclusive = unquote(strings.TrimSpace(strings.TrimPrefix(trimmed, "exclusive:")))
+			continue
+		}
+
+		if strings.HasPrefix(trimmed, "reason:") {
+			inDescription = false
+			decl.reason = unquote(strings.TrimSpace(strings.TrimPrefix(trimmed, "reason:")))
+			continue
 		}
 	}
 
 	if len(descLines) > 0 {
 		joined := strings.TrimSpace(strings.Join(descLines, " "))
-		description = unquote(joined)
-		if len(description) > 200 {
-			description = description[:200]
+		decl.description = unquote(joined)
+		if len(decl.description) > 200 {
+			decl.description = decl.description[:200]
 		}
 	}
 
-	return name, description, nil
+	// Convert to compatibilityDeclaration if there are declarations
+	var compDecl compatibilityDeclaration
+	if decl.exclusive != "" {
+		compDecl.Mode = "exclusive"
+		compDecl.Harness = decl.exclusive
+		compDecl.Reason = decl.reason
+	} else if len(decl.compatible) > 0 {
+		compDecl.Mode = "compatible"
+		compDecl.Harnesses = decl.compatible
+	}
+
+	return decl, compDecl, nil
 }
 
 func fingerprintSkillMd(path string) (string, int64, error) {
@@ -150,6 +205,8 @@ func readSkillMeta(path string) (skillMeta, error) {
 
 	meta := skillMeta{Version: 1}
 	var section string
+	var sectionIndent int
+	var detectedHarness string // current harness key under compatibility:detected
 
 	for i := 0; i < len(lines); i++ {
 		raw := stripComment(lines[i])
@@ -161,6 +218,8 @@ func readSkillMeta(path string) (skillMeta, error) {
 		if !ok {
 			continue
 		}
+
+		currentIndent := indent(raw)
 
 		switch key {
 		case "version":
@@ -187,14 +246,19 @@ func readSkillMeta(path string) (skillMeta, error) {
 			meta.LastChangedAt = unquote(value)
 		case "origin":
 			section = "origin"
+			sectionIndent = currentIndent
 		case "fingerprint":
 			section = "fingerprint"
+			sectionIndent = currentIndent
 		case "categorization":
 			section = "categorization"
+			sectionIndent = currentIndent
 		case "compatibility":
 			section = "compatibility"
+			sectionIndent = currentIndent
 		case "requirements":
 			section = "requirements"
+			sectionIndent = currentIndent
 		case "type":
 			if section == "origin" {
 				meta.Origin.Type = unquote(value)
@@ -250,19 +314,72 @@ func readSkillMeta(path string) (skillMeta, error) {
 		case "mode":
 			if section == "compatibility" {
 				meta.Compatibility.Mode = unquote(value)
+			} else if section == "compatibility:declared" {
+				if meta.Compatibility.Declared == nil {
+					meta.Compatibility.Declared = &compatibilityDeclaration{}
+				}
+				meta.Compatibility.Declared.Mode = unquote(value)
+			}
+		case "explicit_portable":
+			if section == "compatibility" {
+				meta.Compatibility.ExplicitPortable = value == "true"
 			}
 		case "harness":
 			if section == "compatibility" {
 				meta.Compatibility.Harness = unquote(value)
+			} else if section == "compatibility:declared" {
+				if meta.Compatibility.Declared == nil {
+					meta.Compatibility.Declared = &compatibilityDeclaration{}
+				}
+				meta.Compatibility.Declared.Harness = unquote(value)
 			}
 		case "harnesses":
 			if section == "compatibility" {
 				items, next := readYAMLStringList(lines, i, value)
 				i = next
 				meta.Compatibility.Harnesses = items
+			} else if section == "compatibility:declared" {
+				if meta.Compatibility.Declared == nil {
+					meta.Compatibility.Declared = &compatibilityDeclaration{}
+				}
+				items, next := readYAMLStringList(lines, i, value)
+				i = next
+				meta.Compatibility.Declared.Harnesses = items
+			}
+		case "reason":
+			if section == "compatibility:declared" {
+				if meta.Compatibility.Declared == nil {
+					meta.Compatibility.Declared = &compatibilityDeclaration{}
+				}
+				meta.Compatibility.Declared.Reason = unquote(value)
+			}
+		case "declared":
+			if section == "compatibility" {
+				section = "compatibility:declared"
+			}
+		case "detected":
+			if section == "compatibility" {
+				section = "compatibility:detected"
+				if meta.Compatibility.Detected == nil {
+					meta.Compatibility.Detected = make(map[string]detectionResult)
+				}
+				detectedHarness = ""
+			}
+		// When inside compatibility:detected, a new key at the harness level is a harness name
+		default:
+			if section == "compatibility:detected" && currentIndent == sectionIndent+1 {
+				// Treat this key as a harness name under detected
+				detectedHarness = key
+				if _, exists := meta.Compatibility.Detected[detectedHarness]; !exists {
+					meta.Compatibility.Detected[detectedHarness] = detectionResult{}
+				}
+				continue // do not fall through to other cases for this key
 			}
 		case "tools":
-			if section == "requirements" {
+			if section == "requirements" || section == "requirements:model" {
+				if section == "requirements:model" {
+					section = "requirements" // Reset to parent section
+				}
 				if strings.HasPrefix(value, "[") && strings.HasSuffix(value, "]") {
 					meta.Requirements.Tools = toolRequirementsFromNames(parseInlineList(value))
 				} else {
@@ -270,6 +387,36 @@ func readSkillMeta(path string) (skillMeta, error) {
 					i = next
 					meta.Requirements.Tools = items
 				}
+			}
+		case "mcp_servers":
+			if section == "requirements" || section == "requirements:model" {
+				if section == "requirements:model" {
+					section = "requirements" // Reset to parent section
+				}
+				if strings.HasPrefix(value, "[") && strings.HasSuffix(value, "]") {
+					meta.Requirements.MCPServers = mcpRequirementsFromNames(parseInlineList(value))
+				} else {
+					items, next := readMCPServerRequirements(lines, i)
+					i = next
+					meta.Requirements.MCPServers = items
+				}
+			}
+		case "model":
+			if section == "requirements" {
+				section = "requirements:model"
+				sectionIndent = currentIndent // Track the indent of "model:" itself
+			}
+		case "tool_use":
+			if section == "requirements:model" {
+				meta.Requirements.Model.ToolUse = unquote(value)
+			}
+		case "inferred":
+			// "inferred" is at the requirements level, so if we're in a nested section, reset
+			if strings.Contains(section, ":") && currentIndent == sectionIndent {
+				section = strings.Split(section, ":")[0] // Get parent section
+			}
+			if section == "requirements" {
+				meta.Requirements.Inferred = value == "true"
 			}
 		}
 	}
@@ -350,7 +497,7 @@ func writeSkillMeta(path string, meta skillMeta) error {
 		}
 	}
 
-	if meta.Compatibility.Mode != "" {
+	if meta.Compatibility.Mode != "" || meta.Compatibility.Declared != nil || len(meta.Compatibility.Detected) > 0 || meta.Compatibility.ExplicitPortable {
 		fmt.Fprint(&buf, "compatibility:\n")
 		fmt.Fprintf(&buf, "  mode: %s\n", meta.Compatibility.Mode)
 		if meta.Compatibility.Harness != "" {
@@ -366,32 +513,111 @@ func writeSkillMeta(path string, meta skillMeta) error {
 			}
 			fmt.Fprint(&buf, "]\n")
 		}
-	}
+		if meta.Compatibility.ExplicitPortable {
+			fmt.Fprint(&buf, "  explicit_portable: true\n")
+		}
 
-	if len(meta.Requirements.Tools) > 0 {
-		fmt.Fprint(&buf, "requirements:\n")
-		allRequired := true
-		for _, tool := range meta.Requirements.Tools {
-			if !tool.Required {
-				allRequired = false
-				break
+		if meta.Compatibility.Declared != nil {
+			fmt.Fprint(&buf, "  declared:\n")
+			if meta.Compatibility.Declared.Mode != "" {
+				fmt.Fprintf(&buf, "    mode: %s\n", meta.Compatibility.Declared.Mode)
+			}
+			if meta.Compatibility.Declared.Harness != "" {
+				fmt.Fprintf(&buf, "    harness: %s\n", meta.Compatibility.Declared.Harness)
+			}
+			if len(meta.Compatibility.Declared.Harnesses) > 0 {
+				fmt.Fprint(&buf, "    harnesses: [")
+				for i, h := range meta.Compatibility.Declared.Harnesses {
+					if i > 0 {
+						fmt.Fprint(&buf, ", ")
+					}
+					fmt.Fprintf(&buf, "%q", h)
+				}
+				fmt.Fprint(&buf, "]\n")
+			}
+			if meta.Compatibility.Declared.Reason != "" {
+				fmt.Fprintf(&buf, "    reason: %q\n", meta.Compatibility.Declared.Reason)
 			}
 		}
-		if allRequired {
-			fmt.Fprint(&buf, "  tools: [")
-			for i, tool := range meta.Requirements.Tools {
-				if i > 0 {
-					fmt.Fprint(&buf, ", ")
+
+		if len(meta.Compatibility.Detected) > 0 {
+			fmt.Fprint(&buf, "  detected:\n")
+			for harness, result := range meta.Compatibility.Detected {
+				fmt.Fprintf(&buf, "    %s:\n", harness)
+				fmt.Fprintf(&buf, "      confidence: %s\n", result.Confidence)
+				if len(result.Reasons) > 0 {
+					fmt.Fprint(&buf, "      reasons:\n")
+					for _, reason := range result.Reasons {
+						fmt.Fprintf(&buf, "        - %q\n", reason)
+					}
 				}
-				fmt.Fprintf(&buf, "%q", tool.Name)
 			}
-			fmt.Fprint(&buf, "]\n")
-		} else {
-			fmt.Fprint(&buf, "  tools:\n")
+		}
+	}
+
+	// Write requirements block if ANY requirement field is non-empty or Inferred is true
+	hasRequirements := len(meta.Requirements.Tools) > 0 ||
+		len(meta.Requirements.MCPServers) > 0 ||
+		meta.Requirements.Model.ToolUse != "" ||
+		meta.Requirements.Inferred
+	if hasRequirements {
+		fmt.Fprint(&buf, "requirements:\n")
+		if len(meta.Requirements.Tools) > 0 {
+			allRequired := true
 			for _, tool := range meta.Requirements.Tools {
-				fmt.Fprintf(&buf, "    - name: %q\n", tool.Name)
-				fmt.Fprintf(&buf, "      required: %t\n", tool.Required)
+				if !tool.Required {
+					allRequired = false
+					break
+				}
 			}
+			if allRequired {
+				fmt.Fprint(&buf, "  tools: [")
+				for i, tool := range meta.Requirements.Tools {
+					if i > 0 {
+						fmt.Fprint(&buf, ", ")
+					}
+					fmt.Fprintf(&buf, "%q", tool.Name)
+				}
+				fmt.Fprint(&buf, "]\n")
+			} else {
+				fmt.Fprint(&buf, "  tools:\n")
+				for _, tool := range meta.Requirements.Tools {
+					fmt.Fprintf(&buf, "    - name: %q\n", tool.Name)
+					fmt.Fprintf(&buf, "      required: %t\n", tool.Required)
+				}
+			}
+		}
+		if len(meta.Requirements.MCPServers) > 0 {
+			allRequired := true
+			for _, server := range meta.Requirements.MCPServers {
+				if !server.Required {
+					allRequired = false
+					break
+				}
+			}
+			if allRequired {
+				fmt.Fprint(&buf, "  mcp_servers: [")
+				for i, server := range meta.Requirements.MCPServers {
+					if i > 0 {
+						fmt.Fprint(&buf, ", ")
+					}
+					fmt.Fprintf(&buf, "%q", server.Name)
+				}
+				fmt.Fprint(&buf, "]\n")
+			} else {
+				fmt.Fprint(&buf, "  mcp_servers:\n")
+				for _, server := range meta.Requirements.MCPServers {
+					fmt.Fprintf(&buf, "    - name: %q\n", server.Name)
+					fmt.Fprintf(&buf, "      required: %t\n", server.Required)
+				}
+			}
+		}
+		if meta.Requirements.Model.ToolUse != "" {
+			fmt.Fprint(&buf, "  model:\n")
+			fmt.Fprintf(&buf, "    tool_use: %q\n", meta.Requirements.Model.ToolUse)
+		}
+		if meta.Requirements.Inferred {
+			fmt.Fprintf(&buf, "  inferred: true\n")
 		}
 	}
 
@@ -410,11 +636,172 @@ func writeSkillMeta(path string, meta skillMeta) error {
 	return os.WriteFile(path, []byte(buf.String()), 0644)
 }
 
+// updateCompatibilitySection reads the existing sidecar (if any), surgically replaces
+// only the top-level "compatibility:" block with a fresh serialization from meta,
+// and writes the result back. This preserves any unmodeled requirement fields
+// (scripts, credentials, advanced model options, etc.) when we only need to update
+// compatibility metadata.
+func updateCompatibilitySection(path string, meta skillMeta) error {
+	original, err := os.ReadFile(path)
+	if err != nil {
+		// File doesn't exist or unreadable — fall back to full write
+		return writeSkillMeta(path, meta)
+	}
+
+	lines := strings.Split(string(original), "\n")
+
+	// Find the top-level "compatibility:" block
+	start := -1
+	end := len(lines)
+	indentLevel := -1
+
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "compatibility:") && !strings.HasPrefix(line, " ") && !strings.HasPrefix(line, "\t") {
+			start = i
+			indentLevel = len(line) - len(strings.TrimLeft(line, " \t"))
+			continue
+		}
+		if start != -1 {
+			lineIndent := len(line) - len(strings.TrimLeft(line, " \t"))
+			if strings.TrimSpace(line) != "" && lineIndent <= indentLevel {
+				end = i
+				break
+			}
+		}
+	}
+
+	if start == -1 {
+		// No existing compatibility block — just append a new one at the end
+		var buf strings.Builder
+		buf.WriteString(string(original))
+		if len(original) > 0 && !strings.HasSuffix(string(original), "\n") {
+			buf.WriteString("\n")
+		}
+		fmt.Fprint(&buf, "compatibility:\n")
+		if meta.Compatibility.Mode != "" {
+			fmt.Fprintf(&buf, "  mode: %s\n", meta.Compatibility.Mode)
+		}
+		if meta.Compatibility.Harness != "" {
+			fmt.Fprintf(&buf, "  harness: %s\n", meta.Compatibility.Harness)
+		}
+		if len(meta.Compatibility.Harnesses) > 0 {
+			fmt.Fprint(&buf, "  harnesses: [")
+			for i, h := range meta.Compatibility.Harnesses {
+				if i > 0 {
+					fmt.Fprint(&buf, ", ")
+				}
+				fmt.Fprintf(&buf, "%q", h)
+			}
+			fmt.Fprint(&buf, "]\n")
+		}
+		if meta.Compatibility.ExplicitPortable {
+			fmt.Fprint(&buf, "  explicit_portable: true\n")
+		}
+		if meta.Compatibility.Declared != nil {
+			fmt.Fprint(&buf, "  declared:\n")
+			if meta.Compatibility.Declared.Mode != "" {
+				fmt.Fprintf(&buf, "    mode: %s\n", meta.Compatibility.Declared.Mode)
+			}
+			if meta.Compatibility.Declared.Harness != "" {
+				fmt.Fprintf(&buf, "    harness: %s\n", meta.Compatibility.Declared.Harness)
+			}
+			if len(meta.Compatibility.Declared.Harnesses) > 0 {
+				fmt.Fprint(&buf, "    harnesses: [")
+				for i, h := range meta.Compatibility.Declared.Harnesses {
+					if i > 0 {
+						fmt.Fprint(&buf, ", ")
+					}
+					fmt.Fprintf(&buf, "%q", h)
+				}
+				fmt.Fprint(&buf, "]\n")
+			}
+			if meta.Compatibility.Declared.Reason != "" {
+				fmt.Fprintf(&buf, "    reason: %q\n", meta.Compatibility.Declared.Reason)
+			}
+		}
+		return os.WriteFile(path, []byte(buf.String()), 0644)
+	}
+
+	// Build the new compatibility block
+	var newBlock strings.Builder
+	fmt.Fprint(&newBlock, "compatibility:\n")
+	if meta.Compatibility.Mode != "" {
+		fmt.Fprintf(&newBlock, "  mode: %s\n", meta.Compatibility.Mode)
+	}
+	if meta.Compatibility.Harness != "" {
+		fmt.Fprintf(&newBlock, "  harness: %s\n", meta.Compatibility.Harness)
+	}
+	if len(meta.Compatibility.Harnesses) > 0 {
+		fmt.Fprint(&newBlock, "  harnesses: [")
+		for i, h := range meta.Compatibility.Harnesses {
+			if i > 0 {
+				fmt.Fprint(&newBlock, ", ")
+			}
+			fmt.Fprintf(&newBlock, "%q", h)
+		}
+		fmt.Fprint(&newBlock, "]\n")
+	}
+	if meta.Compatibility.ExplicitPortable {
+		fmt.Fprint(&newBlock, "  explicit_portable: true\n")
+	}
+	if meta.Compatibility.Declared != nil {
+		fmt.Fprint(&newBlock, "  declared:\n")
+		if meta.Compatibility.Declared.Mode != "" {
+			fmt.Fprintf(&newBlock, "    mode: %s\n", meta.Compatibility.Declared.Mode)
+		}
+		if meta.Compatibility.Declared.Harness != "" {
+			fmt.Fprintf(&newBlock, "    harness: %s\n", meta.Compatibility.Declared.Harness)
+		}
+		if len(meta.Compatibility.Declared.Harnesses) > 0 {
+			fmt.Fprint(&newBlock, "    harnesses: [")
+			for i, h := range meta.Compatibility.Declared.Harnesses {
+				if i > 0 {
+					fmt.Fprint(&newBlock, ", ")
+				}
+				fmt.Fprintf(&newBlock, "%q", h)
+			}
+			fmt.Fprint(&newBlock, "]\n")
+		}
+		if meta.Compatibility.Declared.Reason != "" {
+			fmt.Fprintf(&newBlock, "    reason: %q\n", meta.Compatibility.Declared.Reason)
+		}
+	}
+	if len(meta.Compatibility.Detected) > 0 {
+		fmt.Fprint(&newBlock, "  detected:\n")
+		for harness, result := range meta.Compatibility.Detected {
+			fmt.Fprintf(&newBlock, "    %s:\n", harness)
+			fmt.Fprintf(&newBlock, "      confidence: %s\n", result.Confidence)
+			if len(result.Reasons) > 0 {
+				fmt.Fprint(&newBlock, "      reasons:\n")
+				for _, r := range result.Reasons {
+					fmt.Fprintf(&newBlock, "        - %q\n", r)
+				}
+			}
+		}
+	}
+
+	// Replace [start, end) with the new block
+	var result strings.Builder
+	result.WriteString(strings.Join(lines[:start], "\n"))
+	if start > 0 {
+		result.WriteString("\n")
+	}
+	result.WriteString(newBlock.String())
+	if end < len(lines) {
+		result.WriteString(strings.Join(lines[end:], "\n"))
+	}
+
+	return os.WriteFile(path, []byte(result.String()), 0644)
+}
+
 func rebuildCatalogFromLibrary(libraryPath string) (catalog, error) {
 	entries, err := os.ReadDir(libraryPath)
 	if err != nil {
 		return catalog{}, err
 	}
+
+	detectors, _ := loadDetectors()
 
 	var skills []catalogSkill
 
@@ -430,28 +817,122 @@ func rebuildCatalogFromLibrary(libraryPath string) (catalog, error) {
 			continue
 		}
 
-		name, description, err := parseSkillFrontmatter(skillMdPath)
-		if err != nil {
-			continue
-		}
-
+		// Parse the skill declaration from SKILL.md
+		decl, compDecl, _ := parseSkillFrontmatterFull(skillMdPath)
+		name := decl.name
 		if name == "" {
 			name = entry.Name()
 		}
 
 		var meta skillMeta
 		metaPath := filepath.Join(skillPath, ".skill-meta.yaml")
+		sidecarExisted := false
 		if _, err := os.Stat(metaPath); err == nil {
 			meta, _ = readSkillMeta(metaPath)
+			sidecarExisted = true
+		}
+
+		// Read skill body once for detection and inference
+		skillBody, _ := readSkillBody(skillMdPath)
+
+		// Ensure Detected is populated from live detection for the purpose of the
+		// "did anything change?" comparison. This makes the no-op rewrite protection
+		// work even though we don't yet fully round-trip the detected map on read.
+		if len(meta.Compatibility.Detected) == 0 {
+			if d := detectCompatibility(detectors, skillBody); len(d) > 0 {
+				meta.Compatibility.Detected = d
+			}
+		}
+
+		// Refresh the sidecar's Declared block from frontmatter when present (source of truth).
+		// Only mark for write if the modeled compatibility state actually changes.
+		oldCompat := meta.Compatibility // snapshot before refresh
+
+		if compDecl.Mode != "" {
+			meta.Compatibility.Declared = &compDecl
+			meta.Compatibility.ExplicitPortable = false
+		} else {
+			meta.Compatibility.Declared = nil
+		}
+
+		// Check for explicit declaration: either from frontmatter OR from explicit_portable flag
+		hasFrontmatterDecl := compDecl.Mode != ""
+		hasExplicitPortable := meta.Compatibility.ExplicitPortable
+
+		if hasFrontmatterDecl {
+			// Frontmatter declaration takes precedence
+			effectiveDecl := compDecl
+			meta.Compatibility.Mode = effectiveDecl.Mode
+			meta.Compatibility.Harness = effectiveDecl.Harness
+			meta.Compatibility.Harnesses = effectiveDecl.Harnesses
+			// If portable, ensure harness fields are cleared
+			if effectiveDecl.Mode == "portable" {
+				meta.Compatibility.Harness = ""
+				meta.Compatibility.Harnesses = nil
+			}
+		} else if hasExplicitPortable {
+			// Explicit portable flag set
+			meta.Compatibility.Mode = "portable"
+			meta.Compatibility.Harness = ""
+			meta.Compatibility.Harnesses = nil
+		} else {
+			// No explicit declaration: run detection and apply auto-classification
+			detected := detectCompatibility(detectors, skillBody)
+			if len(detected) > 0 {
+				meta.Compatibility.Detected = detected
+				// Apply auto-classification rule to set effective mode/harness/harnesses
+				autoClass := applyAutoClassification(detected)
+				meta.Compatibility.Mode = autoClass.Mode
+				meta.Compatibility.Harness = autoClass.Harness
+				meta.Compatibility.Harnesses = autoClass.Harnesses
+				// Do not set needsWrite here — let the final DeepEqual decide
+			} else if meta.Compatibility.Mode != "portable" || meta.Compatibility.Harness != "" || len(meta.Compatibility.Harnesses) > 0 {
+				// No detection signals: default to portable
+				meta.Compatibility.Mode = "portable"
+				meta.Compatibility.Harness = ""
+				meta.Compatibility.Harnesses = nil
+				// Do not set needsWrite here — let the final DeepEqual decide
+			}
+		}
+
+		// Track separately whether compatibility or requirements modeling actually changed.
+		compatibilityChanged := !reflect.DeepEqual(oldCompat, meta.Compatibility)
+		requirementsChanged := false
+
+		// Infer requirements only if marked as inferred or all requirement fields are empty.
+		// If Inferred=false and any field is populated, preserve the explicit requirements.
+		hasExplicitRequirements := len(meta.Requirements.Tools) > 0 ||
+			len(meta.Requirements.MCPServers) > 0 ||
+			meta.Requirements.Model.ToolUse != ""
+		// If the sidecar already existed and has no modeled requirement fields,
+		// it may contain unmodeled explicit requirements (scripts, credentials, etc.).
+		// In that case, do not overwrite with inference.
+		if meta.Requirements.Inferred || (!hasExplicitRequirements && !sidecarExisted) {
+			inferred := inferRequirements(detectors, skillBody)
+			inferred.Inferred = true // normalize so DeepEqual only cares about modeled data
+			if !reflect.DeepEqual(meta.Requirements, inferred) {
+				meta.Requirements = inferred
+				requirementsChanged = true
+			}
 		}
 
 		if meta.Compatibility.Mode == "" {
 			meta.Compatibility.Mode = "portable"
 		}
 
+		// Write strategy:
+		// - If requirements modeling changed → full modeled write is correct.
+		// - If only compatibility changed → surgically update only the compatibility
+		//   section in the raw file so we don't clobber unmodeled requirement fields.
+		if requirementsChanged {
+			_ = writeSkillMeta(metaPath, meta)
+		} else if compatibilityChanged {
+			updateCompatibilitySection(metaPath, meta)
+		}
+
 		summary := meta.Summary
 		if summary == "" {
-			summary = description
+			summary = decl.description
 		}
 
 		skill := catalogSkill{
@@ -528,30 +1009,64 @@ func writeCatalog(path string, cat catalog) error {
 			fmt.Fprint(&buf, "]\n")
 		}
 
-		if len(skill.Requirements.Tools) > 0 {
+		if len(skill.Requirements.Tools) > 0 || len(skill.Requirements.MCPServers) > 0 || skill.Requirements.Model.ToolUse != "" {
 			fmt.Fprint(&buf, "    requirements:\n")
-			allRequired := true
-			for _, tool := range skill.Requirements.Tools {
-				if !tool.Required {
-					allRequired = false
-					break
+
+			if len(skill.Requirements.Tools) > 0 {
+				allRequired := true
+				for _, tool := range skill.Requirements.Tools {
+					if !tool.Required {
+						allRequired = false
+						break
+					}
+				}
+				if allRequired {
+					fmt.Fprint(&buf, "      tools: [")
+					for i, tool := range skill.Requirements.Tools {
+						if i > 0 {
+							fmt.Fprint(&buf, ", ")
+						}
+						fmt.Fprintf(&buf, "%q", tool.Name)
+					}
+					fmt.Fprint(&buf, "]\n")
+				} else {
+					fmt.Fprint(&buf, "      tools:\n")
+					for _, tool := range skill.Requirements.Tools {
+						fmt.Fprintf(&buf, "        - name: %q\n", tool.Name)
+						fmt.Fprintf(&buf, "          required: %t\n", tool.Required)
+					}
 				}
 			}
-			if allRequired {
-				fmt.Fprint(&buf, "      tools: [")
-				for i, tool := range skill.Requirements.Tools {
-					if i > 0 {
-						fmt.Fprint(&buf, ", ")
+
+			if len(skill.Requirements.MCPServers) > 0 {
+				allRequired := true
+				for _, server := range skill.Requirements.MCPServers {
+					if !server.Required {
+						allRequired = false
+						break
 					}
-					fmt.Fprintf(&buf, "%q", tool.Name)
 				}
-				fmt.Fprint(&buf, "]\n")
-			} else {
-				fmt.Fprint(&buf, "      tools:\n")
-				for _, tool := range skill.Requirements.Tools {
-					fmt.Fprintf(&buf, "        - name: %q\n", tool.Name)
-					fmt.Fprintf(&buf, "          required: %t\n", tool.Required)
+				if allRequired {
+					fmt.Fprint(&buf, "      mcp_servers: [")
+					for i, server := range skill.Requirements.MCPServers {
+						if i > 0 {
+							fmt.Fprint(&buf, ", ")
+						}
+						fmt.Fprintf(&buf, "%q", server.Name)
+					}
+					fmt.Fprint(&buf, "]\n")
+				} else {
+					fmt.Fprint(&buf, "      mcp_servers:\n")
+					for _, server := range skill.Requirements.MCPServers {
+						fmt.Fprintf(&buf, "        - name: %q\n", server.Name)
+						fmt.Fprintf(&buf, "          required: %t\n", server.Required)
+					}
 				}
+			}
+
+			if skill.Requirements.Model.ToolUse != "" {
+				fmt.Fprint(&buf, "      model:\n")
+				fmt.Fprintf(&buf, "        tool_use: %q\n", skill.Requirements.Model.ToolUse)
 			}
 		}
 	}

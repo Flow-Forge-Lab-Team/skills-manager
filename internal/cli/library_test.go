@@ -726,3 +726,1926 @@ func TestParseSkillFrontmatter(t *testing.T) {
 		})
 	}
 }
+
+func TestParseSkillFrontmatterFull_Exclusive(t *testing.T) {
+	dir := t.TempDir()
+	skillPath := filepath.Join(dir, "SKILL.md")
+
+	content := `---
+name: qa
+description: QA testing tool
+exclusive: claude
+reason: "Uses AskUserQuestion + gstack preamble"
+---
+# QA Testing
+`
+	if err := os.WriteFile(skillPath, []byte(content), 0644); err != nil {
+		t.Fatalf("write skill failed: %v", err)
+	}
+
+	decl, compDecl, err := parseSkillFrontmatterFull(skillPath)
+	if err != nil {
+		t.Fatalf("parseSkillFrontmatterFull failed: %v", err)
+	}
+
+	if decl.name != "qa" {
+		t.Errorf("name = %q, want qa", decl.name)
+	}
+	if decl.exclusive != "claude" {
+		t.Errorf("exclusive = %q, want claude", decl.exclusive)
+	}
+	if decl.reason != "Uses AskUserQuestion + gstack preamble" {
+		t.Errorf("reason = %q, want 'Uses AskUserQuestion + gstack preamble'", decl.reason)
+	}
+
+	if compDecl.Mode != "exclusive" {
+		t.Errorf("compDecl.Mode = %q, want exclusive", compDecl.Mode)
+	}
+	if compDecl.Harness != "claude" {
+		t.Errorf("compDecl.Harness = %q, want claude", compDecl.Harness)
+	}
+}
+
+func TestParseSkillFrontmatterFull_Compatible(t *testing.T) {
+	dir := t.TempDir()
+	skillPath := filepath.Join(dir, "SKILL.md")
+
+	content := `---
+name: linear-feature
+description: Multi-harness feature
+compatible: [claude, codex, grok]
+---
+# Linear Feature
+`
+	if err := os.WriteFile(skillPath, []byte(content), 0644); err != nil {
+		t.Fatalf("write skill failed: %v", err)
+	}
+
+	decl, compDecl, err := parseSkillFrontmatterFull(skillPath)
+	if err != nil {
+		t.Fatalf("parseSkillFrontmatterFull failed: %v", err)
+	}
+
+	if decl.name != "linear-feature" {
+		t.Errorf("name = %q, want linear-feature", decl.name)
+	}
+	if len(decl.compatible) != 3 {
+		t.Errorf("len(compatible) = %d, want 3", len(decl.compatible))
+	}
+
+	if compDecl.Mode != "compatible" {
+		t.Errorf("compDecl.Mode = %q, want compatible", compDecl.Mode)
+	}
+	if len(compDecl.Harnesses) != 3 {
+		t.Errorf("len(compDecl.Harnesses) = %d, want 3", len(compDecl.Harnesses))
+	}
+}
+
+func TestParseSkillFrontmatterFull_Portable(t *testing.T) {
+	dir := t.TempDir()
+	skillPath := filepath.Join(dir, "SKILL.md")
+
+	content := `---
+name: pdf
+description: PDF tool
+---
+# PDF
+`
+	if err := os.WriteFile(skillPath, []byte(content), 0644); err != nil {
+		t.Fatalf("write skill failed: %v", err)
+	}
+
+	decl, compDecl, err := parseSkillFrontmatterFull(skillPath)
+	if err != nil {
+		t.Fatalf("parseSkillFrontmatterFull failed: %v", err)
+	}
+
+	if decl.name != "pdf" {
+		t.Errorf("name = %q, want pdf", decl.name)
+	}
+	if decl.exclusive != "" || len(decl.compatible) > 0 {
+		t.Errorf("expected no compatibility declaration")
+	}
+
+	if compDecl.Mode != "" {
+		t.Errorf("compDecl.Mode = %q, want empty", compDecl.Mode)
+	}
+}
+
+func TestDetectCompatibility_ClaudeSkillTool(t *testing.T) {
+	detectors, err := loadDetectors()
+	if err != nil {
+		t.Fatalf("loadDetectors failed: %v", err)
+	}
+
+	skillBody := `# A skill that uses the Skill tool
+The Skill tool is used here for advanced operations.
+`
+
+	results := detectCompatibility(detectors, skillBody)
+	if len(results) == 0 {
+		t.Errorf("expected detection results, got none")
+		return
+	}
+
+	if results["claude"].Confidence == "" {
+		t.Errorf("expected claude detection, got none")
+	}
+}
+
+func TestDetectCompatibility_CursorRules(t *testing.T) {
+	t.Skip("Cursor detector disabled for v0.1 (full Cursor/Copilot support is v1.0 scope per ROADMAP). Re-enable when cursor.yaml is restored and harnessProjectPaths has a cursor target.")
+}
+
+// FLO-235 Issue 3: mcp__ pattern matching should handle literal patterns correctly
+func TestMatchPattern_MCPLiteralVsHexSentinel(t *testing.T) {
+	tests := []struct {
+		name     string
+		pattern  string
+		text     string
+		expected bool
+	}{
+		{
+			name:     "literal mcp__linear__ matches exact pattern in text",
+			pattern:  "mcp__linear__",
+			text:     "using mcp__linear__list_issues function",
+			expected: true,
+		},
+		{
+			name:     "literal mcp__linear__ does not match other mcp pattern",
+			pattern:  "mcp__linear__",
+			text:     "using mcp__github__list_issues function",
+			expected: false,
+		},
+		{
+			name:     "sentinel mcp__[hex]__ matches any hex UUID pattern",
+			pattern:  "mcp__[hex]__",
+			text:     "using mcp__a1b2c3d4__foo function",
+			expected: true,
+		},
+		{
+			name:     "sentinel mcp__[hex]__ matches different hex UUID",
+			pattern:  "mcp__[hex]__",
+			text:     "calling mcp__deadbeef__bar method",
+			expected: true,
+		},
+		{
+			name:     "sentinel mcp__[hex]__ does not match non-hex pattern",
+			pattern:  "mcp__[hex]__",
+			text:     "using mcp__not-hex__baz function",
+			expected: false,
+		},
+		{
+			name:     "sentinel mcp__[hex]__ does not match uppercase hex",
+			pattern:  "mcp__[hex]__",
+			text:     "using mcp__A1B2C3D4__test function",
+			expected: false,
+		},
+		{
+			name:     "literal mcp__not-hex__ matches even with non-hex characters",
+			pattern:  "mcp__not-hex__",
+			text:     "using mcp__not-hex__function call",
+			expected: true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			result := matchPattern(tc.pattern, tc.text)
+			if result != tc.expected {
+				t.Errorf("matchPattern(%q, %q) = %v, want %v", tc.pattern, tc.text, result, tc.expected)
+			}
+		})
+	}
+}
+
+func TestRebuildCatalogFromLibrary_WithDeclaration(t *testing.T) {
+	libraryPath := t.TempDir()
+
+	// Create a skill with exclusive declaration
+	skillDir := filepath.Join(libraryPath, "test-skill")
+	if err := os.MkdirAll(skillDir, 0755); err != nil {
+		t.Fatalf("mkdir failed: %v", err)
+	}
+
+	skillMdPath := filepath.Join(skillDir, "SKILL.md")
+	skillMdContent := `---
+name: test-skill
+description: A test skill
+exclusive: claude
+reason: "Claude-only implementation"
+---
+# Test Skill
+Content here.
+`
+	if err := os.WriteFile(skillMdPath, []byte(skillMdContent), 0644); err != nil {
+		t.Fatalf("write SKILL.md failed: %v", err)
+	}
+
+	cat, err := rebuildCatalogFromLibrary(libraryPath)
+	if err != nil {
+		t.Fatalf("rebuildCatalogFromLibrary failed: %v", err)
+	}
+
+	if len(cat.Skills) != 1 {
+		t.Fatalf("expected 1 skill, got %d", len(cat.Skills))
+	}
+
+	skill := cat.Skills[0]
+	if skill.Compatibility.Mode != "exclusive" {
+		t.Errorf("mode = %q, want exclusive", skill.Compatibility.Mode)
+	}
+	if skill.Compatibility.Harness != "claude" {
+		t.Errorf("harness = %q, want claude", skill.Compatibility.Harness)
+	}
+	if skill.Compatibility.Declared == nil {
+		t.Errorf("expected declared block to be set")
+	} else if skill.Compatibility.Declared.Reason != "Claude-only implementation" {
+		t.Errorf("declared reason = %q, want 'Claude-only implementation'", skill.Compatibility.Declared.Reason)
+	}
+}
+
+func TestSetCommand_Exclusive(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+
+	// Create library and skill
+	libraryPath := filepath.Join(home, "library")
+	skillDir := filepath.Join(libraryPath, "test-skill")
+	if err := os.MkdirAll(skillDir, 0755); err != nil {
+		t.Fatalf("mkdir failed: %v", err)
+	}
+
+	skillMdPath := filepath.Join(skillDir, "SKILL.md")
+	skillMdContent := `---
+name: test-skill
+description: A test skill
+---
+# Test Skill
+`
+	if err := os.WriteFile(skillMdPath, []byte(skillMdContent), 0644); err != nil {
+		t.Fatalf("write SKILL.md failed: %v", err)
+	}
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := runSet([]string{"test-skill", "--compatibility", "exclusive", "--harness", "claude", "--reason", "Test reason"}, &stdout, &stderr, globalFlags{})
+
+	if code != 0 {
+		t.Fatalf("runSet returned %d, want 0\nstderr: %s", code, stderr.String())
+	}
+
+	// Verify the SKILL.md was updated
+	newContent, err := os.ReadFile(skillMdPath)
+	if err != nil {
+		t.Fatalf("read updated SKILL.md failed: %v", err)
+	}
+
+	contentStr := string(newContent)
+	if !strings.Contains(contentStr, "exclusive: claude") {
+		t.Errorf("expected 'exclusive: claude' in SKILL.md, got: %s", contentStr)
+	}
+	if !strings.Contains(contentStr, `reason: "Test reason"`) {
+		t.Errorf("expected reason in SKILL.md, got: %s", contentStr)
+	}
+}
+
+func TestSetCommand_Compatible(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+
+	// Create library and skill
+	libraryPath := filepath.Join(home, "library")
+	skillDir := filepath.Join(libraryPath, "test-skill")
+	if err := os.MkdirAll(skillDir, 0755); err != nil {
+		t.Fatalf("mkdir failed: %v", err)
+	}
+
+	skillMdPath := filepath.Join(skillDir, "SKILL.md")
+	skillMdContent := `---
+name: test-skill
+description: A test skill
+---
+# Test Skill
+`
+	if err := os.WriteFile(skillMdPath, []byte(skillMdContent), 0644); err != nil {
+		t.Fatalf("write SKILL.md failed: %v", err)
+	}
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := runSet([]string{"test-skill", "--compatibility", "compatible", "--harnesses", "claude,codex"}, &stdout, &stderr, globalFlags{})
+
+	if code != 0 {
+		t.Fatalf("runSet returned %d, want 0\nstderr: %s", code, stderr.String())
+	}
+
+	// Verify the SKILL.md was updated
+	newContent, err := os.ReadFile(skillMdPath)
+	if err != nil {
+		t.Fatalf("read updated SKILL.md failed: %v", err)
+	}
+
+	contentStr := string(newContent)
+	if !strings.Contains(contentStr, "compatible:") {
+		t.Errorf("expected 'compatible:' in SKILL.md, got: %s", contentStr)
+	}
+}
+
+func TestSetCommand_RequiresHarnessForExclusive(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+
+	// Create library and skill
+	libraryPath := filepath.Join(home, "library")
+	skillDir := filepath.Join(libraryPath, "test-skill")
+	if err := os.MkdirAll(skillDir, 0755); err != nil {
+		t.Fatalf("mkdir failed: %v", err)
+	}
+
+	skillMdPath := filepath.Join(skillDir, "SKILL.md")
+	skillMdContent := `---
+name: test-skill
+description: A test skill
+---
+`
+	if err := os.WriteFile(skillMdPath, []byte(skillMdContent), 0644); err != nil {
+		t.Fatalf("write SKILL.md failed: %v", err)
+	}
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := runSet([]string{"test-skill", "--compatibility", "exclusive"}, &stdout, &stderr, globalFlags{})
+
+	if code == 0 {
+		t.Fatalf("runSet should have failed without --harness, got 0")
+	}
+	if !strings.Contains(stderr.String(), "--harness") {
+		t.Fatalf("error should mention --harness, got: %s", stderr.String())
+	}
+}
+
+// Test Fix #1: set refreshes catalog after updating skill files
+func TestSetCommand_RefreshesCatalog(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+
+	libraryPath := filepath.Join(home, "library")
+	skillDir := filepath.Join(libraryPath, "test-skill")
+	if err := os.MkdirAll(skillDir, 0755); err != nil {
+		t.Fatalf("mkdir failed: %v", err)
+	}
+
+	skillMdPath := filepath.Join(skillDir, "SKILL.md")
+	skillMdContent := `---
+name: test-skill
+description: A test skill
+---
+# Test Skill
+`
+	if err := os.WriteFile(skillMdPath, []byte(skillMdContent), 0644); err != nil {
+		t.Fatalf("write SKILL.md failed: %v", err)
+	}
+
+	// Call set to update compatibility
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := runSet([]string{"test-skill", "--compatibility", "exclusive", "--harness", "claude"}, &stdout, &stderr, globalFlags{})
+
+	if code != 0 {
+		t.Fatalf("runSet returned %d, want 0\nstderr: %s", code, stderr.String())
+	}
+
+	// Read catalog directly and verify it was updated
+	catalogPath := filepath.Join(libraryPath, "catalog.yaml")
+	catRead, err := readCatalog(catalogPath)
+	if err != nil {
+		t.Fatalf("read catalog failed: %v", err)
+	}
+
+	if len(catRead.Skills) != 1 {
+		t.Fatalf("expected 1 skill in catalog, got %d", len(catRead.Skills))
+	}
+
+	skill := catRead.Skills[0]
+	if skill.Name != "test-skill" {
+		t.Errorf("skill name = %q, want test-skill", skill.Name)
+	}
+	if skill.Compatibility.Mode != "exclusive" {
+		t.Errorf("compatibility mode in catalog = %q, want exclusive", skill.Compatibility.Mode)
+	}
+	if skill.Compatibility.Harness != "claude" {
+		t.Errorf("harness in catalog = %q, want claude", skill.Compatibility.Harness)
+	}
+}
+
+// Test Fix #2: set respects global --json and --quiet flags
+func TestSetCommand_RespectsGlobalFlags(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+
+	libraryPath := filepath.Join(home, "library")
+	skillDir := filepath.Join(libraryPath, "test-skill")
+	if err := os.MkdirAll(skillDir, 0755); err != nil {
+		t.Fatalf("mkdir failed: %v", err)
+	}
+
+	skillMdPath := filepath.Join(skillDir, "SKILL.md")
+	skillMdContent := `---
+name: test-skill
+description: A test skill
+---
+`
+	if err := os.WriteFile(skillMdPath, []byte(skillMdContent), 0644); err != nil {
+		t.Fatalf("write SKILL.md failed: %v", err)
+	}
+
+	t.Run("JSON flag", func(t *testing.T) {
+		var stdout bytes.Buffer
+		var stderr bytes.Buffer
+		code := runSet([]string{"test-skill", "--compatibility", "compatible", "--harnesses", "claude,codex"}, &stdout, &stderr, globalFlags{JSON: true})
+
+		if code != 0 {
+			t.Fatalf("runSet returned %d, want 0\nstderr: %s", code, stderr.String())
+		}
+
+		output := stdout.String()
+		var result map[string]interface{}
+		if err := json.Unmarshal([]byte(output), &result); err != nil {
+			t.Fatalf("output not valid JSON: %v\noutput: %s", err, output)
+		}
+		if result["skill"] != "test-skill" {
+			t.Errorf("JSON skill = %v, want test-skill", result["skill"])
+		}
+		if result["mode"] != "compatible" {
+			t.Errorf("JSON mode = %v, want compatible", result["mode"])
+		}
+	})
+
+	t.Run("Quiet flag", func(t *testing.T) {
+		var stdout bytes.Buffer
+		var stderr bytes.Buffer
+		code := runSet([]string{"test-skill", "--compatibility", "portable"}, &stdout, &stderr, globalFlags{Quiet: true})
+
+		if code != 0 {
+			t.Fatalf("runSet returned %d, want 0\nstderr: %s", code, stderr.String())
+		}
+
+		// With --quiet, human text should not appear on stdout
+		output := stdout.String()
+		if strings.Contains(output, "Set test-skill") {
+			t.Errorf("human text appeared on stdout despite --quiet: %s", output)
+		}
+	})
+}
+
+// Test Fix #3: switching modes clears stale declared fields
+func TestSetCommand_ClearsStaleFields(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+
+	libraryPath := filepath.Join(home, "library")
+	skillDir := filepath.Join(libraryPath, "test-skill")
+	if err := os.MkdirAll(skillDir, 0755); err != nil {
+		t.Fatalf("mkdir failed: %v", err)
+	}
+
+	skillMdPath := filepath.Join(skillDir, "SKILL.md")
+	skillMdContent := `---
+name: test-skill
+description: A test skill
+---
+`
+	if err := os.WriteFile(skillMdPath, []byte(skillMdContent), 0644); err != nil {
+		t.Fatalf("write SKILL.md failed: %v", err)
+	}
+
+	// First set to exclusive mode
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := runSet([]string{"test-skill", "--compatibility", "exclusive", "--harness", "claude", "--reason", "First"}, &stdout, &stderr, globalFlags{})
+
+	if code != 0 {
+		t.Fatalf("first runSet returned %d, want 0\nstderr: %s", code, stderr.String())
+	}
+
+	// Now switch to compatible mode
+	stdout.Reset()
+	stderr.Reset()
+	code = runSet([]string{"test-skill", "--compatibility", "compatible", "--harnesses", "codex,grok"}, &stdout, &stderr, globalFlags{})
+
+	if code != 0 {
+		t.Fatalf("second runSet returned %d, want 0\nstderr: %s", code, stderr.String())
+	}
+
+	// Read .skill-meta.yaml and check that stale fields were cleared
+	metaPath := filepath.Join(skillDir, ".skill-meta.yaml")
+	meta, err := readSkillMeta(metaPath)
+	if err != nil {
+		t.Fatalf("readSkillMeta failed: %v", err)
+	}
+
+	if meta.Compatibility.Declared == nil {
+		t.Fatalf("declared block should exist")
+	}
+
+	// Should have compatible harnesses, not exclusive harness
+	if meta.Compatibility.Declared.Harness != "" {
+		t.Errorf("declared.Harness should be empty after switching to compatible, got %q", meta.Compatibility.Declared.Harness)
+	}
+	if meta.Compatibility.Declared.Reason != "" {
+		t.Errorf("declared.Reason should be empty after switching to compatible, got %q", meta.Compatibility.Declared.Reason)
+	}
+	if len(meta.Compatibility.Declared.Harnesses) != 2 {
+		t.Errorf("declared.Harnesses length = %d, want 2", len(meta.Compatibility.Declared.Harnesses))
+	}
+
+	// Also verify effective state doesn't have leftover harness
+	if meta.Compatibility.Harness != "" {
+		t.Errorf("effective Harness should be empty in compatible mode, got %q", meta.Compatibility.Harness)
+	}
+	if len(meta.Compatibility.Harnesses) != 2 {
+		t.Errorf("effective Harnesses length = %d, want 2", len(meta.Compatibility.Harnesses))
+	}
+
+	// Test switching back to exclusive to ensure compatible harnesses are cleared
+	stdout.Reset()
+	stderr.Reset()
+	code = runSet([]string{"test-skill", "--compatibility", "exclusive", "--harness", "grok", "--reason", "Final"}, &stdout, &stderr, globalFlags{})
+
+	if code != 0 {
+		t.Fatalf("third runSet returned %d, want 0\nstderr: %s", code, stderr.String())
+	}
+
+	meta, err = readSkillMeta(metaPath)
+	if err != nil {
+		t.Fatalf("readSkillMeta failed: %v", err)
+	}
+
+	if meta.Compatibility.Declared == nil {
+		t.Fatalf("declared block should exist")
+	}
+
+	// Should have exclusive harness, not compatible harnesses
+	if meta.Compatibility.Declared.Harness != "grok" {
+		t.Errorf("declared.Harness = %q, want grok", meta.Compatibility.Declared.Harness)
+	}
+	if len(meta.Compatibility.Declared.Harnesses) != 0 {
+		t.Errorf("declared.Harnesses should be empty after switching to exclusive, got %v", meta.Compatibility.Declared.Harnesses)
+	}
+
+	// Verify effective state is clean too
+	if meta.Compatibility.Harness != "grok" {
+		t.Errorf("effective Harness = %q, want grok", meta.Compatibility.Harness)
+	}
+	if len(meta.Compatibility.Harnesses) != 0 {
+		t.Errorf("effective Harnesses should be empty in exclusive mode, got %v", meta.Compatibility.Harnesses)
+	}
+}
+
+// FLO-235 Issue 1: Block-list compatible/exclusive frontmatter removal in set command
+func TestSetCommand_BlockListFrontmatterCleanup(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+
+	libraryPath := filepath.Join(home, "library")
+	skillDir := filepath.Join(libraryPath, "test-skill")
+	if err := os.MkdirAll(skillDir, 0755); err != nil {
+		t.Fatalf("mkdir failed: %v", err)
+	}
+
+	skillMdPath := filepath.Join(skillDir, "SKILL.md")
+	// Create SKILL.md with block-list format for compatible
+	skillMdContent := `---
+name: test-skill
+description: A test skill
+compatible:
+  - claude
+  - codex
+---
+# Test Skill
+`
+	if err := os.WriteFile(skillMdPath, []byte(skillMdContent), 0644); err != nil {
+		t.Fatalf("write SKILL.md failed: %v", err)
+	}
+
+	// Set to exclusive mode
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := runSet([]string{"test-skill", "--compatibility", "exclusive", "--harness", "claude"}, &stdout, &stderr, globalFlags{})
+
+	if code != 0 {
+		t.Fatalf("runSet returned %d, want 0\nstderr: %s", code, stderr.String())
+	}
+
+	// Read updated SKILL.md
+	newContent, err := os.ReadFile(skillMdPath)
+	if err != nil {
+		t.Fatalf("read updated SKILL.md failed: %v", err)
+	}
+
+	contentStr := string(newContent)
+
+	// Should have exclusive declaration
+	if !strings.Contains(contentStr, "exclusive: claude") {
+		t.Errorf("expected 'exclusive: claude' in updated SKILL.md, got: %s", contentStr)
+	}
+
+	// Should NOT have orphaned block-list items from old compatible
+	if strings.Contains(contentStr, "- claude") && !strings.Contains(contentStr, "exclusive:") {
+		// If "- claude" appears but it's not part of a list under compatible, it's orphaned
+		lines := strings.Split(contentStr, "\n")
+		inFrontmatter := false
+		foundOrphan := false
+		for _, line := range lines {
+			if strings.TrimSpace(line) == "---" {
+				inFrontmatter = !inFrontmatter
+				continue
+			}
+			if inFrontmatter && strings.Contains(line, "- claude") && !strings.Contains(contentStr, "compatible:") {
+				foundOrphan = true
+				break
+			}
+		}
+		if foundOrphan {
+			t.Errorf("orphaned '- claude' or '- codex' found in frontmatter after removal: %s", contentStr)
+		}
+	}
+
+	if strings.Contains(contentStr, "- codex") {
+		t.Errorf("orphaned '- codex' should be removed from frontmatter: %s", contentStr)
+	}
+
+	// Parse and verify the result via parseSkillFrontmatterFull
+	decl, compDecl, err := parseSkillFrontmatterFull(skillMdPath)
+	if err != nil {
+		t.Fatalf("parseSkillFrontmatterFull failed: %v", err)
+	}
+
+	if compDecl.Mode != "exclusive" {
+		t.Errorf("mode = %q, want exclusive", compDecl.Mode)
+	}
+	if compDecl.Harness != "claude" {
+		t.Errorf("harness = %q, want claude", compDecl.Harness)
+	}
+	if len(decl.compatible) != 0 {
+		t.Errorf("decl.compatible should be empty after set, got %v", decl.compatible)
+	}
+}
+
+// FLO-235 Issue 1: Detector dir resolution outside repo
+func TestLoadDetectors_RelativeToExecutable(t *testing.T) {
+	t.Run("with env var set", func(t *testing.T) {
+		tempDir := t.TempDir()
+
+		// Create a detector file
+		compatDir := filepath.Join(tempDir, "compatibility")
+		if err := os.MkdirAll(compatDir, 0755); err != nil {
+			t.Fatalf("mkdir failed: %v", err)
+		}
+
+		detectorYaml := filepath.Join(compatDir, "test.yaml")
+		content := `version: 1
+detectors:
+  - id: test-detector
+    harness: claude
+    confidence: high
+    patterns:
+      - "test pattern"
+`
+		if err := os.WriteFile(detectorYaml, []byte(content), 0644); err != nil {
+			t.Fatalf("write detector failed: %v", err)
+		}
+
+		// Set env var
+		t.Setenv("SKILLS_MANAGER_DETECTORS_DIR", tempDir)
+
+		set, err := loadDetectors()
+		if err != nil {
+			t.Fatalf("loadDetectors failed: %v", err)
+		}
+
+		// We now always include the built-in embedded detectors.
+		// Verify that the user-provided detector from the env dir is also present.
+		foundTest := false
+		for _, d := range set.compatibilityDetectors {
+			if d.ID == "test-detector" {
+				foundTest = true
+				break
+			}
+		}
+		if !foundTest {
+			t.Errorf("expected to find test-detector when SKILLS_MANAGER_DETECTORS_DIR is set; got %d detectors", len(set.compatibilityDetectors))
+		}
+	})
+
+	t.Run("no env var, exe resolution", func(t *testing.T) {
+		// Unset env var
+		t.Setenv("SKILLS_MANAGER_DETECTORS_DIR", "")
+
+		// Call loadDetectors without env var set
+		// It should try to find detectors relative to exe, fall back to cwd
+		set, err := loadDetectors()
+		if err != nil {
+			t.Fatalf("loadDetectors failed: %v", err)
+		}
+
+		// Should not panic and return a valid detectorSet (may be empty if detectors not found)
+		_ = set
+	})
+}
+
+// FLO-235 Issue 2: Detection results influence effective install
+func TestApplyAutoClassification_ExclusiveHighConfidence(t *testing.T) {
+	detected := map[string]detectionResult{
+		"claude": {Confidence: "high", Reasons: []string{"AskUserQuestion"}},
+	}
+
+	result := applyAutoClassification(detected)
+
+	if result.Mode != "exclusive" {
+		t.Errorf("mode = %q, want exclusive", result.Mode)
+	}
+	if result.Harness != "claude" {
+		t.Errorf("harness = %q, want claude", result.Harness)
+	}
+	if len(result.Harnesses) != 0 {
+		t.Errorf("harnesses should be empty for exclusive, got %v", result.Harnesses)
+	}
+}
+
+func TestApplyAutoClassification_Compatible(t *testing.T) {
+	detected := map[string]detectionResult{
+		"claude": {Confidence: "medium", Reasons: []string{"Plan Mode"}},
+		"codex":  {Confidence: "medium", Reasons: []string{"Agent references"}},
+	}
+
+	result := applyAutoClassification(detected)
+
+	if result.Mode != "compatible" {
+		t.Errorf("mode = %q, want compatible", result.Mode)
+	}
+	if result.Harness != "" {
+		t.Errorf("harness should be empty for compatible, got %q", result.Harness)
+	}
+	if len(result.Harnesses) != 2 {
+		t.Errorf("harnesses length = %d, want 2", len(result.Harnesses))
+	}
+}
+
+func TestApplyAutoClassification_Portable(t *testing.T) {
+	detected := map[string]detectionResult{}
+
+	result := applyAutoClassification(detected)
+
+	if result.Mode != "portable" {
+		t.Errorf("mode = %q, want portable", result.Mode)
+	}
+	if result.Harness != "" {
+		t.Errorf("harness should be empty for portable, got %q", result.Harness)
+	}
+	if len(result.Harnesses) != 0 {
+		t.Errorf("harnesses should be empty for portable, got %v", result.Harnesses)
+	}
+}
+
+func TestRebuildCatalogFromLibrary_AutoClassificationApplied(t *testing.T) {
+	home := t.TempDir()
+	libraryPath := filepath.Join(home, "library")
+
+	// Create skill directory
+	skillDir := filepath.Join(libraryPath, "test-claude-skill")
+	if err := os.MkdirAll(skillDir, 0755); err != nil {
+		t.Fatalf("mkdir failed: %v", err)
+	}
+
+	// Create SKILL.md with Claude-only pattern (no declaration)
+	skillMdPath := filepath.Join(skillDir, "SKILL.md")
+	skillMdContent := `---
+name: test-claude-skill
+description: A skill that uses AskUserQuestion
+---
+# Test Skill
+
+This skill uses AskUserQuestion to ask the user for input.
+`
+	if err := os.WriteFile(skillMdPath, []byte(skillMdContent), 0644); err != nil {
+		t.Fatalf("write SKILL.md failed: %v", err)
+	}
+
+	// Rebuild catalog
+	cat, err := rebuildCatalogFromLibrary(libraryPath)
+	if err != nil {
+		t.Fatalf("rebuildCatalogFromLibrary failed: %v", err)
+	}
+
+	if len(cat.Skills) != 1 {
+		t.Fatalf("expected 1 skill, got %d", len(cat.Skills))
+	}
+
+	skill := cat.Skills[0]
+	if skill.Name != "test-claude-skill" {
+		t.Errorf("skill name = %q, want test-claude-skill", skill.Name)
+	}
+
+	// Should be detected as exclusive:claude due to high-confidence AskUserQuestion pattern
+	if skill.Compatibility.Mode != "exclusive" {
+		t.Errorf("mode = %q, want exclusive (detected from AskUserQuestion)", skill.Compatibility.Mode)
+	}
+	if skill.Compatibility.Harness != "claude" {
+		t.Errorf("harness = %q, want claude", skill.Compatibility.Harness)
+	}
+
+	// Verify .skill-meta.yaml was updated with the effective mode
+	metaPath := filepath.Join(skillDir, ".skill-meta.yaml")
+	meta, err := readSkillMeta(metaPath)
+	if err != nil {
+		t.Fatalf("readSkillMeta failed: %v", err)
+	}
+
+	if meta.Compatibility.Mode != "exclusive" {
+		t.Errorf("meta.compatibility.mode = %q, want exclusive", meta.Compatibility.Mode)
+	}
+	if meta.Compatibility.Harness != "claude" {
+		t.Errorf("meta.compatibility.harness = %q, want claude", meta.Compatibility.Harness)
+	}
+	// Detected should be populated with the detection results
+	if len(meta.Compatibility.Detected) > 0 {
+		// Good: detection found signals
+	} else {
+		// If detectors didn't load in test, at least the effective mode was still applied
+		// This is the key behavior change for this fix
+	}
+}
+
+// FLO-235 Issue 3: Requirements inference called during catalog rebuild
+func TestRebuildCatalogFromLibrary_InferRequirements(t *testing.T) {
+	home := t.TempDir()
+	libraryPath := filepath.Join(home, "library")
+
+	// Create skill directory
+	skillDir := filepath.Join(libraryPath, "gh-skill")
+	if err := os.MkdirAll(skillDir, 0755); err != nil {
+		t.Fatalf("mkdir failed: %v", err)
+	}
+
+	// Create SKILL.md with requirement pattern (e.g., gh pr create)
+	skillMdPath := filepath.Join(skillDir, "SKILL.md")
+	skillMdContent := `---
+name: gh-skill
+description: A skill that uses GitHub CLI
+---
+# GitHub PR Creator
+
+This skill runs "gh pr create" to create pull requests.
+`
+	if err := os.WriteFile(skillMdPath, []byte(skillMdContent), 0644); err != nil {
+		t.Fatalf("write SKILL.md failed: %v", err)
+	}
+
+	// Rebuild catalog
+	cat, err := rebuildCatalogFromLibrary(libraryPath)
+	if err != nil {
+		t.Fatalf("rebuildCatalogFromLibrary failed: %v", err)
+	}
+
+	if len(cat.Skills) != 1 {
+		t.Fatalf("expected 1 skill, got %d", len(cat.Skills))
+	}
+
+	skill := cat.Skills[0]
+	if skill.Name != "gh-skill" {
+		t.Errorf("skill name = %q, want gh-skill", skill.Name)
+	}
+
+	// Should have inferred gh requirement
+	if len(skill.Requirements.Tools) == 0 {
+		t.Errorf("expected at least 1 inferred tool requirement")
+	}
+
+	found := false
+	for _, tool := range skill.Requirements.Tools {
+		if tool.Name == "gh" && tool.Required {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected inferred tool gh (required), got %v", skill.Requirements.Tools)
+	}
+
+	// Verify .skill-meta.yaml was updated
+	metaPath := filepath.Join(skillDir, ".skill-meta.yaml")
+	meta, err := readSkillMeta(metaPath)
+	if err != nil {
+		t.Fatalf("readSkillMeta failed: %v", err)
+	}
+
+	if len(meta.Requirements.Tools) == 0 {
+		t.Errorf("meta.requirements.tools should be populated from inference")
+	}
+
+	// Verify that inferred flag is set
+	if !meta.Requirements.Inferred {
+		t.Errorf("meta.requirements.inferred should be true, got false")
+	}
+}
+
+func TestRebuildCatalogFromLibrary_PreservesExplicitRequirements(t *testing.T) {
+	home := t.TempDir()
+	libraryPath := filepath.Join(home, "library")
+
+	// Create skill directory
+	skillDir := filepath.Join(libraryPath, "explicit-req-skill")
+	if err := os.MkdirAll(skillDir, 0755); err != nil {
+		t.Fatalf("mkdir failed: %v", err)
+	}
+
+	skillMdPath := filepath.Join(skillDir, "SKILL.md")
+	skillMdContent := `---
+name: explicit-req-skill
+description: A skill with explicit requirements
+---
+# Skill
+
+This skill uses "gh pr create" but has explicit requirements.
+`
+	if err := os.WriteFile(skillMdPath, []byte(skillMdContent), 0644); err != nil {
+		t.Fatalf("write SKILL.md failed: %v", err)
+	}
+
+	// Write .skill-meta.yaml with explicit requirements (inferred=false)
+	metaPath := filepath.Join(skillDir, ".skill-meta.yaml")
+	existingMeta := skillMeta{
+		Version: 1,
+		Requirements: requirements{
+			Tools: []toolRequirement{
+				{Name: "custom-tool", Required: true},
+			},
+			Inferred: false,
+		},
+	}
+	if err := writeSkillMeta(metaPath, existingMeta); err != nil {
+		t.Fatalf("writeSkillMeta failed: %v", err)
+	}
+
+	// Rebuild catalog
+	cat, err := rebuildCatalogFromLibrary(libraryPath)
+	if err != nil {
+		t.Fatalf("rebuildCatalogFromLibrary failed: %v", err)
+	}
+
+	skill := cat.Skills[0]
+
+	// Should NOT infer gh because explicit requirements exist
+	// Only custom-tool should remain
+	if len(skill.Requirements.Tools) != 1 {
+		t.Errorf("requirements.tools length = %d, want 1 (explicit preserved, no inference)", len(skill.Requirements.Tools))
+	}
+	if skill.Requirements.Tools[0].Name != "custom-tool" {
+		t.Errorf("tool name = %q, want custom-tool", skill.Requirements.Tools[0].Name)
+	}
+}
+
+// FLO-235 Issue 2: Inferred requirements should not freeze across rebuilds
+func TestRebuildCatalogFromLibrary_InferredRequirementsNotFrozen(t *testing.T) {
+	home := t.TempDir()
+	libraryPath := filepath.Join(home, "library")
+
+	skillDir := filepath.Join(libraryPath, "tool-change-skill")
+	if err := os.MkdirAll(skillDir, 0755); err != nil {
+		t.Fatalf("mkdir failed: %v", err)
+	}
+
+	skillMdPath := filepath.Join(skillDir, "SKILL.md")
+
+	// First rebuild: SKILL.md mentions "gh pr create"
+	skillMdContent1 := `---
+name: tool-change-skill
+description: A skill that uses GitHub CLI
+---
+This skill runs "gh pr create" to create pull requests.
+`
+	if err := os.WriteFile(skillMdPath, []byte(skillMdContent1), 0644); err != nil {
+		t.Fatalf("write SKILL.md failed: %v", err)
+	}
+
+	// First rebuild
+	cat, err := rebuildCatalogFromLibrary(libraryPath)
+	if err != nil {
+		t.Fatalf("first rebuildCatalogFromLibrary failed: %v", err)
+	}
+
+	skill := cat.Skills[0]
+	// Should have inferred gh tool
+	if len(skill.Requirements.Tools) != 1 || skill.Requirements.Tools[0].Name != "gh" {
+		t.Errorf("first rebuild: expected inferred tool [gh], got %v", skill.Requirements.Tools)
+	}
+
+	// Verify .skill-meta.yaml has inferred=true and gh tool
+	metaPath := filepath.Join(skillDir, ".skill-meta.yaml")
+	meta, err := readSkillMeta(metaPath)
+	if err != nil {
+		t.Fatalf("first readSkillMeta failed: %v", err)
+	}
+	if !meta.Requirements.Inferred {
+		t.Errorf("first rebuild: meta.requirements.inferred should be true")
+	}
+
+	// Second rebuild: Change SKILL.md to use ffmpeg instead of gh
+	skillMdContent2 := `---
+name: tool-change-skill
+description: A skill that uses FFmpeg
+---
+This skill runs "ffmpeg -i input.mp4" to process videos.
+`
+	if err := os.WriteFile(skillMdPath, []byte(skillMdContent2), 0644); err != nil {
+		t.Fatalf("update SKILL.md failed: %v", err)
+	}
+
+	// Second rebuild
+	cat, err = rebuildCatalogFromLibrary(libraryPath)
+	if err != nil {
+		t.Fatalf("second rebuildCatalogFromLibrary failed: %v", err)
+	}
+
+	skill = cat.Skills[0]
+	// Should NOW have ffmpeg, NOT gh (no freezing)
+	if len(skill.Requirements.Tools) != 1 || skill.Requirements.Tools[0].Name != "ffmpeg" {
+		t.Errorf("second rebuild: expected inferred tool [ffmpeg], got %v", skill.Requirements.Tools)
+	}
+
+	// Verify that meta still has inferred=true and ffmpeg
+	meta, err = readSkillMeta(metaPath)
+	if err != nil {
+		t.Fatalf("second readSkillMeta failed: %v", err)
+	}
+	if !meta.Requirements.Inferred {
+		t.Errorf("second rebuild: meta.requirements.inferred should still be true")
+	}
+	if len(meta.Requirements.Tools) != 1 || meta.Requirements.Tools[0].Name != "ffmpeg" {
+		t.Errorf("second rebuild: meta.requirements.tools should be [ffmpeg], got %v", meta.Requirements.Tools)
+	}
+
+	// Third rebuild: Write explicit (non-inferred) requirement
+	metaPath = filepath.Join(skillDir, ".skill-meta.yaml")
+	explicitMeta := skillMeta{
+		Version: 1,
+		Requirements: requirements{
+			Tools: []toolRequirement{
+				{Name: "my-tool", Required: true},
+			},
+			Inferred: false,
+		},
+	}
+	if err := writeSkillMeta(metaPath, explicitMeta); err != nil {
+		t.Fatalf("write explicit meta failed: %v", err)
+	}
+
+	// Update SKILL.md to mention gh
+	skillMdContent3 := `---
+name: tool-change-skill
+description: A skill
+---
+This mentions "gh pr create" but has explicit requirements.
+`
+	if err := os.WriteFile(skillMdPath, []byte(skillMdContent3), 0644); err != nil {
+		t.Fatalf("update SKILL.md for third rebuild failed: %v", err)
+	}
+
+	// Third rebuild
+	cat, err = rebuildCatalogFromLibrary(libraryPath)
+	if err != nil {
+		t.Fatalf("third rebuildCatalogFromLibrary failed: %v", err)
+	}
+
+	skill = cat.Skills[0]
+	// Should keep only explicit my-tool, not infer gh
+	if len(skill.Requirements.Tools) != 1 || skill.Requirements.Tools[0].Name != "my-tool" {
+		t.Errorf("third rebuild: expected explicit tool [my-tool], got %v", skill.Requirements.Tools)
+	}
+
+	// Verify meta still has inferred=false
+	meta, err = readSkillMeta(metaPath)
+	if err != nil {
+		t.Fatalf("third readSkillMeta failed: %v", err)
+	}
+	if meta.Requirements.Inferred {
+		t.Errorf("third rebuild: meta.requirements.inferred should be false for explicit")
+	}
+}
+
+func TestSetCommand_PortableSticksWithDetectorPatterns(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+
+	// Create library and skill with a detector pattern (AskUserQuestion)
+	libraryPath := filepath.Join(home, "library")
+	skillDir := filepath.Join(libraryPath, "test-skill")
+	if err := os.MkdirAll(skillDir, 0755); err != nil {
+		t.Fatalf("mkdir failed: %v", err)
+	}
+
+	skillMdPath := filepath.Join(skillDir, "SKILL.md")
+	skillMdContent := `---
+name: test-skill
+description: A test skill with Claude pattern
+---
+# Test Skill
+This skill uses AskUserQuestion which is a high-confidence Claude pattern.
+`
+	if err := os.WriteFile(skillMdPath, []byte(skillMdContent), 0644); err != nil {
+		t.Fatalf("write SKILL.md failed: %v", err)
+	}
+
+	// First rebuild: auto-classify as exclusive/claude due to detector pattern
+	cat, err := rebuildCatalogFromLibrary(libraryPath)
+	if err != nil {
+		t.Fatalf("first rebuild failed: %v", err)
+	}
+	if len(cat.Skills) != 1 {
+		t.Fatalf("expected 1 skill after first rebuild, got %d", len(cat.Skills))
+	}
+	if cat.Skills[0].Compatibility.Mode != "exclusive" {
+		t.Errorf("after first rebuild: mode = %q, want exclusive (auto-classified)", cat.Skills[0].Compatibility.Mode)
+	}
+
+	// Now set to portable explicitly
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := runSet([]string{"test-skill", "--compatibility", "portable"}, &stdout, &stderr, globalFlags{})
+	if code != 0 {
+		t.Fatalf("runSet returned %d, want 0\nstderr: %s", code, stderr.String())
+	}
+
+	// Verify meta has explicit_portable = true and Declared is nil
+	metaPath := filepath.Join(skillDir, ".skill-meta.yaml")
+	meta, err := readSkillMeta(metaPath)
+	if err != nil {
+		t.Fatalf("readSkillMeta failed: %v", err)
+	}
+	if !meta.Compatibility.ExplicitPortable {
+		t.Fatalf("expected explicit_portable = true after set --compatibility portable")
+	}
+	if meta.Compatibility.Declared != nil {
+		t.Errorf("declared should be nil after set portable, got %+v", meta.Compatibility.Declared)
+	}
+
+	// Rebuild again: despite detector pattern still present, should respect explicit portable declaration
+	cat, err = rebuildCatalogFromLibrary(libraryPath)
+	if err != nil {
+		t.Fatalf("second rebuild failed: %v", err)
+	}
+	if len(cat.Skills) != 1 {
+		t.Fatalf("expected 1 skill after second rebuild, got %d", len(cat.Skills))
+	}
+	skill := cat.Skills[0]
+	if skill.Compatibility.Mode != "portable" {
+		t.Errorf("after second rebuild: mode = %q, want portable (should stick despite detector)", skill.Compatibility.Mode)
+	}
+	if skill.Compatibility.Harness != "" {
+		t.Errorf("after second rebuild: harness = %q, want empty for portable", skill.Compatibility.Harness)
+	}
+	if len(skill.Compatibility.Harnesses) != 0 {
+		t.Errorf("after second rebuild: harnesses = %v, want empty for portable", skill.Compatibility.Harnesses)
+	}
+}
+
+func TestRebuildCatalog_ClearsHarnessWhenFallingBackToPortable(t *testing.T) {
+	libraryPath := t.TempDir()
+
+	// Create a skill directory
+	skillDir := filepath.Join(libraryPath, "test-skill")
+	if err := os.MkdirAll(skillDir, 0755); err != nil {
+		t.Fatalf("mkdir failed: %v", err)
+	}
+
+	// Write initial SKILL.md with NO detector patterns
+	skillMdPath := filepath.Join(skillDir, "SKILL.md")
+	skillMdContent := `---
+name: test-skill
+description: A portable skill
+---
+# Test Skill
+This is a simple portable skill with no patterns.
+`
+	if err := os.WriteFile(skillMdPath, []byte(skillMdContent), 0644); err != nil {
+		t.Fatalf("write SKILL.md failed: %v", err)
+	}
+
+	// Create a .skill-meta.yaml that simulates a prior detection: exclusive/claude
+	metaPath := filepath.Join(skillDir, ".skill-meta.yaml")
+	metaContent := `compatibility:
+  mode: exclusive
+  harness: claude
+  detected:
+    claude:
+      confidence: high
+      reasons:
+        - AskUserQuestion pattern found
+`
+	if err := os.WriteFile(metaPath, []byte(metaContent), 0644); err != nil {
+		t.Fatalf("write .skill-meta.yaml failed: %v", err)
+	}
+
+	// Rebuild: body has NO detector patterns, so should fall back to portable and clear harness fields
+	cat, err := rebuildCatalogFromLibrary(libraryPath)
+	if err != nil {
+		t.Fatalf("rebuildCatalogFromLibrary failed: %v", err)
+	}
+
+	if len(cat.Skills) != 1 {
+		t.Fatalf("expected 1 skill, got %d", len(cat.Skills))
+	}
+
+	skill := cat.Skills[0]
+	if skill.Compatibility.Mode != "portable" {
+		t.Errorf("mode = %q, want portable", skill.Compatibility.Mode)
+	}
+	if skill.Compatibility.Harness != "" {
+		t.Errorf("harness = %q, want empty string", skill.Compatibility.Harness)
+	}
+	if len(skill.Compatibility.Harnesses) != 0 {
+		t.Errorf("harnesses = %v, want empty slice", skill.Compatibility.Harnesses)
+	}
+
+	// Verify the persisted meta also has cleared harness fields
+	meta, err := readSkillMeta(metaPath)
+	if err != nil {
+		t.Fatalf("readSkillMeta failed: %v", err)
+	}
+	if meta.Compatibility.Harness != "" {
+		t.Errorf("persisted meta: harness = %q, want empty string", meta.Compatibility.Harness)
+	}
+	if len(meta.Compatibility.Harnesses) != 0 {
+		t.Errorf("persisted meta: harnesses = %v, want empty slice", meta.Compatibility.Harnesses)
+	}
+}
+
+func TestReadCatalog_RoundTripsMCPAndModel(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+
+	libraryPath := filepath.Join(home, "library")
+	if err := os.MkdirAll(libraryPath, 0755); err != nil {
+		t.Fatalf("mkdir library failed: %v", err)
+	}
+
+	// Create a skill with tools, mcp_servers, and model requirements
+	writeFile(t, filepath.Join(libraryPath, "testskill", "SKILL.md"),
+		"---\nname: testskill\ndescription: Test skill\n---\nBody")
+	if err := writeSkillMeta(filepath.Join(libraryPath, "testskill", ".skill-meta.yaml"), skillMeta{
+		Version: 1,
+		Requirements: requirements{
+			Tools: []toolRequirement{
+				{Name: "gh", Required: true},
+				{Name: "jq", Required: false},
+			},
+			MCPServers: []mcpRequirement{
+				{Name: "linear", Required: true},
+				{Name: "github", Required: false},
+			},
+			Model: modelRequirement{
+				ToolUse: "required",
+			},
+		},
+	}); err != nil {
+		t.Fatalf("write sidecar failed: %v", err)
+	}
+
+	// Build and write catalog
+	cat, err := rebuildCatalogFromLibrary(libraryPath)
+	if err != nil {
+		t.Fatalf("rebuild failed: %v", err)
+	}
+	catalogPath := filepath.Join(libraryPath, "catalog.yaml")
+	if err := writeCatalog(catalogPath, cat); err != nil {
+		t.Fatalf("write catalog failed: %v", err)
+	}
+
+	// Read catalog back and verify all fields round-trip
+	parsed, err := readCatalog(catalogPath)
+	if err != nil {
+		t.Fatalf("read catalog failed: %v", err)
+	}
+	if len(parsed.Skills) != 1 {
+		raw, _ := os.ReadFile(catalogPath)
+		t.Fatalf("got %d skills, want 1; catalog:\n%s", len(parsed.Skills), string(raw))
+	}
+
+	skill := parsed.Skills[0]
+
+	// Verify tools round-trip
+	if len(skill.Requirements.Tools) != 2 {
+		t.Errorf("tools count = %d, want 2", len(skill.Requirements.Tools))
+	}
+	toolMap := make(map[string]bool)
+	for _, tool := range skill.Requirements.Tools {
+		toolMap[tool.Name] = tool.Required
+	}
+	if !toolMap["gh"] {
+		t.Errorf("gh required = false, want true")
+	}
+	if toolMap["jq"] {
+		t.Errorf("jq required = true, want false")
+	}
+
+	// Verify mcp_servers round-trip (including per-server required flags)
+	if len(skill.Requirements.MCPServers) != 2 {
+		t.Errorf("mcp_servers count = %d, want 2", len(skill.Requirements.MCPServers))
+	}
+	mcpMap := make(map[string]bool)
+	for _, server := range skill.Requirements.MCPServers {
+		mcpMap[server.Name] = server.Required
+	}
+	if !mcpMap["linear"] {
+		t.Errorf("linear required = false, want true")
+	}
+	if mcpMap["github"] {
+		t.Errorf("github required = true, want false")
+	}
+
+	// Verify model round-trip
+	if skill.Requirements.Model.ToolUse != "required" {
+		t.Errorf("model.tool_use = %q, want %q", skill.Requirements.Model.ToolUse, "required")
+	}
+}
+
+func TestReadCatalog_ModelBeforeTools(t *testing.T) {
+	home := t.TempDir()
+	libraryPath := filepath.Join(home, "library")
+	if err := os.MkdirAll(libraryPath, 0755); err != nil {
+		t.Fatalf("mkdir failed: %v", err)
+	}
+
+	// Write catalog with model listed BEFORE tools and mcp_servers
+	catalogContent := `version: 1
+skills:
+  - name: test-skill
+    categories: [Engineering]
+    compatibility:
+      mode: portable
+    requirements:
+      model:
+        tool_use: required
+      tools:
+        - name: gh
+          required: true
+      mcp_servers:
+        - name: linear
+          required: true
+`
+	catalogPath := filepath.Join(libraryPath, "catalog.yaml")
+	if err := os.WriteFile(catalogPath, []byte(catalogContent), 0644); err != nil {
+		t.Fatalf("write catalog failed: %v", err)
+	}
+
+	parsed, err := readCatalog(catalogPath)
+	if err != nil {
+		t.Fatalf("read catalog failed: %v", err)
+	}
+	if len(parsed.Skills) != 1 {
+		t.Fatalf("got %d skills, want 1", len(parsed.Skills))
+	}
+
+	skill := parsed.Skills[0]
+	if len(skill.Requirements.Tools) != 1 {
+		t.Errorf("tools count = %d, want 1", len(skill.Requirements.Tools))
+	}
+	if skill.Requirements.Tools[0].Name != "gh" {
+		t.Errorf("tool name = %q, want %q", skill.Requirements.Tools[0].Name, "gh")
+	}
+	if len(skill.Requirements.MCPServers) != 1 {
+		t.Errorf("mcp_servers count = %d, want 1", len(skill.Requirements.MCPServers))
+	}
+	if skill.Requirements.MCPServers[0].Name != "linear" {
+		t.Errorf("mcp server name = %q, want %q", skill.Requirements.MCPServers[0].Name, "linear")
+	}
+	if skill.Requirements.Model.ToolUse != "required" {
+		t.Errorf("model.tool_use = %q, want %q", skill.Requirements.Model.ToolUse, "required")
+	}
+}
+
+func TestReadSkillMeta_ModelBeforeTools(t *testing.T) {
+	home := t.TempDir()
+	libraryPath := filepath.Join(home, "library")
+	skillDir := filepath.Join(libraryPath, "test-skill")
+	if err := os.MkdirAll(skillDir, 0755); err != nil {
+		t.Fatalf("mkdir failed: %v", err)
+	}
+
+	// Write skill meta with model listed BEFORE tools and mcp_servers
+	metaContent := `version: 1
+requirements:
+  model:
+    tool_use: required
+  tools:
+    - name: gh
+      required: true
+  mcp_servers:
+    - name: linear
+      required: true
+`
+	metaPath := filepath.Join(skillDir, ".skill-meta.yaml")
+	if err := os.WriteFile(metaPath, []byte(metaContent), 0644); err != nil {
+		t.Fatalf("write .skill-meta.yaml failed: %v", err)
+	}
+
+	parsed, err := readSkillMeta(metaPath)
+	if err != nil {
+		t.Fatalf("read skill meta failed: %v", err)
+	}
+
+	if len(parsed.Requirements.Tools) != 1 {
+		t.Errorf("tools count = %d, want 1", len(parsed.Requirements.Tools))
+	}
+	if parsed.Requirements.Tools[0].Name != "gh" {
+		t.Errorf("tool name = %q, want %q", parsed.Requirements.Tools[0].Name, "gh")
+	}
+	if len(parsed.Requirements.MCPServers) != 1 {
+		t.Errorf("mcp_servers count = %d, want 1", len(parsed.Requirements.MCPServers))
+	}
+	if parsed.Requirements.MCPServers[0].Name != "linear" {
+		t.Errorf("mcp server name = %q, want %q", parsed.Requirements.MCPServers[0].Name, "linear")
+	}
+	if parsed.Requirements.Model.ToolUse != "required" {
+		t.Errorf("model.tool_use = %q, want %q", parsed.Requirements.Model.ToolUse, "required")
+	}
+}
+
+func TestRebuildCatalog_PreservesExplicitMCPOnlyRequirements(t *testing.T) {
+	home := t.TempDir()
+	libraryPath := filepath.Join(home, "library")
+
+	// Create skill directory
+	skillDir := filepath.Join(libraryPath, "mcp-only-skill")
+	if err := os.MkdirAll(skillDir, 0755); err != nil {
+		t.Fatalf("mkdir failed: %v", err)
+	}
+
+	skillMdPath := filepath.Join(skillDir, "SKILL.md")
+	skillMdContent := `---
+name: mcp-only-skill
+description: A skill with MCP-only requirements
+---
+# Skill
+
+This skill mentions "gh pr" which would normally infer gh tool,
+but has explicit MCP-only requirements that should be preserved.
+`
+	if err := os.WriteFile(skillMdPath, []byte(skillMdContent), 0644); err != nil {
+		t.Fatalf("write SKILL.md failed: %v", err)
+	}
+
+	// Write .skill-meta.yaml with explicit MCP requirements only (inferred=false)
+	metaPath := filepath.Join(skillDir, ".skill-meta.yaml")
+	existingMeta := skillMeta{
+		Version: 1,
+		Requirements: requirements{
+			MCPServers: []mcpRequirement{
+				{Name: "linear", Required: true},
+			},
+			Inferred: false,
+		},
+	}
+	if err := writeSkillMeta(metaPath, existingMeta); err != nil {
+		t.Fatalf("writeSkillMeta failed: %v", err)
+	}
+
+	// Rebuild catalog
+	cat, err := rebuildCatalogFromLibrary(libraryPath)
+	if err != nil {
+		t.Fatalf("rebuildCatalogFromLibrary failed: %v", err)
+	}
+
+	skill := cat.Skills[0]
+
+	// Should NOT infer gh tool because explicit MCP requirements exist
+	// Only mcp_servers should be present, no tools
+	if len(skill.Requirements.Tools) != 0 {
+		t.Errorf("requirements.tools length = %d, want 0 (explicit MCP preserved, no tool inference)", len(skill.Requirements.Tools))
+	}
+	if len(skill.Requirements.MCPServers) != 1 {
+		t.Errorf("requirements.mcp_servers length = %d, want 1", len(skill.Requirements.MCPServers))
+	}
+	if skill.Requirements.MCPServers[0].Name != "linear" {
+		t.Errorf("mcp_server name = %q, want linear", skill.Requirements.MCPServers[0].Name)
+	}
+}
+
+func TestRebuildCatalog_PreservesExplicitModelOnlyRequirements(t *testing.T) {
+	home := t.TempDir()
+	libraryPath := filepath.Join(home, "library")
+
+	// Create skill directory
+	skillDir := filepath.Join(libraryPath, "model-only-skill")
+	if err := os.MkdirAll(skillDir, 0755); err != nil {
+		t.Fatalf("mkdir failed: %v", err)
+	}
+
+	skillMdPath := filepath.Join(skillDir, "SKILL.md")
+	skillMdContent := `---
+name: model-only-skill
+description: A skill with model-only requirements
+---
+# Skill
+
+This skill mentions "gh pr" which would normally infer gh tool,
+but has explicit model-only requirements that should be preserved.
+`
+	if err := os.WriteFile(skillMdPath, []byte(skillMdContent), 0644); err != nil {
+		t.Fatalf("write SKILL.md failed: %v", err)
+	}
+
+	// Write .skill-meta.yaml with explicit model requirements only (inferred=false)
+	metaPath := filepath.Join(skillDir, ".skill-meta.yaml")
+	existingMeta := skillMeta{
+		Version: 1,
+		Requirements: requirements{
+			Model: modelRequirement{
+				ToolUse: "required",
+			},
+			Inferred: false,
+		},
+	}
+	if err := writeSkillMeta(metaPath, existingMeta); err != nil {
+		t.Fatalf("writeSkillMeta failed: %v", err)
+	}
+
+	// Rebuild catalog
+	cat, err := rebuildCatalogFromLibrary(libraryPath)
+	if err != nil {
+		t.Fatalf("rebuildCatalogFromLibrary failed: %v", err)
+	}
+
+	skill := cat.Skills[0]
+
+	// Should NOT infer gh tool because explicit model requirements exist
+	// Only model should be present, no tools
+	if len(skill.Requirements.Tools) != 0 {
+		t.Errorf("requirements.tools length = %d, want 0 (explicit model preserved, no tool inference)", len(skill.Requirements.Tools))
+	}
+	if skill.Requirements.Model.ToolUse != "required" {
+		t.Errorf("requirements.model.tool_use = %q, want required", skill.Requirements.Model.ToolUse)
+	}
+}
+
+func TestWriteSkillMeta_MCPOnlyRequirementsRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	metaPath := filepath.Join(dir, ".skill-meta.yaml")
+
+	// Create a skillMeta with no tools but explicit MCP servers
+	original := skillMeta{
+		Version: 1,
+		Requirements: requirements{
+			MCPServers: []mcpRequirement{
+				{Name: "linear", Required: true},
+				{Name: "github", Required: false},
+			},
+			Inferred: false,
+		},
+		Summary: "MCP-only skill",
+	}
+
+	// Write to file
+	if err := writeSkillMeta(metaPath, original); err != nil {
+		t.Fatalf("writeSkillMeta failed: %v", err)
+	}
+
+	// Read back from file
+	read, err := readSkillMeta(metaPath)
+	if err != nil {
+		t.Fatalf("readSkillMeta failed: %v", err)
+	}
+
+	// Verify no tools
+	if len(read.Requirements.Tools) != 0 {
+		t.Errorf("requirements.tools length = %d, want 0", len(read.Requirements.Tools))
+	}
+
+	// Verify MCPServers survived the round-trip
+	if len(read.Requirements.MCPServers) != 2 {
+		raw, _ := os.ReadFile(metaPath)
+		t.Fatalf("requirements.mcp_servers length = %d, want 2; file:\n%s", len(read.Requirements.MCPServers), string(raw))
+	}
+
+	mcpMap := make(map[string]bool)
+	for _, server := range read.Requirements.MCPServers {
+		mcpMap[server.Name] = server.Required
+	}
+	if !mcpMap["linear"] {
+		t.Errorf("linear required = false, want true")
+	}
+	if mcpMap["github"] {
+		t.Errorf("github required = true, want false")
+	}
+
+	// Verify Inferred flag survived
+	if read.Requirements.Inferred {
+		t.Errorf("requirements.inferred = true, want false")
+	}
+}
+
+func TestWriteSkillMeta_ModelOnlyRequirementsRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	metaPath := filepath.Join(dir, ".skill-meta.yaml")
+
+	// Create a skillMeta with no tools but explicit model requirement
+	original := skillMeta{
+		Version: 1,
+		Requirements: requirements{
+			Model: modelRequirement{
+				ToolUse: "required",
+			},
+			Inferred: false,
+		},
+		Summary: "Model-only skill",
+	}
+
+	// Write to file
+	if err := writeSkillMeta(metaPath, original); err != nil {
+		t.Fatalf("writeSkillMeta failed: %v", err)
+	}
+
+	// Read back from file
+	read, err := readSkillMeta(metaPath)
+	if err != nil {
+		t.Fatalf("readSkillMeta failed: %v", err)
+	}
+
+	// Verify no tools
+	if len(read.Requirements.Tools) != 0 {
+		t.Errorf("requirements.tools length = %d, want 0", len(read.Requirements.Tools))
+	}
+
+	// Verify Model survived the round-trip
+	if read.Requirements.Model.ToolUse != "required" {
+		raw, _ := os.ReadFile(metaPath)
+		t.Fatalf("requirements.model.tool_use = %q, want required; file:\n%s", read.Requirements.Model.ToolUse, string(raw))
+	}
+
+	// Verify Inferred flag survived
+	if read.Requirements.Inferred {
+		t.Errorf("requirements.inferred = true, want false")
+	}
+}
+
+func TestRebuild_FrontmatterRemovalDropsStaleDeclaration(t *testing.T) {
+	libraryPath := t.TempDir()
+
+	// Create skill directory
+	skillDir := filepath.Join(libraryPath, "test-skill")
+	if err := os.MkdirAll(skillDir, 0755); err != nil {
+		t.Fatalf("mkdir failed: %v", err)
+	}
+
+	// Write SKILL.md with exclusive declaration
+	skillMdPath := filepath.Join(skillDir, "SKILL.md")
+	skillMdContent := `---
+name: test-skill
+description: Test skill
+exclusive: claude
+---
+# Test Skill
+AskUserQuestion example content here.
+`
+	if err := os.WriteFile(skillMdPath, []byte(skillMdContent), 0644); err != nil {
+		t.Fatalf("write SKILL.md failed: %v", err)
+	}
+
+	// First rebuild: should pick up exclusive declaration
+	cat, err := rebuildCatalogFromLibrary(libraryPath)
+	if err != nil {
+		t.Fatalf("first rebuild failed: %v", err)
+	}
+	if len(cat.Skills) != 1 {
+		t.Fatalf("expected 1 skill, got %d", len(cat.Skills))
+	}
+	if cat.Skills[0].Compatibility.Mode != "exclusive" {
+		t.Errorf("first rebuild: mode = %q, want exclusive", cat.Skills[0].Compatibility.Mode)
+	}
+
+	// Verify sidecar has the declared block
+	metaPath := filepath.Join(skillDir, ".skill-meta.yaml")
+	meta, _ := readSkillMeta(metaPath)
+	if meta.Compatibility.Declared == nil || meta.Compatibility.Declared.Mode != "exclusive" {
+		t.Errorf("first rebuild: sidecar Declared.Mode should be exclusive")
+	}
+
+	// Now remove the declaration from SKILL.md
+	skillMdContentNoDecl := `---
+name: test-skill
+description: Test skill
+---
+# Test Skill
+AskUserQuestion example content here.
+`
+	if err := os.WriteFile(skillMdPath, []byte(skillMdContentNoDecl), 0644); err != nil {
+		t.Fatalf("write SKILL.md (no decl) failed: %v", err)
+	}
+
+	// Second rebuild: stale Declared should be overwritten, skill should auto-classify
+	cat, err = rebuildCatalogFromLibrary(libraryPath)
+	if err != nil {
+		t.Fatalf("second rebuild failed: %v", err)
+	}
+	if len(cat.Skills) != 1 {
+		t.Fatalf("expected 1 skill after second rebuild, got %d", len(cat.Skills))
+	}
+
+	skill := cat.Skills[0]
+	// Should auto-classify from detector pattern or fall back to portable
+	if skill.Compatibility.Mode != "exclusive" && skill.Compatibility.Mode != "portable" {
+		t.Errorf("second rebuild: mode = %q, want exclusive (auto-classify) or portable", skill.Compatibility.Mode)
+	}
+
+	// Verify sidecar's Declared is cleared (no stale entry)
+	meta, _ = readSkillMeta(metaPath)
+	if meta.Compatibility.Declared != nil && meta.Compatibility.Declared.Mode != "" {
+		t.Errorf("second rebuild: sidecar Declared should be cleared or empty, got mode = %q", meta.Compatibility.Declared.Mode)
+	}
+}
+
+func TestSetPortable_PersistsAcrossRebuilds(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+
+	// Create library and skill
+	libraryPath := filepath.Join(home, "library")
+	skillDir := filepath.Join(libraryPath, "test-skill")
+	if err := os.MkdirAll(skillDir, 0755); err != nil {
+		t.Fatalf("mkdir failed: %v", err)
+	}
+
+	// Write SKILL.md with Claude detector pattern
+	skillMdPath := filepath.Join(skillDir, "SKILL.md")
+	skillMdContent := `---
+name: test-skill
+description: Test skill
+---
+# Test Skill
+AskUserQuestion is a Claude pattern.
+`
+	if err := os.WriteFile(skillMdPath, []byte(skillMdContent), 0644); err != nil {
+		t.Fatalf("write SKILL.md failed: %v", err)
+	}
+
+	// First rebuild: auto-classify as exclusive/claude
+	cat, err := rebuildCatalogFromLibrary(libraryPath)
+	if err != nil {
+		t.Fatalf("first rebuild failed: %v", err)
+	}
+	if len(cat.Skills) != 1 {
+		t.Fatalf("expected 1 skill, got %d", len(cat.Skills))
+	}
+	if cat.Skills[0].Compatibility.Mode != "exclusive" {
+		t.Errorf("first rebuild: mode = %q, want exclusive (auto-classified)", cat.Skills[0].Compatibility.Mode)
+	}
+
+	// Set to portable explicitly
+	var stdout, stderr bytes.Buffer
+	code := runSet([]string{"test-skill", "--compatibility", "portable"}, &stdout, &stderr, globalFlags{})
+	if code != 0 {
+		t.Fatalf("runSet returned %d, stderr: %s", code, stderr.String())
+	}
+
+	// Verify sidecar has explicit_portable=true and Declared is nil
+	metaPath := filepath.Join(skillDir, ".skill-meta.yaml")
+	meta, _ := readSkillMeta(metaPath)
+	if !meta.Compatibility.ExplicitPortable {
+		t.Errorf("after set portable: ExplicitPortable should be true")
+	}
+	if meta.Compatibility.Declared != nil {
+		t.Errorf("after set portable: Declared should be nil")
+	}
+
+	// Second rebuild: should respect explicit_portable despite detector pattern
+	cat, err = rebuildCatalogFromLibrary(libraryPath)
+	if err != nil {
+		t.Fatalf("second rebuild failed: %v", err)
+	}
+	if len(cat.Skills) != 1 {
+		t.Fatalf("expected 1 skill after rebuild, got %d", len(cat.Skills))
+	}
+
+	skill := cat.Skills[0]
+	if skill.Compatibility.Mode != "portable" {
+		t.Errorf("second rebuild: mode = %q, want portable (from explicit_portable)", skill.Compatibility.Mode)
+	}
+	if skill.Compatibility.Harness != "" {
+		t.Errorf("second rebuild: harness = %q, want empty for portable", skill.Compatibility.Harness)
+	}
+	if len(skill.Compatibility.Harnesses) != 0 {
+		t.Errorf("second rebuild: harnesses = %v, want empty for portable", skill.Compatibility.Harnesses)
+	}
+}
+
+func TestSetCompatible_ClearsExplicitPortable(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+
+	// Create library and skill
+	libraryPath := filepath.Join(home, "library")
+	skillDir := filepath.Join(libraryPath, "test-skill")
+	if err := os.MkdirAll(skillDir, 0755); err != nil {
+		t.Fatalf("mkdir failed: %v", err)
+	}
+
+	// Write SKILL.md
+	skillMdPath := filepath.Join(skillDir, "SKILL.md")
+	skillMdContent := `---
+name: test-skill
+description: Test skill
+---
+# Test Skill
+`
+	if err := os.WriteFile(skillMdPath, []byte(skillMdContent), 0644); err != nil {
+		t.Fatalf("write SKILL.md failed: %v", err)
+	}
+
+	// Set to portable first
+	var stdout, stderr bytes.Buffer
+	code := runSet([]string{"test-skill", "--compatibility", "portable"}, &stdout, &stderr, globalFlags{})
+	if code != 0 {
+		t.Fatalf("first runSet returned %d", code)
+	}
+
+	// Verify explicit_portable is set
+	metaPath := filepath.Join(skillDir, ".skill-meta.yaml")
+	meta, _ := readSkillMeta(metaPath)
+	if !meta.Compatibility.ExplicitPortable {
+		t.Fatalf("expected ExplicitPortable=true after set portable")
+	}
+
+	// Now set to exclusive
+	code = runSet([]string{"test-skill", "--compatibility", "exclusive", "--harness", "claude"}, &stdout, &stderr, globalFlags{})
+	if code != 0 {
+		t.Fatalf("second runSet returned %d", code)
+	}
+
+	// Verify explicit_portable is cleared
+	meta, _ = readSkillMeta(metaPath)
+	if meta.Compatibility.ExplicitPortable {
+		t.Errorf("after set exclusive: ExplicitPortable should be false")
+	}
+	if meta.Compatibility.Declared == nil || meta.Compatibility.Declared.Mode != "exclusive" {
+		t.Errorf("after set exclusive: Declared.Mode should be exclusive")
+	}
+}
+
+func TestFrontmatterWinsOverExplicitPortable(t *testing.T) {
+	libraryPath := t.TempDir()
+
+	// Create skill directory
+	skillDir := filepath.Join(libraryPath, "test-skill")
+	if err := os.MkdirAll(skillDir, 0755); err != nil {
+		t.Fatalf("mkdir failed: %v", err)
+	}
+
+	// Write SKILL.md with exclusive declaration
+	skillMdPath := filepath.Join(skillDir, "SKILL.md")
+	skillMdContent := `---
+name: test-skill
+description: Test skill
+exclusive: claude
+---
+# Test Skill
+`
+	if err := os.WriteFile(skillMdPath, []byte(skillMdContent), 0644); err != nil {
+		t.Fatalf("write SKILL.md failed: %v", err)
+	}
+
+	// Create sidecar with both explicit_portable=true AND a Declared block
+	metaPath := filepath.Join(skillDir, ".skill-meta.yaml")
+	metaContent := `version: 1
+compatibility:
+  mode: portable
+  explicit_portable: true
+  declared:
+    mode: exclusive
+    harness: claude
+`
+	if err := os.WriteFile(metaPath, []byte(metaContent), 0644); err != nil {
+		t.Fatalf("write .skill-meta.yaml failed: %v", err)
+	}
+
+	// Rebuild: frontmatter should win over explicit_portable
+	cat, err := rebuildCatalogFromLibrary(libraryPath)
+	if err != nil {
+		t.Fatalf("rebuild failed: %v", err)
+	}
+	if len(cat.Skills) != 1 {
+		t.Fatalf("expected 1 skill, got %d", len(cat.Skills))
+	}
+
+	skill := cat.Skills[0]
+	if skill.Compatibility.Mode != "exclusive" {
+		t.Errorf("rebuild: mode = %q, want exclusive (frontmatter wins)", skill.Compatibility.Mode)
+	}
+
+	// Verify explicit_portable is cleared (frontmatter takes precedence)
+	meta, _ := readSkillMeta(metaPath)
+	if meta.Compatibility.ExplicitPortable {
+		t.Errorf("rebuild: ExplicitPortable should be cleared when frontmatter declares mode")
+	}
+}

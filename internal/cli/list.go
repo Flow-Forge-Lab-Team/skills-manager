@@ -265,14 +265,31 @@ func runShow(args []string, stdout io.Writer, stderr io.Writer, gf globalFlags) 
 			fmt.Fprintf(humanOut, "  Harnesses: %s\n", strings.Join(skill.Compatibility.Harnesses, ", "))
 		}
 
-		if len(skill.Requirements.Tools) > 0 {
+		// Render all requirement kinds (tools, MCP servers, model) when any are present.
+		// Previously only Tools were shown, hiding MCP/model requirements (Codex P2).
+		hasReq := len(skill.Requirements.Tools) > 0 ||
+			len(skill.Requirements.MCPServers) > 0 ||
+			skill.Requirements.Model.ToolUse != ""
+
+		if hasReq {
 			fmt.Fprint(humanOut, "Requirements:\n")
+
 			for _, tool := range skill.Requirements.Tools {
 				status := "optional"
 				if tool.Required {
 					status = "required"
 				}
-				fmt.Fprintf(humanOut, "  - %s (%s)\n", tool.Name, status)
+				fmt.Fprintf(humanOut, "  - tool %s (%s)\n", tool.Name, status)
+			}
+			for _, mcp := range skill.Requirements.MCPServers {
+				status := "optional"
+				if mcp.Required {
+					status = "required"
+				}
+				fmt.Fprintf(humanOut, "  - mcp %s (%s)\n", mcp.Name, status)
+			}
+			if skill.Requirements.Model.ToolUse != "" {
+				fmt.Fprintf(humanOut, "  - model tool_use: %s\n", skill.Requirements.Model.ToolUse)
 			}
 		}
 

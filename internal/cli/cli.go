@@ -63,6 +63,8 @@ func Run(args []string, stdout io.Writer, stderr io.Writer) int {
 		code = runShow(cmdArgs, stdout, stderr, gf)
 	case "update":
 		code = runUpdate(cmdArgs, stdout, stderr, gf)
+	case "set":
+		code = runSet(cmdArgs, stdout, stderr, gf)
 	default:
 		fmt.Fprintf(stderr, "unknown argument: %s\n", cmd)
 		fmt.Fprintln(stderr, "Usage: skills-manager <command>")

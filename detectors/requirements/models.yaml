@@ -1,0 +1,11 @@
+version: 1
+detectors:
+  - id: tool-use-required
+    requirement:
+      kind: model
+      name: tool_use
+      required: true
+    confidence: medium
+    patterns:
+      - "use the browser tool"
+      - "tool use"
