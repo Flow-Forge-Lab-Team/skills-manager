@@ -265,6 +265,17 @@ Forms:
   --from <file>   validate and cache saved agent/provider output
 
 ` + globalFlagHelp()
+	case "seed-catalog":
+		return `skills-manager seed-catalog --from <remap-results.json> [--dry-run]
+
+Apply deterministic seed categories/tags, compatibility, and inferred
+requirements to library sidecars, then rebuild catalog.yaml.
+
+Forms:
+  --from <file>   JSON array of {name, locs, categories, tags}
+  --dry-run       validate and report without writing sidecars/catalog
+
+` + globalFlagHelp()
 	case "set":
 		return `skills-manager set <skill> --compatibility <mode> [flags]
 
@@ -349,6 +360,7 @@ Commands:
   show        show details for a single skill
   update      review and accept pending library updates
   summarize   generate or import advisory update summaries
+  seed-catalog apply seed taxonomy metadata to the library
   status      show library counts, pending, unregistered, scheduled state
   doctor      diagnose problems; --rebuild-state --rebuild-catalog
   set         update a skill's compatibility declaration

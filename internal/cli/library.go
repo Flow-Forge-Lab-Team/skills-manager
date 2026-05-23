@@ -542,7 +542,8 @@ func writeSkillMeta(path string, meta skillMeta) error {
 
 		if len(meta.Compatibility.Detected) > 0 {
 			fmt.Fprint(&buf, "  detected:\n")
-			for harness, result := range meta.Compatibility.Detected {
+			for _, harness := range sortedDetectionHarnesses(meta.Compatibility.Detected) {
+				result := meta.Compatibility.Detected[harness]
 				fmt.Fprintf(&buf, "    %s:\n", harness)
 				fmt.Fprintf(&buf, "      confidence: %s\n", result.Confidence)
 				if len(result.Reasons) > 0 {
@@ -769,7 +770,8 @@ func updateCompatibilitySection(path string, meta skillMeta) error {
 	}
 	if len(meta.Compatibility.Detected) > 0 {
 		fmt.Fprint(&newBlock, "  detected:\n")
-		for harness, result := range meta.Compatibility.Detected {
+		for _, harness := range sortedDetectionHarnesses(meta.Compatibility.Detected) {
+			result := meta.Compatibility.Detected[harness]
 			fmt.Fprintf(&newBlock, "    %s:\n", harness)
 			fmt.Fprintf(&newBlock, "      confidence: %s\n", result.Confidence)
 			if len(result.Reasons) > 0 {
@@ -793,6 +795,15 @@ func updateCompatibilitySection(path string, meta skillMeta) error {
 	}
 
 	return os.WriteFile(path, []byte(result.String()), 0644)
+}
+
+func sortedDetectionHarnesses(detected map[string]detectionResult) []string {
+	harnesses := make([]string, 0, len(detected))
+	for harness := range detected {
+		harnesses = append(harnesses, harness)
+	}
+	sort.Strings(harnesses)
+	return harnesses
 }
 
 func rebuildCatalogFromLibrary(libraryPath string) (catalog, error) {
@@ -886,6 +897,10 @@ func rebuildCatalogFromLibrary(libraryPath string) (catalog, error) {
 				meta.Compatibility.Harness = autoClass.Harness
 				meta.Compatibility.Harnesses = autoClass.Harnesses
 				// Do not set needsWrite here — let the final DeepEqual decide
+			} else if meta.Categorization.Source == "seed-remap" &&
+				(meta.Compatibility.Mode == "exclusive" || meta.Compatibility.Mode == "compatible") {
+				// Seed catalog classifications are curated metadata. Preserve them
+				// when no stronger frontmatter or detector signal overrides them.
 			} else if meta.Compatibility.Mode != "portable" || meta.Compatibility.Harness != "" || len(meta.Compatibility.Harnesses) > 0 {
 				// No detection signals: default to portable
 				meta.Compatibility.Mode = "portable"
