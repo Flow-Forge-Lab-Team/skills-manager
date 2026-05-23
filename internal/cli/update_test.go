@@ -678,3 +678,48 @@ func TestUpdateAcceptAllSafeMarksRowAccepted(t *testing.T) {
 		t.Fatalf("should have no pending updates after accept-all-safe, got: %+v", updates)
 	}
 }
+
+func TestGitDiffWithInsert(t *testing.T) {
+	// Test that git diff correctly handles inserts at the top
+	from := []byte("line 2\nline 3\nline 4\n")
+	to := []byte("line 1\nline 2\nline 3\nline 4\n")
+
+	diff, err := gitDiff(from, to)
+	if err != nil {
+		t.Fatalf("gitDiff returned error: %v", err)
+	}
+
+	// Verify the diff contains hunk headers (proof that git diff ran)
+	if !strings.Contains(diff, "@@") {
+		t.Fatalf("diff missing hunk header (@@): %s", diff)
+	}
+
+	// Verify the diff shows the insertion (one line starting with +)
+	lines := strings.Split(diff, "\n")
+	addedLines := []string{}
+	for _, line := range lines {
+		if strings.HasPrefix(line, "+") && !strings.HasPrefix(line, "+++") {
+			addedLines = append(addedLines, line)
+		}
+	}
+	if len(addedLines) != 1 {
+		t.Fatalf("expected 1 addition, got %d in diff:\n%s", len(addedLines), diff)
+	}
+	if !strings.Contains(addedLines[0], "line 1") {
+		t.Fatalf("expected addition of 'line 1', got %q in diff:\n%s", addedLines[0], diff)
+	}
+}
+
+func TestGitDiffIdentical(t *testing.T) {
+	// Test that git diff returns empty string for identical content
+	content := []byte("line 1\nline 2\n")
+
+	diff, err := gitDiff(content, content)
+	if err != nil {
+		t.Fatalf("gitDiff returned error: %v", err)
+	}
+
+	if diff != "" {
+		t.Fatalf("expected empty diff for identical content, got: %s", diff)
+	}
+}

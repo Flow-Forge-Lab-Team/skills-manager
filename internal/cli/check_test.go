@@ -46,11 +46,16 @@ var ErrGHNotFound = &MockError{msg: "gh CLI not found"}
 
 // fakeFetcher is a mock GitHubFetcher for testing.
 type fakeFetcher struct {
-	files map[string][]byte
-	err   error
+	files               map[string][]byte
+	err                 error
+	fetchedPathsForTest *[]string // optional: if set, tracks paths requested
 }
 
 func (f *fakeFetcher) FetchFile(owner, repo, ref, path string) ([]byte, error) {
+	// Track the path for test verification
+	if f.fetchedPathsForTest != nil {
+		*f.fetchedPathsForTest = append(*f.fetchedPathsForTest, path)
+	}
 	if f.err != nil {
 		return nil, f.err
 	}
@@ -732,6 +737,100 @@ func TestIsSafeGitHubSegment(t *testing.T) {
 	for _, tt := range tests {
 		if got := isSafeGitHubSegment(tt.segment); got != tt.safe {
 			t.Errorf("isSafeGitHubSegment(%q) = %v, want %v", tt.segment, got, tt.safe)
+		}
+	}
+}
+
+func TestCheckFetchesFromOriginPath(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+
+	stateDB, err := state.Open(home)
+	if err != nil {
+		t.Fatalf("Open state: %v", err)
+	}
+	defer stateDB.Close()
+
+	libraryPath := filepath.Join(home, "library")
+	skillDir := filepath.Join(libraryPath, "pdf")
+	if err := os.MkdirAll(skillDir, 0755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	// Write SKILL.md
+	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte("---\nname: pdf\n---\nBody v1\n"), 0644); err != nil {
+		t.Fatalf("write SKILL.md: %v", err)
+	}
+
+	// Write .skill-meta.yaml with origin.path set to skills/pdf
+	metaContent := `version: 1
+origin:
+  type: github
+  url: https://github.com/user/repo
+  path: skills/pdf
+  commit: abc1234
+`
+	if err := os.WriteFile(filepath.Join(skillDir, ".skill-meta.yaml"), []byte(metaContent), 0644); err != nil {
+		t.Fatalf("write meta: %v", err)
+	}
+
+	// Create fake poller and fetcher
+	poller := &fakePoller{
+		responses: map[string]fakeResponse{
+			"user/repo": {
+				commit: "def5678",
+				etag:   "w/\"new-etag\"",
+			},
+		},
+	}
+
+	oldFetcher := fetcher
+	fetchedPaths := []string{}
+	fetcher = &fakeFetcher{
+		files: map[string][]byte{
+			// Should fetch from skills/pdf/SKILL.md, not SKILL.md
+			"user/repo:def5678:skills/pdf/SKILL.md": []byte("---\nname: pdf\n---\nBody v2\n"),
+		},
+		fetchedPathsForTest: &fetchedPaths,
+	}
+	defer func() { fetcher = oldFetcher }()
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := runCheckWithPoller(nil, &stdout, &stderr, globalFlags{}, poller)
+
+	if code != 0 {
+		t.Fatalf("runCheck returned %d, want 0\nstderr: %s", code, stderr.String())
+	}
+
+	// Verify that the correct path was requested
+	if len(fetchedPaths) == 0 {
+		t.Fatal("no fetch was made")
+	}
+	if fetchedPaths[0] != "skills/pdf/SKILL.md" {
+		t.Errorf("fetcher received path %q, want skills/pdf/SKILL.md", fetchedPaths[0])
+	}
+}
+
+func TestCheckRejectsUnsafeOriginPath(t *testing.T) {
+	tests := []struct {
+		path string
+		safe bool
+	}{
+		{"skills/pdf", true},
+		{"my-skill", true},
+		{"skills/my_skill", true},
+		{"", true},                  // empty is allowed
+		{"../../etc/passwd", false}, // directory traversal
+		{"/etc/passwd", false},      // absolute path
+		{"foo;rm -rf", false},       // shell metacharacter
+		{"foo|bar", false},          // pipe
+		{"foo bar", false},          // space
+	}
+
+	for _, tt := range tests {
+		if got := isSafeGitHubPath(tt.path); got != tt.safe {
+			t.Errorf("isSafeGitHubPath(%q) = %v, want %v", tt.path, got, tt.safe)
 		}
 	}
 }

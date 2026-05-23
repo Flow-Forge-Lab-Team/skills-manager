@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -1055,60 +1056,65 @@ func runDiff(skill string, stdout io.Writer, stderr io.Writer) int {
 	fromBytes := []byte(fromSnapshot.Content)
 	toBytes := []byte(toSnapshot.Content)
 
-	fromLines := strings.Split(strings.TrimRight(string(fromBytes), "\n"), "\n")
-	toLines := strings.Split(strings.TrimRight(string(toBytes), "\n"), "\n")
-
-	// Print unified diff with 3 lines of context
-	diff := unifiedDiff(fromLines, toLines, 3)
+	// Use git diff --no-index for proper unified diff
+	diff, err := gitDiff(fromBytes, toBytes)
+	if err != nil {
+		fmt.Fprintf(stderr, "git diff error: %v\n", err)
+		return ExitOpError
+	}
 	fmt.Fprint(stdout, diff)
 
 	return ExitSuccess
 }
 
-// unifiedDiff generates a simple unified diff with the given context lines.
-func unifiedDiff(from, to []string, context int) string {
-	var out strings.Builder
-
-	// Quick simple diff: find changed regions
-	// For now, show a very basic line-by-line diff
-	fmt.Fprintf(&out, "--- from.md\n+++ to.md\n")
-
-	// Simplified: just show all differences without fancy patching
-	maxLen := len(from)
-	if len(to) > maxLen {
-		maxLen = len(to)
+// gitDiff returns a unified diff between two byte slices using git diff --no-index.
+// Returns empty string if files are identical. Returns error only for execution issues.
+func gitDiff(fromBytes, toBytes []byte) (string, error) {
+	// Create temporary files for git diff
+	fromFile, err := os.CreateTemp("", "skill-diff-from-")
+	if err != nil {
+		return "", fmt.Errorf("create temp from file: %w", err)
 	}
+	defer os.Remove(fromFile.Name())
 
-	for i := 0; i < maxLen; i++ {
-		fromLine := ""
-		toLine := ""
-		if i < len(from) {
-			fromLine = from[i]
-		}
-		if i < len(to) {
-			toLine = to[i]
-		}
+	toFile, err := os.CreateTemp("", "skill-diff-to-")
+	if err != nil {
+		return "", fmt.Errorf("create temp to file: %w", err)
+	}
+	defer os.Remove(toFile.Name())
 
-		if fromLine != toLine {
-			if fromLine != "" {
-				fmt.Fprintf(&out, "-%s\n", fromLine)
+	// Write content to temporary files
+	if _, err := fromFile.Write(fromBytes); err != nil {
+		fromFile.Close()
+		return "", fmt.Errorf("write from file: %w", err)
+	}
+	fromFile.Close()
+
+	if _, err := toFile.Write(toBytes); err != nil {
+		toFile.Close()
+		return "", fmt.Errorf("write to file: %w", err)
+	}
+	toFile.Close()
+
+	// Run git diff --no-index
+	cmd := exec.Command("git", "diff", "--no-index", "--no-color", fromFile.Name(), toFile.Name())
+	output, err := cmd.CombinedOutput()
+
+	// git diff exits with 1 when files differ (that's success)
+	if err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			if exitErr.ExitCode() == 1 && len(output) > 0 {
+				// This is the expected case: files differ, output contains the diff
+				return string(output), nil
+			} else if exitErr.ExitCode() == 0 {
+				// Files are identical
+				return "", nil
 			}
-			if toLine != "" {
-				fmt.Fprintf(&out, "+%s\n", toLine)
-			}
-		} else if fromLine != "" {
-			// Common line
-			fmt.Fprintf(&out, " %s\n", fromLine)
 		}
+		// Some other error occurred
+		return "", fmt.Errorf("git diff execution: %w", err)
 	}
 
-	return out.String()
-}
-
-// min returns the minimum of two integers.
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
+	// Exit code 0 means no diff
+	return "", nil
 }

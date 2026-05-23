@@ -230,6 +230,35 @@ func isSafeGitHubSegment(s string) bool {
 	return matched && len(s) > 0
 }
 
+// isSafeGitHubPath validates that a GitHub path (potentially with / separators) is safe.
+// Validates each segment to prevent injection attacks or directory traversal.
+func isSafeGitHubPath(p string) bool {
+	if len(p) == 0 {
+		return true // Empty path is allowed (means no subpath)
+	}
+	// Reject paths starting with / (absolute paths)
+	if strings.HasPrefix(p, "/") {
+		return false
+	}
+	// Reject paths with .. segments (directory traversal)
+	if strings.Contains(p, "..") {
+		return false
+	}
+	// Trim trailing slashes for validation
+	p = strings.TrimSuffix(p, "/")
+	if len(p) == 0 {
+		return true
+	}
+	// Validate each segment
+	segments := strings.Split(p, "/")
+	for _, seg := range segments {
+		if !isSafeGitHubSegment(seg) {
+			return false
+		}
+	}
+	return true
+}
+
 // parseGitHubURL extracts owner and repo from a GitHub URL like https://github.com/owner/repo.
 // Returns an error if the URL contains unsafe characters (defense against command injection).
 func parseGitHubURL(url string) (owner, repo string, err error) {
@@ -290,9 +319,23 @@ func stageUpdate(skillName string, libraryPath string, meta skillMeta, newCommit
 		return fmt.Errorf("parse url for fetch: %w", err)
 	}
 
-	incomingContent, err := fetcher.FetchFile(owner, repo, newCommit, "SKILL.md")
+	// Build fetch path: prepend origin.path if non-empty
+	fetchPath := "SKILL.md"
+	if meta.Origin.Path != "" {
+		// Validate origin.path for safety
+		if !isSafeGitHubPath(meta.Origin.Path) {
+			return fmt.Errorf("unsafe origin.path: %s (contains invalid characters or directory traversal)", meta.Origin.Path)
+		}
+		// Trim slashes and join with SKILL.md
+		trimmedPath := strings.Trim(meta.Origin.Path, "/")
+		if trimmedPath != "" {
+			fetchPath = filepath.Join(trimmedPath, "SKILL.md")
+		}
+	}
+
+	incomingContent, err := fetcher.FetchFile(owner, repo, newCommit, fetchPath)
 	if err != nil {
-		return fmt.Errorf("fetch incoming SKILL.md: %w", err)
+		return fmt.Errorf("fetch incoming SKILL.md from %s: %w", fetchPath, err)
 	}
 
 	// Now create the pending directory and write files
