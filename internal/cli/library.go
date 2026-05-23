@@ -636,6 +636,165 @@ func writeSkillMeta(path string, meta skillMeta) error {
 	return os.WriteFile(path, []byte(buf.String()), 0644)
 }
 
+// updateCompatibilitySection reads the existing sidecar (if any), surgically replaces
+// only the top-level "compatibility:" block with a fresh serialization from meta,
+// and writes the result back. This preserves any unmodeled requirement fields
+// (scripts, credentials, advanced model options, etc.) when we only need to update
+// compatibility metadata.
+func updateCompatibilitySection(path string, meta skillMeta) error {
+	original, err := os.ReadFile(path)
+	if err != nil {
+		// File doesn't exist or unreadable — fall back to full write
+		return writeSkillMeta(path, meta)
+	}
+
+	lines := strings.Split(string(original), "\n")
+
+	// Find the top-level "compatibility:" block
+	start := -1
+	end := len(lines)
+	indentLevel := -1
+
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "compatibility:") && !strings.HasPrefix(line, " ") && !strings.HasPrefix(line, "\t") {
+			start = i
+			indentLevel = len(line) - len(strings.TrimLeft(line, " \t"))
+			continue
+		}
+		if start != -1 {
+			lineIndent := len(line) - len(strings.TrimLeft(line, " \t"))
+			if strings.TrimSpace(line) != "" && lineIndent <= indentLevel {
+				end = i
+				break
+			}
+		}
+	}
+
+	if start == -1 {
+		// No existing compatibility block — just append a new one at the end
+		var buf strings.Builder
+		buf.WriteString(string(original))
+		if len(original) > 0 && !strings.HasSuffix(string(original), "\n") {
+			buf.WriteString("\n")
+		}
+		fmt.Fprint(&buf, "compatibility:\n")
+		if meta.Compatibility.Mode != "" {
+			fmt.Fprintf(&buf, "  mode: %s\n", meta.Compatibility.Mode)
+		}
+		if meta.Compatibility.Harness != "" {
+			fmt.Fprintf(&buf, "  harness: %s\n", meta.Compatibility.Harness)
+		}
+		if len(meta.Compatibility.Harnesses) > 0 {
+			fmt.Fprint(&buf, "  harnesses: [")
+			for i, h := range meta.Compatibility.Harnesses {
+				if i > 0 {
+					fmt.Fprint(&buf, ", ")
+				}
+				fmt.Fprintf(&buf, "%q", h)
+			}
+			fmt.Fprint(&buf, "]\n")
+		}
+		if meta.Compatibility.ExplicitPortable {
+			fmt.Fprint(&buf, "  explicit_portable: true\n")
+		}
+		if meta.Compatibility.Declared != nil {
+			fmt.Fprint(&buf, "  declared:\n")
+			if meta.Compatibility.Declared.Mode != "" {
+				fmt.Fprintf(&buf, "    mode: %s\n", meta.Compatibility.Declared.Mode)
+			}
+			if meta.Compatibility.Declared.Harness != "" {
+				fmt.Fprintf(&buf, "    harness: %s\n", meta.Compatibility.Declared.Harness)
+			}
+			if len(meta.Compatibility.Declared.Harnesses) > 0 {
+				fmt.Fprint(&buf, "    harnesses: [")
+				for i, h := range meta.Compatibility.Declared.Harnesses {
+					if i > 0 {
+						fmt.Fprint(&buf, ", ")
+					}
+					fmt.Fprintf(&buf, "%q", h)
+				}
+				fmt.Fprint(&buf, "]\n")
+			}
+			if meta.Compatibility.Declared.Reason != "" {
+				fmt.Fprintf(&buf, "    reason: %q\n", meta.Compatibility.Declared.Reason)
+			}
+		}
+		return os.WriteFile(path, []byte(buf.String()), 0644)
+	}
+
+	// Build the new compatibility block
+	var newBlock strings.Builder
+	fmt.Fprint(&newBlock, "compatibility:\n")
+	if meta.Compatibility.Mode != "" {
+		fmt.Fprintf(&newBlock, "  mode: %s\n", meta.Compatibility.Mode)
+	}
+	if meta.Compatibility.Harness != "" {
+		fmt.Fprintf(&newBlock, "  harness: %s\n", meta.Compatibility.Harness)
+	}
+	if len(meta.Compatibility.Harnesses) > 0 {
+		fmt.Fprint(&newBlock, "  harnesses: [")
+		for i, h := range meta.Compatibility.Harnesses {
+			if i > 0 {
+				fmt.Fprint(&newBlock, ", ")
+			}
+			fmt.Fprintf(&newBlock, "%q", h)
+		}
+		fmt.Fprint(&newBlock, "]\n")
+	}
+	if meta.Compatibility.ExplicitPortable {
+		fmt.Fprint(&newBlock, "  explicit_portable: true\n")
+	}
+	if meta.Compatibility.Declared != nil {
+		fmt.Fprint(&newBlock, "  declared:\n")
+		if meta.Compatibility.Declared.Mode != "" {
+			fmt.Fprintf(&newBlock, "    mode: %s\n", meta.Compatibility.Declared.Mode)
+		}
+		if meta.Compatibility.Declared.Harness != "" {
+			fmt.Fprintf(&newBlock, "    harness: %s\n", meta.Compatibility.Declared.Harness)
+		}
+		if len(meta.Compatibility.Declared.Harnesses) > 0 {
+			fmt.Fprint(&newBlock, "    harnesses: [")
+			for i, h := range meta.Compatibility.Declared.Harnesses {
+				if i > 0 {
+					fmt.Fprint(&newBlock, ", ")
+				}
+				fmt.Fprintf(&newBlock, "%q", h)
+			}
+			fmt.Fprint(&newBlock, "]\n")
+		}
+		if meta.Compatibility.Declared.Reason != "" {
+			fmt.Fprintf(&newBlock, "    reason: %q\n", meta.Compatibility.Declared.Reason)
+		}
+	}
+	if len(meta.Compatibility.Detected) > 0 {
+		fmt.Fprint(&newBlock, "  detected:\n")
+		for harness, result := range meta.Compatibility.Detected {
+			fmt.Fprintf(&newBlock, "    %s:\n", harness)
+			fmt.Fprintf(&newBlock, "      confidence: %s\n", result.Confidence)
+			if len(result.Reasons) > 0 {
+				fmt.Fprint(&newBlock, "      reasons:\n")
+				for _, r := range result.Reasons {
+					fmt.Fprintf(&newBlock, "        - %q\n", r)
+				}
+			}
+		}
+	}
+
+	// Replace [start, end) with the new block
+	var result strings.Builder
+	result.WriteString(strings.Join(lines[:start], "\n"))
+	if start > 0 {
+		result.WriteString("\n")
+	}
+	result.WriteString(newBlock.String())
+	if end < len(lines) {
+		result.WriteString(strings.Join(lines[end:], "\n"))
+	}
+
+	return os.WriteFile(path, []byte(result.String()), 0644)
+}
+
 func rebuildCatalogFromLibrary(libraryPath string) (catalog, error) {
 	entries, err := os.ReadDir(libraryPath)
 	if err != nil {
@@ -687,7 +846,6 @@ func rebuildCatalogFromLibrary(libraryPath string) (catalog, error) {
 
 		// Refresh the sidecar's Declared block from frontmatter when present (source of truth).
 		// Only mark for write if the modeled compatibility state actually changes.
-		needsWrite := false
 		oldCompat := meta.Compatibility // snapshot before refresh
 
 		if compDecl.Mode != "" {
@@ -737,12 +895,9 @@ func rebuildCatalogFromLibrary(libraryPath string) (catalog, error) {
 			}
 		}
 
-		// Only mark the sidecar for rewrite if the modeled compatibility state actually changed.
-		// This prevents unnecessary rewrites (and loss of unmodeled fields) when the
-		// frontmatter declaration is already reflected in the sidecar.
-		if !reflect.DeepEqual(oldCompat, meta.Compatibility) {
-			needsWrite = true
-		}
+		// Track separately whether compatibility or requirements modeling actually changed.
+		compatibilityChanged := !reflect.DeepEqual(oldCompat, meta.Compatibility)
+		requirementsChanged := false
 
 		// Infer requirements only if marked as inferred or all requirement fields are empty.
 		// If Inferred=false and any field is populated, preserve the explicit requirements.
@@ -757,7 +912,7 @@ func rebuildCatalogFromLibrary(libraryPath string) (catalog, error) {
 			if !reflect.DeepEqual(meta.Requirements, inferred) {
 				meta.Requirements = inferred
 				meta.Requirements.Inferred = true
-				needsWrite = true
+				requirementsChanged = true
 			}
 		}
 
@@ -765,12 +920,14 @@ func rebuildCatalogFromLibrary(libraryPath string) (catalog, error) {
 			meta.Compatibility.Mode = "portable"
 		}
 
-		// Only rewrite the sidecar if we actually changed modeled data.
-		// This prevents silent deletion of unmodeled fields (e.g. requirements.scripts,
-		// requirements.credentials, model.min_context_tokens, etc.) that are documented
-		// but not yet represented in the Go structs.
-		if needsWrite {
+		// Write strategy:
+		// - If requirements modeling changed → full modeled write is correct.
+		// - If only compatibility changed → surgically update only the compatibility
+		//   section in the raw file so we don't clobber unmodeled requirement fields.
+		if requirementsChanged {
 			_ = writeSkillMeta(metaPath, meta)
+		} else if compatibilityChanged {
+			updateCompatibilitySection(metaPath, meta)
 		}
 
 		summary := meta.Summary
