@@ -360,6 +360,10 @@ func readSkillMeta(path string) (skillMeta, error) {
 					meta.Requirements.Tools = items
 				}
 			}
+		case "inferred":
+			if section == "requirements" {
+				meta.Requirements.Inferred = value == "true"
+			}
 		}
 	}
 
@@ -494,30 +498,35 @@ func writeSkillMeta(path string, meta skillMeta) error {
 		}
 	}
 
-	if len(meta.Requirements.Tools) > 0 {
+	if len(meta.Requirements.Tools) > 0 || meta.Requirements.Inferred {
 		fmt.Fprint(&buf, "requirements:\n")
-		allRequired := true
-		for _, tool := range meta.Requirements.Tools {
-			if !tool.Required {
-				allRequired = false
-				break
+		if len(meta.Requirements.Tools) > 0 {
+			allRequired := true
+			for _, tool := range meta.Requirements.Tools {
+				if !tool.Required {
+					allRequired = false
+					break
+				}
+			}
+			if allRequired {
+				fmt.Fprint(&buf, "  tools: [")
+				for i, tool := range meta.Requirements.Tools {
+					if i > 0 {
+						fmt.Fprint(&buf, ", ")
+					}
+					fmt.Fprintf(&buf, "%q", tool.Name)
+				}
+				fmt.Fprint(&buf, "]\n")
+			} else {
+				fmt.Fprint(&buf, "  tools:\n")
+				for _, tool := range meta.Requirements.Tools {
+					fmt.Fprintf(&buf, "    - name: %q\n", tool.Name)
+					fmt.Fprintf(&buf, "      required: %t\n", tool.Required)
+				}
 			}
 		}
-		if allRequired {
-			fmt.Fprint(&buf, "  tools: [")
-			for i, tool := range meta.Requirements.Tools {
-				if i > 0 {
-					fmt.Fprint(&buf, ", ")
-				}
-				fmt.Fprintf(&buf, "%q", tool.Name)
-			}
-			fmt.Fprint(&buf, "]\n")
-		} else {
-			fmt.Fprint(&buf, "  tools:\n")
-			for _, tool := range meta.Requirements.Tools {
-				fmt.Fprintf(&buf, "    - name: %q\n", tool.Name)
-				fmt.Fprintf(&buf, "      required: %t\n", tool.Required)
-			}
+		if meta.Requirements.Inferred {
+			fmt.Fprintf(&buf, "  inferred: true\n")
 		}
 	}
 
@@ -596,10 +605,11 @@ func rebuildCatalogFromLibrary(libraryPath string) (catalog, error) {
 			}
 		}
 
-		// Infer requirements if not explicitly provided
-		if len(meta.Requirements.Tools) == 0 {
+		// Infer requirements if not explicitly provided or if previously inferred
+		if meta.Requirements.Inferred || len(meta.Requirements.Tools) == 0 {
 			inferred := inferRequirements(detectors, skillBody)
 			meta.Requirements.Tools = inferred
+			meta.Requirements.Inferred = true
 		}
 
 		if meta.Compatibility.Mode == "" {

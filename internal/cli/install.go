@@ -76,7 +76,8 @@ type detectionResult struct {
 }
 
 type requirements struct {
-	Tools []toolRequirement `json:"tools,omitempty"`
+	Tools    []toolRequirement `json:"tools,omitempty"`
+	Inferred bool              `json:"inferred,omitempty"`
 }
 
 type toolRequirement struct {
