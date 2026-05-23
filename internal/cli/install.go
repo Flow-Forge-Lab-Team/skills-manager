@@ -815,12 +815,17 @@ func buildInstallLock(candidates []installCandidate, files map[string]string, li
 		Skills:      []installLockEntry{},
 	}
 
-	// Track which skills are in the new candidates
-	newSkillNames := map[string]bool{}
+	// Build an index of old lock entries for fallback lookups.
+	oldByName := map[string]installLockEntry{}
+	for _, e := range oldLock.Skills {
+		oldByName[e.Name] = e
+	}
+
+	// Track which skills are accounted for in newLock (by name) so the
+	// final old-entry pass doesn't double-add.
+	written := map[string]bool{}
 
 	for _, candidate := range candidates {
-		newSkillNames[candidate.Skill.Name] = true
-
 		// Compute library fingerprint (canonical source-of-truth)
 		libFP, err := fingerprintDir(filepath.Join(libraryPath, candidate.Skill.Name))
 		if err != nil {
@@ -840,17 +845,25 @@ func buildInstallLock(candidates []installCandidate, files map[string]string, li
 			}
 		}
 
-		// Only add to lock if there are harnesses that were actually managed
 		if len(managedHarnesses) > 0 {
-			entry := installLockEntry{
+			newLock.Skills = append(newLock.Skills, installLockEntry{
 				Name:        candidate.Skill.Name,
 				Version:     "",
 				Commit:      "",
 				Fingerprint: libFP,
 				InstalledAt: time.Now().UTC().Format(time.RFC3339),
 				Harnesses:   managedHarnesses,
-			}
-			newLock.Skills = append(newLock.Skills, entry)
+			})
+			written[candidate.Skill.Name] = true
+			continue
+		}
+
+		// All target harnesses were preserved-as-unmanaged (existing
+		// committed copies). Don't silently drop the locked entry — keep
+		// the old lock entry so the commit stays reproducible.
+		if old, ok := oldByName[candidate.Skill.Name]; ok {
+			newLock.Skills = append(newLock.Skills, old)
+			written[candidate.Skill.Name] = true
 		}
 	}
 
@@ -858,7 +871,7 @@ func buildInstallLock(candidates []installCandidate, files map[string]string, li
 	// (lock problems with --skip-missing-locked, never_include, inactive harnesses, --only filter).
 	// Sync recomputes from catalog, so its preserveOld is empty and stale entries are dropped.
 	for _, oldEntry := range oldLock.Skills {
-		if newSkillNames[oldEntry.Name] {
+		if written[oldEntry.Name] {
 			continue
 		}
 		if preserveOld[oldEntry.Name] {

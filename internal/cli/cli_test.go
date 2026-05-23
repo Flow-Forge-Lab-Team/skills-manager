@@ -1368,6 +1368,67 @@ skills:
 	}
 }
 
+func TestLockedInstallPreservesEntryWhenTargetIsUnmanaged(t *testing.T) {
+	home := t.TempDir()
+	project := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+
+	writeFile(t, filepath.Join(project, ".skills", "project.yaml"), `version: 1
+name: demo
+categories: [Engineering]
+harnesses: [claude]
+`)
+	writeFile(t, filepath.Join(home, "library", "catalog.yaml"), `version: 1
+skills:
+  - name: review
+    categories: [Engineering]
+    compatibility:
+      mode: portable
+    requirements:
+      tools: []
+`)
+	writeFile(t, filepath.Join(home, "library", "review", "SKILL.md"), "lib content\n")
+
+	// Compute the real library fingerprint so the lock's fingerprint check passes.
+	libFP, err := fingerprintDir(filepath.Join(home, "library", "review"))
+	if err != nil {
+		t.Fatalf("fingerprint: %v", err)
+	}
+
+	// Pre-existing committed copy at the target — looks like a checkout of
+	// a repo where .claude/skills/review was committed previously.
+	writeFile(t, filepath.Join(project, ".claude", "skills", "review", "SKILL.md"), "committed-by-teammate\n")
+
+	// Lock that pins review.
+	lockContent := `version: 1
+generated_at: "2026-01-01T00:00:00Z"
+generated_by: "skills-manager 0.1.0-dev"
+skills:
+  - name: review
+    version: ~
+    commit: ~
+    fingerprint: "` + libFP + `"
+    installed_at: "2026-01-01T00:00:00Z"
+    harnesses:
+      - claude
+`
+	writeFile(t, filepath.Join(project, ".skills", "installed.lock"), lockContent)
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	if code := Run([]string{"install", "--project", project}, &stdout, &stderr); code != 0 {
+		t.Fatalf("install returned %d, want 0\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+	}
+
+	lock, err := readInstallLock(filepath.Join(project, ".skills", "installed.lock"))
+	if err != nil {
+		t.Fatalf("read lock: %v", err)
+	}
+	if len(lock.Skills) != 1 || lock.Skills[0].Name != "review" {
+		t.Fatalf("install dropped locked review entry when target was unmanaged: %+v", lock.Skills)
+	}
+}
+
 func TestInstallBlocksObjectFormToolRequirements(t *testing.T) {
 	home := t.TempDir()
 	project := t.TempDir()
