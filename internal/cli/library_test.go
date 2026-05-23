@@ -869,6 +869,68 @@ Use .cursor/rules/ for configuration.
 	}
 }
 
+// FLO-235 Issue 3: mcp__ pattern matching should handle literal patterns correctly
+func TestMatchPattern_MCPLiteralVsHexSentinel(t *testing.T) {
+	tests := []struct {
+		name     string
+		pattern  string
+		text     string
+		expected bool
+	}{
+		{
+			name:     "literal mcp__linear__ matches exact pattern in text",
+			pattern:  "mcp__linear__",
+			text:     "using mcp__linear__list_issues function",
+			expected: true,
+		},
+		{
+			name:     "literal mcp__linear__ does not match other mcp pattern",
+			pattern:  "mcp__linear__",
+			text:     "using mcp__github__list_issues function",
+			expected: false,
+		},
+		{
+			name:     "sentinel mcp__[hex]__ matches any hex UUID pattern",
+			pattern:  "mcp__[hex]__",
+			text:     "using mcp__a1b2c3d4__foo function",
+			expected: true,
+		},
+		{
+			name:     "sentinel mcp__[hex]__ matches different hex UUID",
+			pattern:  "mcp__[hex]__",
+			text:     "calling mcp__deadbeef__bar method",
+			expected: true,
+		},
+		{
+			name:     "sentinel mcp__[hex]__ does not match non-hex pattern",
+			pattern:  "mcp__[hex]__",
+			text:     "using mcp__not-hex__baz function",
+			expected: false,
+		},
+		{
+			name:     "sentinel mcp__[hex]__ does not match uppercase hex",
+			pattern:  "mcp__[hex]__",
+			text:     "using mcp__A1B2C3D4__test function",
+			expected: false,
+		},
+		{
+			name:     "literal mcp__not-hex__ matches even with non-hex characters",
+			pattern:  "mcp__not-hex__",
+			text:     "using mcp__not-hex__function call",
+			expected: true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			result := matchPattern(tc.pattern, tc.text)
+			if result != tc.expected {
+				t.Errorf("matchPattern(%q, %q) = %v, want %v", tc.pattern, tc.text, result, tc.expected)
+			}
+		})
+	}
+}
+
 func TestRebuildCatalogFromLibrary_WithDeclaration(t *testing.T) {
 	libraryPath := t.TempDir()
 
@@ -1253,6 +1315,96 @@ description: A test skill
 	}
 }
 
+// FLO-235 Issue 1: Block-list compatible/exclusive frontmatter removal in set command
+func TestSetCommand_BlockListFrontmatterCleanup(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+
+	libraryPath := filepath.Join(home, "library")
+	skillDir := filepath.Join(libraryPath, "test-skill")
+	if err := os.MkdirAll(skillDir, 0755); err != nil {
+		t.Fatalf("mkdir failed: %v", err)
+	}
+
+	skillMdPath := filepath.Join(skillDir, "SKILL.md")
+	// Create SKILL.md with block-list format for compatible
+	skillMdContent := `---
+name: test-skill
+description: A test skill
+compatible:
+  - claude
+  - codex
+---
+# Test Skill
+`
+	if err := os.WriteFile(skillMdPath, []byte(skillMdContent), 0644); err != nil {
+		t.Fatalf("write SKILL.md failed: %v", err)
+	}
+
+	// Set to exclusive mode
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := runSet([]string{"test-skill", "--compatibility", "exclusive", "--harness", "claude"}, &stdout, &stderr, globalFlags{})
+
+	if code != 0 {
+		t.Fatalf("runSet returned %d, want 0\nstderr: %s", code, stderr.String())
+	}
+
+	// Read updated SKILL.md
+	newContent, err := os.ReadFile(skillMdPath)
+	if err != nil {
+		t.Fatalf("read updated SKILL.md failed: %v", err)
+	}
+
+	contentStr := string(newContent)
+
+	// Should have exclusive declaration
+	if !strings.Contains(contentStr, "exclusive: claude") {
+		t.Errorf("expected 'exclusive: claude' in updated SKILL.md, got: %s", contentStr)
+	}
+
+	// Should NOT have orphaned block-list items from old compatible
+	if strings.Contains(contentStr, "- claude") && !strings.Contains(contentStr, "exclusive:") {
+		// If "- claude" appears but it's not part of a list under compatible, it's orphaned
+		lines := strings.Split(contentStr, "\n")
+		inFrontmatter := false
+		foundOrphan := false
+		for _, line := range lines {
+			if strings.TrimSpace(line) == "---" {
+				inFrontmatter = !inFrontmatter
+				continue
+			}
+			if inFrontmatter && strings.Contains(line, "- claude") && !strings.Contains(contentStr, "compatible:") {
+				foundOrphan = true
+				break
+			}
+		}
+		if foundOrphan {
+			t.Errorf("orphaned '- claude' or '- codex' found in frontmatter after removal: %s", contentStr)
+		}
+	}
+
+	if strings.Contains(contentStr, "- codex") {
+		t.Errorf("orphaned '- codex' should be removed from frontmatter: %s", contentStr)
+	}
+
+	// Parse and verify the result via parseSkillFrontmatterFull
+	decl, compDecl, err := parseSkillFrontmatterFull(skillMdPath)
+	if err != nil {
+		t.Fatalf("parseSkillFrontmatterFull failed: %v", err)
+	}
+
+	if compDecl.Mode != "exclusive" {
+		t.Errorf("mode = %q, want exclusive", compDecl.Mode)
+	}
+	if compDecl.Harness != "claude" {
+		t.Errorf("harness = %q, want claude", compDecl.Harness)
+	}
+	if len(decl.compatible) != 0 {
+		t.Errorf("decl.compatible should be empty after set, got %v", decl.compatible)
+	}
+}
+
 // FLO-235 Issue 1: Detector dir resolution outside repo
 func TestLoadDetectors_RelativeToExecutable(t *testing.T) {
 	t.Run("with env var set", func(t *testing.T) {
@@ -1498,6 +1650,11 @@ This skill runs "gh pr create" to create pull requests.
 	if len(meta.Requirements.Tools) == 0 {
 		t.Errorf("meta.requirements.tools should be populated from inference")
 	}
+
+	// Verify that inferred flag is set
+	if !meta.Requirements.Inferred {
+		t.Errorf("meta.requirements.inferred should be true, got false")
+	}
 }
 
 func TestRebuildCatalogFromLibrary_PreservesExplicitRequirements(t *testing.T) {
@@ -1523,7 +1680,7 @@ This skill uses "gh pr create" but has explicit requirements.
 		t.Fatalf("write SKILL.md failed: %v", err)
 	}
 
-	// Write .skill-meta.yaml with explicit requirements
+	// Write .skill-meta.yaml with explicit requirements (inferred=false)
 	metaPath := filepath.Join(skillDir, ".skill-meta.yaml")
 	existingMeta := skillMeta{
 		Version: 1,
@@ -1531,6 +1688,7 @@ This skill uses "gh pr create" but has explicit requirements.
 			Tools: []toolRequirement{
 				{Name: "custom-tool", Required: true},
 			},
+			Inferred: false,
 		},
 	}
 	if err := writeSkillMeta(metaPath, existingMeta); err != nil {
@@ -1552,5 +1710,133 @@ This skill uses "gh pr create" but has explicit requirements.
 	}
 	if skill.Requirements.Tools[0].Name != "custom-tool" {
 		t.Errorf("tool name = %q, want custom-tool", skill.Requirements.Tools[0].Name)
+	}
+}
+
+// FLO-235 Issue 2: Inferred requirements should not freeze across rebuilds
+func TestRebuildCatalogFromLibrary_InferredRequirementsNotFrozen(t *testing.T) {
+	home := t.TempDir()
+	libraryPath := filepath.Join(home, "library")
+
+	skillDir := filepath.Join(libraryPath, "tool-change-skill")
+	if err := os.MkdirAll(skillDir, 0755); err != nil {
+		t.Fatalf("mkdir failed: %v", err)
+	}
+
+	skillMdPath := filepath.Join(skillDir, "SKILL.md")
+
+	// First rebuild: SKILL.md mentions "gh pr create"
+	skillMdContent1 := `---
+name: tool-change-skill
+description: A skill that uses GitHub CLI
+---
+This skill runs "gh pr create" to create pull requests.
+`
+	if err := os.WriteFile(skillMdPath, []byte(skillMdContent1), 0644); err != nil {
+		t.Fatalf("write SKILL.md failed: %v", err)
+	}
+
+	// First rebuild
+	cat, err := rebuildCatalogFromLibrary(libraryPath)
+	if err != nil {
+		t.Fatalf("first rebuildCatalogFromLibrary failed: %v", err)
+	}
+
+	skill := cat.Skills[0]
+	// Should have inferred gh tool
+	if len(skill.Requirements.Tools) != 1 || skill.Requirements.Tools[0].Name != "gh" {
+		t.Errorf("first rebuild: expected inferred tool [gh], got %v", skill.Requirements.Tools)
+	}
+
+	// Verify .skill-meta.yaml has inferred=true and gh tool
+	metaPath := filepath.Join(skillDir, ".skill-meta.yaml")
+	meta, err := readSkillMeta(metaPath)
+	if err != nil {
+		t.Fatalf("first readSkillMeta failed: %v", err)
+	}
+	if !meta.Requirements.Inferred {
+		t.Errorf("first rebuild: meta.requirements.inferred should be true")
+	}
+
+	// Second rebuild: Change SKILL.md to use ffmpeg instead of gh
+	skillMdContent2 := `---
+name: tool-change-skill
+description: A skill that uses FFmpeg
+---
+This skill runs "ffmpeg -i input.mp4" to process videos.
+`
+	if err := os.WriteFile(skillMdPath, []byte(skillMdContent2), 0644); err != nil {
+		t.Fatalf("update SKILL.md failed: %v", err)
+	}
+
+	// Second rebuild
+	cat, err = rebuildCatalogFromLibrary(libraryPath)
+	if err != nil {
+		t.Fatalf("second rebuildCatalogFromLibrary failed: %v", err)
+	}
+
+	skill = cat.Skills[0]
+	// Should NOW have ffmpeg, NOT gh (no freezing)
+	if len(skill.Requirements.Tools) != 1 || skill.Requirements.Tools[0].Name != "ffmpeg" {
+		t.Errorf("second rebuild: expected inferred tool [ffmpeg], got %v", skill.Requirements.Tools)
+	}
+
+	// Verify that meta still has inferred=true and ffmpeg
+	meta, err = readSkillMeta(metaPath)
+	if err != nil {
+		t.Fatalf("second readSkillMeta failed: %v", err)
+	}
+	if !meta.Requirements.Inferred {
+		t.Errorf("second rebuild: meta.requirements.inferred should still be true")
+	}
+	if len(meta.Requirements.Tools) != 1 || meta.Requirements.Tools[0].Name != "ffmpeg" {
+		t.Errorf("second rebuild: meta.requirements.tools should be [ffmpeg], got %v", meta.Requirements.Tools)
+	}
+
+	// Third rebuild: Write explicit (non-inferred) requirement
+	metaPath = filepath.Join(skillDir, ".skill-meta.yaml")
+	explicitMeta := skillMeta{
+		Version: 1,
+		Requirements: requirements{
+			Tools: []toolRequirement{
+				{Name: "my-tool", Required: true},
+			},
+			Inferred: false,
+		},
+	}
+	if err := writeSkillMeta(metaPath, explicitMeta); err != nil {
+		t.Fatalf("write explicit meta failed: %v", err)
+	}
+
+	// Update SKILL.md to mention gh
+	skillMdContent3 := `---
+name: tool-change-skill
+description: A skill
+---
+This mentions "gh pr create" but has explicit requirements.
+`
+	if err := os.WriteFile(skillMdPath, []byte(skillMdContent3), 0644); err != nil {
+		t.Fatalf("update SKILL.md for third rebuild failed: %v", err)
+	}
+
+	// Third rebuild
+	cat, err = rebuildCatalogFromLibrary(libraryPath)
+	if err != nil {
+		t.Fatalf("third rebuildCatalogFromLibrary failed: %v", err)
+	}
+
+	skill = cat.Skills[0]
+	// Should keep only explicit my-tool, not infer gh
+	if len(skill.Requirements.Tools) != 1 || skill.Requirements.Tools[0].Name != "my-tool" {
+		t.Errorf("third rebuild: expected explicit tool [my-tool], got %v", skill.Requirements.Tools)
+	}
+
+	// Verify meta still has inferred=false
+	meta, err = readSkillMeta(metaPath)
+	if err != nil {
+		t.Fatalf("third readSkillMeta failed: %v", err)
+	}
+	if meta.Requirements.Inferred {
+		t.Errorf("third rebuild: meta.requirements.inferred should be false for explicit")
 	}
 }

@@ -160,13 +160,55 @@ func runSet(args []string, realStdout io.Writer, stderr io.Writer, gf globalFlag
 	// Parse frontmatter lines and rebuild with new compatibility
 	lines := strings.Split(frontmatter, "\n")
 	var newLines []string
+	skipUntilNextKey := false
 
-	for _, line := range lines {
+	for i := 0; i < len(lines); i++ {
+		line := lines[i]
 		trimmed := strings.TrimSpace(line)
+
+		// Check if we should start skipping (matching a key we want to remove)
 		if strings.HasPrefix(trimmed, "compatible:") || strings.HasPrefix(trimmed, "exclusive:") || strings.HasPrefix(trimmed, "reason:") {
+			skipUntilNextKey = true
 			continue
 		}
-		newLines = append(newLines, line)
+
+		// If we're skipping continuation lines, check if we've reached a top-level key
+		if skipUntilNextKey {
+			// A top-level key has no leading whitespace and contains a colon
+			// A continuation list item starts with whitespace + "-"
+			if trimmed != "" && !strings.HasPrefix(line, " ") && !strings.HasPrefix(line, "\t") {
+				// This is a top-level key, stop skipping
+				skipUntilNextKey = false
+			} else if trimmed != "" && (strings.HasPrefix(trimmed, "-")) && (strings.HasPrefix(line, " ") || strings.HasPrefix(line, "\t")) {
+				// This is a continuation list item, skip it
+				continue
+			} else if trimmed == "" {
+				// Empty line might be between items, could be continuation or separator
+				// Peek ahead to see if next non-empty line is a continuation or a key
+				j := i + 1
+				for j < len(lines) && strings.TrimSpace(lines[j]) == "" {
+					j++
+				}
+				if j < len(lines) {
+					nextTrimmed := strings.TrimSpace(lines[j])
+					if (strings.HasPrefix(nextTrimmed, "-")) && (strings.HasPrefix(lines[j], " ") || strings.HasPrefix(lines[j], "\t")) {
+						// Next is continuation, skip this empty line too
+						continue
+					} else if nextTrimmed != "" && !strings.HasPrefix(lines[j], " ") && !strings.HasPrefix(lines[j], "\t") && strings.Contains(nextTrimmed, ":") {
+						// Next is a top-level key
+						skipUntilNextKey = false
+					}
+				} else {
+					skipUntilNextKey = false
+				}
+			} else {
+				skipUntilNextKey = false
+			}
+		}
+
+		if !skipUntilNextKey {
+			newLines = append(newLines, line)
+		}
 	}
 
 	// Add new compatibility declaration at the end of frontmatter
