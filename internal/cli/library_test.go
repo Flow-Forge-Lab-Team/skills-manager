@@ -202,6 +202,46 @@ func TestRebuildCatalogDeterministic(t *testing.T) {
 	}
 }
 
+func TestRebuildCatalogPrefersSidecarSummary(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+
+	libraryPath := filepath.Join(home, "library")
+	if err := os.MkdirAll(libraryPath, 0755); err != nil {
+		t.Fatalf("mkdir library failed: %v", err)
+	}
+
+	// Skill with no frontmatter description — sidecar carries the curated summary.
+	writeFile(t, filepath.Join(libraryPath, "curated", "SKILL.md"),
+		"---\nname: curated\n---\nBody")
+	if err := writeSkillMeta(filepath.Join(libraryPath, "curated", ".skill-meta.yaml"), skillMeta{
+		Version: 1,
+		Summary: "Curated sidecar summary",
+	}); err != nil {
+		t.Fatalf("write sidecar failed: %v", err)
+	}
+
+	// Skill with frontmatter description and no sidecar summary — fallback.
+	writeFile(t, filepath.Join(libraryPath, "fallback", "SKILL.md"),
+		"---\nname: fallback\ndescription: From frontmatter\n---\nBody")
+
+	cat, err := rebuildCatalogFromLibrary(libraryPath)
+	if err != nil {
+		t.Fatalf("rebuild failed: %v", err)
+	}
+
+	byName := map[string]string{}
+	for _, s := range cat.Skills {
+		byName[s.Name] = s.Summary
+	}
+	if got, want := byName["curated"], "Curated sidecar summary"; got != want {
+		t.Errorf("curated summary = %q, want %q", got, want)
+	}
+	if got, want := byName["fallback"], "From frontmatter"; got != want {
+		t.Errorf("fallback summary = %q, want %q", got, want)
+	}
+}
+
 func TestRebuildCatalogReadable(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("SKILLS_MANAGER_HOME", home)

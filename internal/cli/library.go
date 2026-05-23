@@ -431,13 +431,18 @@ func rebuildCatalogFromLibrary(libraryPath string) (catalog, error) {
 			meta.Compatibility.Mode = "portable"
 		}
 
+		summary := meta.Summary
+		if summary == "" {
+			summary = description
+		}
+
 		skill := catalogSkill{
 			Name:          name,
 			Categories:    meta.Categories,
 			Tags:          meta.Tags,
 			Compatibility: meta.Compatibility,
 			Requirements:  meta.Requirements,
-			Summary:       description,
+			Summary:       summary,
 		}
 
 		skills = append(skills, skill)
