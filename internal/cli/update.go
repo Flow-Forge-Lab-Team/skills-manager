@@ -203,6 +203,17 @@ func runAcceptAllSafe(realStdout io.Writer, stdout io.Writer, stderr io.Writer, 
 		fmt.Fprintf(stdout, "- %s: accepted\n", pending.Skill)
 		accepted = append(accepted, pending.Skill)
 	}
+	if len(accepted) > 0 {
+		cat, err := rebuildCatalogFromLibrary(libraryPath)
+		if err != nil {
+			fmt.Fprintf(stderr, "rebuild catalog: %v\n", err)
+			return ExitOpError
+		}
+		if err := writeCatalog(filepath.Join(libraryPath, "catalog.yaml"), cat); err != nil {
+			fmt.Fprintf(stderr, "write catalog: %v\n", err)
+			return ExitOpError
+		}
+	}
 	fmt.Fprintf(stdout, "All pending updates accepted (%d).\n", len(safe))
 	if gf.JSON {
 		if err := writeJSON(realStdout, acceptAllSafeJSON{Accepted: accepted}); err != nil {
