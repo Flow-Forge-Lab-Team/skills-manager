@@ -1,6 +1,7 @@
 package state
 
 import (
+	"database/sql"
 	"encoding/json"
 	"testing"
 )
@@ -110,6 +111,33 @@ func TestSyncCatalogUpsert(t *testing.T) {
 	}
 	if summary != "second" {
 		t.Errorf("summary = %q, want %q", summary, "second")
+	}
+}
+
+func TestSyncCatalogRemovesStale(t *testing.T) {
+	db := openTest(t)
+	if err := db.SyncCatalog(CatalogSnapshot{Skills: []CatalogSkill{
+		{Name: "a"}, {Name: "b"}, {Name: "c"},
+	}}); err != nil {
+		t.Fatalf("first sync: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO requirement_checks
+(skill_name, requirement_type, requirement_name, status, checked_at)
+VALUES (?, ?, ?, ?, ?)`, "b", "tool", "gh", "ok", "2026-01-01T00:00:00Z"); err != nil {
+		t.Fatalf("seed requirement_checks: %v", err)
+	}
+	if err := db.SyncCatalog(CatalogSnapshot{Skills: []CatalogSkill{{Name: "a"}, {Name: "c"}}}); err != nil {
+		t.Fatalf("second sync: %v", err)
+	}
+	if got := countTable(t, db, "skills"); got != 2 {
+		t.Errorf("skills count = %d, want 2", got)
+	}
+	var name string
+	if err := db.QueryRow(`SELECT name FROM skills WHERE name=?`, "b").Scan(&name); err != sql.ErrNoRows {
+		t.Errorf("expected skill 'b' deleted, got err=%v name=%q", err, name)
+	}
+	if got := countTable(t, db, "requirement_checks"); got != 0 {
+		t.Errorf("orphan requirement_checks count = %d, want 0", got)
 	}
 }
 
