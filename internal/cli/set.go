@@ -243,25 +243,33 @@ func runSet(args []string, realStdout io.Writer, stderr io.Writer, gf globalFlag
 	// Update .skill-meta.yaml (create if missing)
 	meta, _ := readSkillMeta(metaPath)
 
-	// Ensure declared block exists and zero all fields before setting new ones
-	if meta.Compatibility.Declared == nil {
-		meta.Compatibility.Declared = &compatibilityDeclaration{}
-	}
-	// Zero out all mode-specific fields
-	meta.Compatibility.Declared.Mode = ""
-	meta.Compatibility.Declared.Harness = ""
-	meta.Compatibility.Declared.Harnesses = nil
-	meta.Compatibility.Declared.Reason = ""
+	// Handle portable mode differently: set explicit_portable flag and clear Declared
+	if opts.compatibilityMode == "portable" {
+		meta.Compatibility.ExplicitPortable = true
+		meta.Compatibility.Declared = nil
+	} else {
+		// For compatible|exclusive: clear explicit_portable and update Declared from frontmatter
+		meta.Compatibility.ExplicitPortable = false
+		// Ensure declared block exists and zero all fields before setting new ones
+		if meta.Compatibility.Declared == nil {
+			meta.Compatibility.Declared = &compatibilityDeclaration{}
+		}
+		// Zero out all mode-specific fields
+		meta.Compatibility.Declared.Mode = ""
+		meta.Compatibility.Declared.Harness = ""
+		meta.Compatibility.Declared.Harnesses = nil
+		meta.Compatibility.Declared.Reason = ""
 
-	// Set fields appropriate for the new mode
-	meta.Compatibility.Declared.Mode = opts.compatibilityMode
-	if opts.compatibilityMode == "exclusive" {
-		meta.Compatibility.Declared.Harness = opts.harness
-		meta.Compatibility.Declared.Reason = opts.reason
-	} else if opts.compatibilityMode == "compatible" {
-		meta.Compatibility.Declared.Harnesses = strings.Split(opts.harnesses, ",")
-		for i := range meta.Compatibility.Declared.Harnesses {
-			meta.Compatibility.Declared.Harnesses[i] = strings.TrimSpace(meta.Compatibility.Declared.Harnesses[i])
+		// Set fields appropriate for the new mode
+		meta.Compatibility.Declared.Mode = opts.compatibilityMode
+		if opts.compatibilityMode == "exclusive" {
+			meta.Compatibility.Declared.Harness = opts.harness
+			meta.Compatibility.Declared.Reason = opts.reason
+		} else if opts.compatibilityMode == "compatible" {
+			meta.Compatibility.Declared.Harnesses = strings.Split(opts.harnesses, ",")
+			for i := range meta.Compatibility.Declared.Harnesses {
+				meta.Compatibility.Declared.Harnesses[i] = strings.TrimSpace(meta.Compatibility.Declared.Harnesses[i])
+			}
 		}
 	}
 

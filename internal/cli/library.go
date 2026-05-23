@@ -318,6 +318,10 @@ func readSkillMeta(path string) (skillMeta, error) {
 				}
 				meta.Compatibility.Declared.Mode = unquote(value)
 			}
+		case "explicit_portable":
+			if section == "compatibility" {
+				meta.Compatibility.ExplicitPortable = value == "true"
+			}
 		case "harness":
 			if section == "compatibility" {
 				meta.Compatibility.Harness = unquote(value)
@@ -480,7 +484,7 @@ func writeSkillMeta(path string, meta skillMeta) error {
 		}
 	}
 
-	if meta.Compatibility.Mode != "" || meta.Compatibility.Declared != nil || len(meta.Compatibility.Detected) > 0 {
+	if meta.Compatibility.Mode != "" || meta.Compatibility.Declared != nil || len(meta.Compatibility.Detected) > 0 || meta.Compatibility.ExplicitPortable {
 		fmt.Fprint(&buf, "compatibility:\n")
 		fmt.Fprintf(&buf, "  mode: %s\n", meta.Compatibility.Mode)
 		if meta.Compatibility.Harness != "" {
@@ -495,6 +499,9 @@ func writeSkillMeta(path string, meta skillMeta) error {
 				fmt.Fprintf(&buf, "%q", h)
 			}
 			fmt.Fprint(&buf, "]\n")
+		}
+		if meta.Compatibility.ExplicitPortable {
+			fmt.Fprint(&buf, "  explicit_portable: true\n")
 		}
 
 		if meta.Compatibility.Declared != nil {
@@ -654,16 +661,24 @@ func rebuildCatalogFromLibrary(libraryPath string) (catalog, error) {
 		// Read skill body once for detection and inference
 		skillBody, _ := readSkillBody(skillMdPath)
 
-		// Check for explicit declaration: either in SKILL.md frontmatter OR in .skill-meta.yaml
-		hasExplicitDecl := compDecl.Mode != "" || (meta.Compatibility.Declared != nil && meta.Compatibility.Declared.Mode != "")
-		effectiveDecl := compDecl
-		if compDecl.Mode == "" && meta.Compatibility.Declared != nil && meta.Compatibility.Declared.Mode != "" {
-			effectiveDecl = *meta.Compatibility.Declared
+		// ALWAYS refresh the sidecar's Declared block from frontmatter (source of truth).
+		// This ensures stale declarations are overwritten.
+		if compDecl.Mode != "" {
+			meta.Compatibility.Declared = &compDecl
+			// Clear explicit_portable if frontmatter now has a declaration (frontmatter wins)
+			meta.Compatibility.ExplicitPortable = false
+		} else {
+			// Frontmatter has no declaration, so clear the stale Declared block
+			meta.Compatibility.Declared = nil
 		}
 
-		if hasExplicitDecl {
-			// Use the effective declaration
-			meta.Compatibility.Declared = &effectiveDecl
+		// Check for explicit declaration: either from frontmatter OR from explicit_portable flag
+		hasFrontmatterDecl := compDecl.Mode != ""
+		hasExplicitPortable := meta.Compatibility.ExplicitPortable
+
+		if hasFrontmatterDecl {
+			// Frontmatter declaration takes precedence
+			effectiveDecl := compDecl
 			meta.Compatibility.Mode = effectiveDecl.Mode
 			meta.Compatibility.Harness = effectiveDecl.Harness
 			meta.Compatibility.Harnesses = effectiveDecl.Harnesses
@@ -672,6 +687,11 @@ func rebuildCatalogFromLibrary(libraryPath string) (catalog, error) {
 				meta.Compatibility.Harness = ""
 				meta.Compatibility.Harnesses = nil
 			}
+		} else if hasExplicitPortable {
+			// Explicit portable flag set
+			meta.Compatibility.Mode = "portable"
+			meta.Compatibility.Harness = ""
+			meta.Compatibility.Harnesses = nil
 		} else {
 			// No explicit declaration: run detection and apply auto-classification
 			detected := detectCompatibility(detectors, skillBody)

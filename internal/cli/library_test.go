@@ -1884,17 +1884,17 @@ This skill uses AskUserQuestion which is a high-confidence Claude pattern.
 		t.Fatalf("runSet returned %d, want 0\nstderr: %s", code, stderr.String())
 	}
 
-	// Verify meta has declared.mode = portable
+	// Verify meta has explicit_portable = true and Declared is nil
 	metaPath := filepath.Join(skillDir, ".skill-meta.yaml")
 	meta, err := readSkillMeta(metaPath)
 	if err != nil {
 		t.Fatalf("readSkillMeta failed: %v", err)
 	}
-	if meta.Compatibility.Declared == nil {
-		t.Fatalf("expected declared block after set --compatibility portable")
+	if !meta.Compatibility.ExplicitPortable {
+		t.Fatalf("expected explicit_portable = true after set --compatibility portable")
 	}
-	if meta.Compatibility.Declared.Mode != "portable" {
-		t.Errorf("declared.mode = %q, want portable", meta.Compatibility.Declared.Mode)
+	if meta.Compatibility.Declared != nil {
+		t.Errorf("declared should be nil after set portable, got %+v", meta.Compatibility.Declared)
 	}
 
 	// Rebuild again: despite detector pattern still present, should respect explicit portable declaration
@@ -2393,5 +2393,265 @@ func TestWriteSkillMeta_ModelOnlyRequirementsRoundTrip(t *testing.T) {
 	// Verify Inferred flag survived
 	if read.Requirements.Inferred {
 		t.Errorf("requirements.inferred = true, want false")
+	}
+}
+
+func TestRebuild_FrontmatterRemovalDropsStaleDeclaration(t *testing.T) {
+	libraryPath := t.TempDir()
+
+	// Create skill directory
+	skillDir := filepath.Join(libraryPath, "test-skill")
+	if err := os.MkdirAll(skillDir, 0755); err != nil {
+		t.Fatalf("mkdir failed: %v", err)
+	}
+
+	// Write SKILL.md with exclusive declaration
+	skillMdPath := filepath.Join(skillDir, "SKILL.md")
+	skillMdContent := `---
+name: test-skill
+description: Test skill
+exclusive: claude
+---
+# Test Skill
+AskUserQuestion example content here.
+`
+	if err := os.WriteFile(skillMdPath, []byte(skillMdContent), 0644); err != nil {
+		t.Fatalf("write SKILL.md failed: %v", err)
+	}
+
+	// First rebuild: should pick up exclusive declaration
+	cat, err := rebuildCatalogFromLibrary(libraryPath)
+	if err != nil {
+		t.Fatalf("first rebuild failed: %v", err)
+	}
+	if len(cat.Skills) != 1 {
+		t.Fatalf("expected 1 skill, got %d", len(cat.Skills))
+	}
+	if cat.Skills[0].Compatibility.Mode != "exclusive" {
+		t.Errorf("first rebuild: mode = %q, want exclusive", cat.Skills[0].Compatibility.Mode)
+	}
+
+	// Verify sidecar has the declared block
+	metaPath := filepath.Join(skillDir, ".skill-meta.yaml")
+	meta, _ := readSkillMeta(metaPath)
+	if meta.Compatibility.Declared == nil || meta.Compatibility.Declared.Mode != "exclusive" {
+		t.Errorf("first rebuild: sidecar Declared.Mode should be exclusive")
+	}
+
+	// Now remove the declaration from SKILL.md
+	skillMdContentNoDecl := `---
+name: test-skill
+description: Test skill
+---
+# Test Skill
+AskUserQuestion example content here.
+`
+	if err := os.WriteFile(skillMdPath, []byte(skillMdContentNoDecl), 0644); err != nil {
+		t.Fatalf("write SKILL.md (no decl) failed: %v", err)
+	}
+
+	// Second rebuild: stale Declared should be overwritten, skill should auto-classify
+	cat, err = rebuildCatalogFromLibrary(libraryPath)
+	if err != nil {
+		t.Fatalf("second rebuild failed: %v", err)
+	}
+	if len(cat.Skills) != 1 {
+		t.Fatalf("expected 1 skill after second rebuild, got %d", len(cat.Skills))
+	}
+
+	skill := cat.Skills[0]
+	// Should auto-classify from detector pattern or fall back to portable
+	if skill.Compatibility.Mode != "exclusive" && skill.Compatibility.Mode != "portable" {
+		t.Errorf("second rebuild: mode = %q, want exclusive (auto-classify) or portable", skill.Compatibility.Mode)
+	}
+
+	// Verify sidecar's Declared is cleared (no stale entry)
+	meta, _ = readSkillMeta(metaPath)
+	if meta.Compatibility.Declared != nil && meta.Compatibility.Declared.Mode != "" {
+		t.Errorf("second rebuild: sidecar Declared should be cleared or empty, got mode = %q", meta.Compatibility.Declared.Mode)
+	}
+}
+
+func TestSetPortable_PersistsAcrossRebuilds(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+
+	// Create library and skill
+	libraryPath := filepath.Join(home, "library")
+	skillDir := filepath.Join(libraryPath, "test-skill")
+	if err := os.MkdirAll(skillDir, 0755); err != nil {
+		t.Fatalf("mkdir failed: %v", err)
+	}
+
+	// Write SKILL.md with Claude detector pattern
+	skillMdPath := filepath.Join(skillDir, "SKILL.md")
+	skillMdContent := `---
+name: test-skill
+description: Test skill
+---
+# Test Skill
+AskUserQuestion is a Claude pattern.
+`
+	if err := os.WriteFile(skillMdPath, []byte(skillMdContent), 0644); err != nil {
+		t.Fatalf("write SKILL.md failed: %v", err)
+	}
+
+	// First rebuild: auto-classify as exclusive/claude
+	cat, err := rebuildCatalogFromLibrary(libraryPath)
+	if err != nil {
+		t.Fatalf("first rebuild failed: %v", err)
+	}
+	if len(cat.Skills) != 1 {
+		t.Fatalf("expected 1 skill, got %d", len(cat.Skills))
+	}
+	if cat.Skills[0].Compatibility.Mode != "exclusive" {
+		t.Errorf("first rebuild: mode = %q, want exclusive (auto-classified)", cat.Skills[0].Compatibility.Mode)
+	}
+
+	// Set to portable explicitly
+	var stdout, stderr bytes.Buffer
+	code := runSet([]string{"test-skill", "--compatibility", "portable"}, &stdout, &stderr, globalFlags{})
+	if code != 0 {
+		t.Fatalf("runSet returned %d, stderr: %s", code, stderr.String())
+	}
+
+	// Verify sidecar has explicit_portable=true and Declared is nil
+	metaPath := filepath.Join(skillDir, ".skill-meta.yaml")
+	meta, _ := readSkillMeta(metaPath)
+	if !meta.Compatibility.ExplicitPortable {
+		t.Errorf("after set portable: ExplicitPortable should be true")
+	}
+	if meta.Compatibility.Declared != nil {
+		t.Errorf("after set portable: Declared should be nil")
+	}
+
+	// Second rebuild: should respect explicit_portable despite detector pattern
+	cat, err = rebuildCatalogFromLibrary(libraryPath)
+	if err != nil {
+		t.Fatalf("second rebuild failed: %v", err)
+	}
+	if len(cat.Skills) != 1 {
+		t.Fatalf("expected 1 skill after rebuild, got %d", len(cat.Skills))
+	}
+
+	skill := cat.Skills[0]
+	if skill.Compatibility.Mode != "portable" {
+		t.Errorf("second rebuild: mode = %q, want portable (from explicit_portable)", skill.Compatibility.Mode)
+	}
+	if skill.Compatibility.Harness != "" {
+		t.Errorf("second rebuild: harness = %q, want empty for portable", skill.Compatibility.Harness)
+	}
+	if len(skill.Compatibility.Harnesses) != 0 {
+		t.Errorf("second rebuild: harnesses = %v, want empty for portable", skill.Compatibility.Harnesses)
+	}
+}
+
+func TestSetCompatible_ClearsExplicitPortable(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+
+	// Create library and skill
+	libraryPath := filepath.Join(home, "library")
+	skillDir := filepath.Join(libraryPath, "test-skill")
+	if err := os.MkdirAll(skillDir, 0755); err != nil {
+		t.Fatalf("mkdir failed: %v", err)
+	}
+
+	// Write SKILL.md
+	skillMdPath := filepath.Join(skillDir, "SKILL.md")
+	skillMdContent := `---
+name: test-skill
+description: Test skill
+---
+# Test Skill
+`
+	if err := os.WriteFile(skillMdPath, []byte(skillMdContent), 0644); err != nil {
+		t.Fatalf("write SKILL.md failed: %v", err)
+	}
+
+	// Set to portable first
+	var stdout, stderr bytes.Buffer
+	code := runSet([]string{"test-skill", "--compatibility", "portable"}, &stdout, &stderr, globalFlags{})
+	if code != 0 {
+		t.Fatalf("first runSet returned %d", code)
+	}
+
+	// Verify explicit_portable is set
+	metaPath := filepath.Join(skillDir, ".skill-meta.yaml")
+	meta, _ := readSkillMeta(metaPath)
+	if !meta.Compatibility.ExplicitPortable {
+		t.Fatalf("expected ExplicitPortable=true after set portable")
+	}
+
+	// Now set to exclusive
+	code = runSet([]string{"test-skill", "--compatibility", "exclusive", "--harness", "claude"}, &stdout, &stderr, globalFlags{})
+	if code != 0 {
+		t.Fatalf("second runSet returned %d", code)
+	}
+
+	// Verify explicit_portable is cleared
+	meta, _ = readSkillMeta(metaPath)
+	if meta.Compatibility.ExplicitPortable {
+		t.Errorf("after set exclusive: ExplicitPortable should be false")
+	}
+	if meta.Compatibility.Declared == nil || meta.Compatibility.Declared.Mode != "exclusive" {
+		t.Errorf("after set exclusive: Declared.Mode should be exclusive")
+	}
+}
+
+func TestFrontmatterWinsOverExplicitPortable(t *testing.T) {
+	libraryPath := t.TempDir()
+
+	// Create skill directory
+	skillDir := filepath.Join(libraryPath, "test-skill")
+	if err := os.MkdirAll(skillDir, 0755); err != nil {
+		t.Fatalf("mkdir failed: %v", err)
+	}
+
+	// Write SKILL.md with exclusive declaration
+	skillMdPath := filepath.Join(skillDir, "SKILL.md")
+	skillMdContent := `---
+name: test-skill
+description: Test skill
+exclusive: claude
+---
+# Test Skill
+`
+	if err := os.WriteFile(skillMdPath, []byte(skillMdContent), 0644); err != nil {
+		t.Fatalf("write SKILL.md failed: %v", err)
+	}
+
+	// Create sidecar with both explicit_portable=true AND a Declared block
+	metaPath := filepath.Join(skillDir, ".skill-meta.yaml")
+	metaContent := `version: 1
+compatibility:
+  mode: portable
+  explicit_portable: true
+  declared:
+    mode: exclusive
+    harness: claude
+`
+	if err := os.WriteFile(metaPath, []byte(metaContent), 0644); err != nil {
+		t.Fatalf("write .skill-meta.yaml failed: %v", err)
+	}
+
+	// Rebuild: frontmatter should win over explicit_portable
+	cat, err := rebuildCatalogFromLibrary(libraryPath)
+	if err != nil {
+		t.Fatalf("rebuild failed: %v", err)
+	}
+	if len(cat.Skills) != 1 {
+		t.Fatalf("expected 1 skill, got %d", len(cat.Skills))
+	}
+
+	skill := cat.Skills[0]
+	if skill.Compatibility.Mode != "exclusive" {
+		t.Errorf("rebuild: mode = %q, want exclusive (frontmatter wins)", skill.Compatibility.Mode)
+	}
+
+	// Verify explicit_portable is cleared (frontmatter takes precedence)
+	meta, _ := readSkillMeta(metaPath)
+	if meta.Compatibility.ExplicitPortable {
+		t.Errorf("rebuild: ExplicitPortable should be cleared when frontmatter declares mode")
 	}
 }
