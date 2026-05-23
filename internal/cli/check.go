@@ -13,6 +13,21 @@ import (
 	"github.com/Flow-Forge-Lab-Team/skills-manager/internal/state"
 )
 
+// GitHubFetcher is an interface for fetching files from GitHub.
+// It can be overridden in tests.
+type GitHubFetcher interface {
+	FetchFile(owner, repo, ref, path string) ([]byte, error)
+}
+
+// defaultFetcher implements GitHubFetcher using gh CLI.
+type defaultFetcher struct{}
+
+func (f *defaultFetcher) FetchFile(owner, repo, ref, path string) ([]byte, error) {
+	return fetchFileFromGitHub(owner, repo, ref, path)
+}
+
+var fetcher GitHubFetcher = &defaultFetcher{}
+
 type checkResult struct {
 	Skill  string `json:"skill"`
 	Status string `json:"status"`
@@ -172,12 +187,14 @@ func runCheckWithPoller(args []string, stdout io.Writer, stderr io.Writer, gf gl
 
 		// New commit detected: stage the update
 		if err := stageUpdate(skillName, libraryPath, meta, newCommit); err != nil {
-			fmt.Fprintf(outWriter, "%s: error (stage failed)\n", skillName)
+			fmt.Fprintf(outWriter, "%s: error (fetch failed)\n", skillName)
 			results = append(results, checkResult{
 				Skill:  skillName,
 				Status: "error",
 				Error:  err.Error(),
 			})
+			// Still upsert to refresh last_checked_at on fetch error
+			_ = stateDB.UpsertSkillPoll(skillName, newCommit, etag)
 			continue
 		}
 
@@ -232,37 +249,44 @@ func stageUpdate(skillName string, libraryPath string, meta skillMeta, newCommit
 	skillDir := filepath.Join(libraryPath, skillName)
 	pendingRoot := filepath.Join(skillDir, ".update-pending")
 
-	// Create pending directory
-	if err := os.MkdirAll(pendingRoot, 0755); err != nil {
-		return fmt.Errorf("create pending dir: %w", err)
-	}
-
-	// Read current SKILL.md as "from" snapshot
+	// Read current SKILL.md as "from-current" snapshot
 	currentPath := filepath.Join(skillDir, "SKILL.md")
 	currentContent, err := os.ReadFile(currentPath)
 	if err != nil {
 		return fmt.Errorf("read current SKILL.md: %w", err)
 	}
 
-	if err := os.WriteFile(filepath.Join(pendingRoot, "from.md"), currentContent, 0644); err != nil {
-		return fmt.Errorf("write from.md: %w", err)
-	}
-
-	// Fetch incoming SKILL.md via gh api
+	// Fetch incoming SKILL.md via fetcher (GitHub or mock in tests)
+	// Do this BEFORE creating the pending directory, so we don't leave a partial state on failure
 	owner, repo, err := parseGitHubURL(meta.Origin.URL)
 	if err != nil {
 		return fmt.Errorf("parse url for fetch: %w", err)
 	}
 
-	incomingContent, err := fetchFileFromGitHub(owner, repo, newCommit, "SKILL.md")
+	incomingContent, err := fetcher.FetchFile(owner, repo, newCommit, "SKILL.md")
 	if err != nil {
-		// If fetch fails, leave a placeholder to-file for testing/staging
-		// In production, this will fail but tests can substitute a pre-populated to.md
-		incomingContent = []byte("")
+		return fmt.Errorf("fetch incoming SKILL.md: %w", err)
 	}
 
-	if err := os.WriteFile(filepath.Join(pendingRoot, "to.md"), incomingContent, 0644); err != nil {
-		return fmt.Errorf("write to.md: %w", err)
+	// Now create the pending directory and write files
+	if err := os.MkdirAll(pendingRoot, 0755); err != nil {
+		return fmt.Errorf("create pending dir: %w", err)
+	}
+
+	fromCurrentDir := filepath.Join(pendingRoot, "from-current")
+	if err := os.MkdirAll(fromCurrentDir, 0755); err != nil {
+		return fmt.Errorf("mkdir from-current: %w", err)
+	}
+	if err := os.WriteFile(filepath.Join(fromCurrentDir, "SKILL.md"), currentContent, 0644); err != nil {
+		return fmt.Errorf("write from-current/SKILL.md: %w", err)
+	}
+
+	toIncomingDir := filepath.Join(pendingRoot, "to-incoming")
+	if err := os.MkdirAll(toIncomingDir, 0755); err != nil {
+		return fmt.Errorf("mkdir to-incoming: %w", err)
+	}
+	if err := os.WriteFile(filepath.Join(toIncomingDir, "SKILL.md"), incomingContent, 0644); err != nil {
+		return fmt.Errorf("write to-incoming/SKILL.md: %w", err)
 	}
 
 	// Write meta.yaml with version info

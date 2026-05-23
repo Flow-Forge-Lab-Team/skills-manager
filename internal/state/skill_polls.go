@@ -111,3 +111,11 @@ func (db *DB) InsertUpdate(skillName, fromVersion, toVersion, source string) err
 	}
 	return nil
 }
+
+// MarkUpdateAccepted marks a pending update as accepted, removing it from the list.
+func (db *DB) MarkUpdateAccepted(skillName string) error {
+	_, err := db.Exec(`
+		UPDATE updates SET status='accepted' WHERE skill_name=?
+	`, skillName)
+	return err
+}

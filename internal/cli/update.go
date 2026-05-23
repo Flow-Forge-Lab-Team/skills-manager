@@ -144,6 +144,13 @@ func runAcceptAllSafe(realStdout io.Writer, stdout io.Writer, stderr io.Writer, 
 		fmt.Fprintf(stderr, "manager home: %v\n", err)
 		return ExitOpError
 	}
+	stateDB, err := state.Open(home)
+	if err != nil {
+		fmt.Fprintf(stderr, "open state: %v\n", err)
+		return ExitOpError
+	}
+	defer stateDB.Close()
+
 	libraryPath, err := ensureLibrary(home)
 	if err != nil {
 		fmt.Fprintf(stderr, "ensure library: %v\n", err)
@@ -238,6 +245,10 @@ func runAcceptAllSafe(realStdout io.Writer, stdout io.Writer, stderr io.Writer, 
 	for _, pending := range safe {
 		if err := applyPendingUpdate(pending); err != nil {
 			fmt.Fprintf(stderr, "accept update for %s: %v\n", pending.Skill, err)
+			return ExitOpError
+		}
+		if err := stateDB.MarkUpdateAccepted(pending.Skill); err != nil {
+			fmt.Fprintf(stderr, "mark update accepted for %s: %v\n", pending.Skill, err)
 			return ExitOpError
 		}
 		fmt.Fprintf(stdout, "- %s: accepted\n", pending.Skill)
@@ -1008,21 +1019,40 @@ func runDiff(skill string, stdout io.Writer, stderr io.Writer) int {
 		return ExitOpError
 	}
 
-	// Read from and to files
-	fromPath := filepath.Join(pendingRoot, "from.md")
-	toPath := filepath.Join(pendingRoot, "to.md")
-
-	fromBytes, err := os.ReadFile(fromPath)
+	// Find from/to snapshots (look for from-current or from, to-incoming or to)
+	pending, err := findPendingUpdate(skill, pendingRoot)
 	if err != nil {
-		fmt.Fprintf(stderr, "read from.md: %v\n", err)
+		fmt.Fprintf(stderr, "find pending update: %v\n", err)
 		return ExitOpError
 	}
 
-	toBytes, err := os.ReadFile(toPath)
+	// Read SKILL.md from snapshots
+	fromFiles, err := snapshotFiles(pending.From)
 	if err != nil {
-		fmt.Fprintf(stderr, "read to.md: %v\n", err)
+		fmt.Fprintf(stderr, "read from snapshot: %v\n", err)
 		return ExitOpError
 	}
+
+	toFiles, err := snapshotFiles(pending.To)
+	if err != nil {
+		fmt.Fprintf(stderr, "read to snapshot: %v\n", err)
+		return ExitOpError
+	}
+
+	fromSnapshot, ok := fromFiles["SKILL.md"]
+	if !ok {
+		fmt.Fprintf(stderr, "SKILL.md not found in from snapshot\n")
+		return ExitOpError
+	}
+
+	toSnapshot, ok := toFiles["SKILL.md"]
+	if !ok {
+		fmt.Fprintf(stderr, "SKILL.md not found in to snapshot\n")
+		return ExitOpError
+	}
+
+	fromBytes := []byte(fromSnapshot.Content)
+	toBytes := []byte(toSnapshot.Content)
 
 	fromLines := strings.Split(strings.TrimRight(string(fromBytes), "\n"), "\n")
 	toLines := strings.Split(strings.TrimRight(string(toBytes), "\n"), "\n")

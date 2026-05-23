@@ -44,6 +44,23 @@ func (e *MockError) Error() string {
 
 var ErrGHNotFound = &MockError{msg: "gh CLI not found"}
 
+// fakeFetcher is a mock GitHubFetcher for testing.
+type fakeFetcher struct {
+	files map[string][]byte
+	err   error
+}
+
+func (f *fakeFetcher) FetchFile(owner, repo, ref, path string) ([]byte, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	key := owner + "/" + repo + ":" + ref + ":" + path
+	if content, ok := f.files[key]; ok {
+		return content, nil
+	}
+	return nil, &MockError{msg: "file not found"}
+}
+
 func TestCheckHappyPath(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("SKILLS_MANAGER_HOME", home)
@@ -78,7 +95,7 @@ origin:
 		t.Fatalf("write meta: %v", err)
 	}
 
-	// Create fake poller
+	// Create fake poller and fetcher
 	poller := &fakePoller{
 		responses: map[string]fakeResponse{
 			"user/pdf-skill": {
@@ -87,6 +104,14 @@ origin:
 			},
 		},
 	}
+
+	oldFetcher := fetcher
+	fetcher = &fakeFetcher{
+		files: map[string][]byte{
+			"user/pdf-skill:def5678:SKILL.md": []byte("---\nname: pdf\ndescription: PDF tool\n---\nBody v2\n"),
+		},
+	}
+	defer func() { fetcher = oldFetcher }()
 
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
@@ -107,11 +132,11 @@ origin:
 		t.Fatalf("pending dir not created: %v", err)
 	}
 
-	if _, err := os.Stat(filepath.Join(pendingRoot, "from.md")); err != nil {
-		t.Fatalf("from.md not created: %v", err)
+	if _, err := os.Stat(filepath.Join(pendingRoot, "from-current", "SKILL.md")); err != nil {
+		t.Fatalf("from-current/SKILL.md not created: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(pendingRoot, "to.md")); err != nil {
-		t.Fatalf("to.md not created: %v", err)
+	if _, err := os.Stat(filepath.Join(pendingRoot, "to-incoming", "SKILL.md")); err != nil {
+		t.Fatalf("to-incoming/SKILL.md not created: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(pendingRoot, "meta.yaml")); err != nil {
 		t.Fatalf("meta.yaml not created: %v", err)
@@ -181,6 +206,14 @@ origin:
 			},
 		},
 	}
+
+	oldFetcher := fetcher
+	fetcher = &fakeFetcher{
+		files: map[string][]byte{
+			"user/pdf-skill:def5678:SKILL.md": []byte("---\nname: pdf\n---\nBody updated\n"),
+		},
+	}
+	defer func() { fetcher = oldFetcher }()
 
 	// First check: should skip due to recent last_checked_at
 	var stdout bytes.Buffer
@@ -310,5 +343,88 @@ origin:
 	}
 	if pending != nil {
 		t.Fatalf("should not have created pending update when no change")
+	}
+}
+
+func TestCheckFetchFailureDoesNotStage(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+
+	stateDB, err := state.Open(home)
+	if err != nil {
+		t.Fatalf("Open state: %v", err)
+	}
+	defer stateDB.Close()
+
+	libraryPath := filepath.Join(home, "library")
+	skillDir := filepath.Join(libraryPath, "pdf")
+	if err := os.MkdirAll(skillDir, 0755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte("---\nname: pdf\n---\nBody\n"), 0644); err != nil {
+		t.Fatalf("write SKILL.md: %v", err)
+	}
+
+	metaContent := `version: 1
+origin:
+  type: github
+  url: https://github.com/user/pdf-skill
+  commit: abc1234
+`
+	if err := os.WriteFile(filepath.Join(skillDir, ".skill-meta.yaml"), []byte(metaContent), 0644); err != nil {
+		t.Fatalf("write meta: %v", err)
+	}
+
+	// Poller returns a new commit, but fetcher fails
+	poller := &fakePoller{
+		responses: map[string]fakeResponse{
+			"user/pdf-skill": {
+				commit: "def5678",
+				etag:   "w/\"new-etag\"",
+			},
+		},
+	}
+
+	oldFetcher := fetcher
+	fetcher = &fakeFetcher{
+		err: &MockError{msg: "network error"},
+	}
+	defer func() { fetcher = oldFetcher }()
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := runCheckWithPoller(nil, &stdout, &stderr, globalFlags{}, poller)
+	if code != 0 {
+		t.Fatalf("runCheck returned %d, want 0", code)
+	}
+
+	output := stdout.String()
+	if !strings.Contains(output, "error") || !strings.Contains(output, "fetch failed") {
+		t.Fatalf("stdout should indicate fetch error, got:\n%s", output)
+	}
+
+	// Verify .update-pending directory was NOT created
+	pendingRoot := filepath.Join(skillDir, ".update-pending")
+	if _, err := os.Stat(pendingRoot); !os.IsNotExist(err) {
+		t.Fatalf("should NOT create .update-pending on fetch error")
+	}
+
+	// Verify updates table was NOT inserted
+	pending, err := stateDB.GetPendingUpdate("pdf")
+	if err != nil {
+		t.Fatalf("GetPendingUpdate: %v", err)
+	}
+	if pending != nil {
+		t.Fatalf("should not have inserted update on fetch error, got: %+v", pending)
+	}
+
+	// Verify skill_polls WAS updated (last_checked_at advances)
+	poll, err := stateDB.GetSkillPoll("pdf")
+	if err != nil {
+		t.Fatalf("GetSkillPoll: %v", err)
+	}
+	if poll == nil || poll.LastCommit != "def5678" {
+		t.Fatalf("skill_polls should still be updated: %+v", poll)
 	}
 }
