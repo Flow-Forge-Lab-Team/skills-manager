@@ -410,6 +410,38 @@ func parseGitHubURL(url string) (owner, repo string, err error) {
 }
 
 // detectMultiFileChange compares the upstream tree against the live skill directory.
+// isWhitelistedLocalPath returns true if a skill-relative path is a local-only file
+// (not counted as divergence if present in live but not in upstream).
+// Whitelisted paths:
+//   - .skill-meta.yaml
+//   - .update-pending/**
+//   - references/** (local documentation)
+//   - scripts/** (local scripts, deferred to future PR for enforcement)
+//   - anything starting with . at root (e.g., .myconfig, .hidden)
+func isWhitelistedLocalPath(rel string) bool {
+	if rel == ".skill-meta.yaml" || rel == ".update-pending" {
+		return true
+	}
+	parts := strings.Split(filepath.ToSlash(rel), "/")
+	if len(parts) == 0 {
+		return false
+	}
+
+	first := parts[0]
+
+	// Whitelisted directories at root
+	if first == ".update-pending" || first == "references" || first == "scripts" {
+		return true
+	}
+
+	// Dotfiles at root
+	if strings.HasPrefix(first, ".") {
+		return true
+	}
+
+	return false
+}
+
 // Returns true if any files other than SKILL.md differ (considering whitelisted local files).
 // Whitelisted paths (not counted as divergence if only in live, not upstream):
 //   - .skill-meta.yaml
@@ -461,8 +493,54 @@ func detectMultiFileChange(skillName string, libraryPath string, meta skillMeta,
 		}
 	}
 
-	// Don't check if live has files upstream doesn't—those are local-only additions
-	// (like .skill-meta.yaml, references/, scripts/, etc.) and don't count as divergence.
+	// Check if upstream deleted any non-whitelisted files. Walk live directory and
+	// for each file not in upstream, check if it's whitelisted (local-only).
+	// If any non-whitelisted deletion is found, treat as multi-file change.
+	var deletionFound bool
+	if err := filepath.WalkDir(skillDir, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+
+		rel, err := filepath.Rel(skillDir, path)
+		if err != nil {
+			return err
+		}
+
+		if rel == "." {
+			return nil
+		}
+
+		// Skip .update-pending directory
+		if rel == ".update-pending" {
+			return filepath.SkipDir
+		}
+
+		// Only check files, not directories
+		if d.IsDir() {
+			return nil
+		}
+
+		// Normalize path for comparison with upstreamMap
+		normalizedPath := filepath.ToSlash(rel)
+
+		// If file exists in live but not upstream, check if it's whitelisted
+		if _, existsInUpstream := upstreamMap[normalizedPath]; !existsInUpstream {
+			if !isWhitelistedLocalPath(rel) {
+				// Upstream deleted this non-whitelisted file → multi-file change
+				deletionFound = true
+				return filepath.SkipDir // Short-circuit
+			}
+		}
+
+		return nil
+	}); err != nil {
+		return false, err
+	}
+
+	if deletionFound {
+		return true, nil
+	}
 
 	return false, nil
 }

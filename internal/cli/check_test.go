@@ -1741,3 +1741,97 @@ origin:
 		t.Fatalf("pending dir should be created: %v", err)
 	}
 }
+
+// TestCheckRejectsUpstreamDeletion verifies that upstream deletions of non-SKILL files are detected.
+// Regression test for: upstream deletes a file (e.g., references/foo.md) but live still has it →
+// reject with multi-file error, no staging.
+func TestCheckRejectsUpstreamDeletion(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+
+	stateDB, err := state.Open(home)
+	if err != nil {
+		t.Fatalf("Open state: %v", err)
+	}
+	defer stateDB.Close()
+
+	libraryPath := filepath.Join(home, "library")
+	skillDir := filepath.Join(libraryPath, "pdf")
+	if err := os.MkdirAll(skillDir, 0755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	// Write initial SKILL.md
+	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte("---\nname: pdf\n---\nBody v1\n"), 0644); err != nil {
+		t.Fatalf("write SKILL.md: %v", err)
+	}
+
+	metaContent := `version: 1
+origin:
+  type: github
+  url: https://github.com/user/pdf-skill
+  commit: abc1234
+`
+	if err := os.WriteFile(filepath.Join(skillDir, ".skill-meta.yaml"), []byte(metaContent), 0644); err != nil {
+		t.Fatalf("write meta: %v", err)
+	}
+
+	// Create a data/config.json file locally (not whitelisted)
+	if err := os.MkdirAll(filepath.Join(skillDir, "data"), 0755); err != nil {
+		t.Fatalf("mkdir data: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(skillDir, "data", "config.json"), []byte(`{"key": "value"}`), 0644); err != nil {
+		t.Fatalf("write data/config.json: %v", err)
+	}
+
+	poller := &fakePoller{
+		responses: map[string]fakeResponse{
+			"user/pdf-skill": {
+				commit: "def5678",
+				etag:   "w/\"new-etag\"",
+			},
+		},
+	}
+
+	oldFetcher := fetcher
+	fetcher = &fakeFetcher{
+		files: map[string][]byte{
+			"user/pdf-skill:def5678:SKILL.md": []byte("---\nname: pdf\n---\nBody v2\n"),
+		},
+		tree: map[string][]TreeEntry{
+			"user/pdf-skill:def5678:": {
+				// Upstream only has SKILL.md (deleted references/foo.md)
+				{Path: "SKILL.md", SHA: gitBlobSHA([]byte("---\nname: pdf\n---\nBody v2\n")), Type: "blob"},
+			},
+		},
+	}
+	defer func() { fetcher = oldFetcher }()
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := runCheckWithPoller([]string{"--force"}, &stdout, &stderr, globalFlags{}, poller)
+	if code != 0 {
+		t.Fatalf("runCheck returned %d, want 0", code)
+	}
+
+	output := stdout.String()
+	if !strings.Contains(output, "error") || !strings.Contains(output, "multi-file") || !strings.Contains(output, "upstream") {
+		t.Fatalf("stdout should indicate multi-file error due to upstream deletion, got:\n%s", output)
+	}
+
+	// Verify .update-pending was NOT created
+	pendingRoot := filepath.Join(skillDir, ".update-pending")
+	if _, err := os.Stat(pendingRoot); !os.IsNotExist(err) {
+		t.Fatalf("should NOT create .update-pending when upstream deletes files")
+	}
+
+	// Verify origin.commit was not advanced
+	metaPath := filepath.Join(skillDir, ".skill-meta.yaml")
+	data, err := os.ReadFile(metaPath)
+	if err != nil {
+		t.Fatalf("read updated meta: %v", err)
+	}
+	if strings.Contains(string(data), "def5678") {
+		t.Fatalf("origin.commit should NOT advance on multi-file deletion, but it did")
+	}
+}
