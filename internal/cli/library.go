@@ -529,7 +529,12 @@ func writeSkillMeta(path string, meta skillMeta) error {
 		}
 	}
 
-	if len(meta.Requirements.Tools) > 0 || meta.Requirements.Inferred {
+	// Write requirements block if ANY requirement field is non-empty or Inferred is true
+	hasRequirements := len(meta.Requirements.Tools) > 0 ||
+		len(meta.Requirements.MCPServers) > 0 ||
+		meta.Requirements.Model.ToolUse != "" ||
+		meta.Requirements.Inferred
+	if hasRequirements {
 		fmt.Fprint(&buf, "requirements:\n")
 		if len(meta.Requirements.Tools) > 0 {
 			allRequired := true
@@ -679,8 +684,12 @@ func rebuildCatalogFromLibrary(libraryPath string) (catalog, error) {
 			}
 		}
 
-		// Infer requirements if not explicitly provided or if previously inferred
-		if meta.Requirements.Inferred || len(meta.Requirements.Tools) == 0 {
+		// Infer requirements only if marked as inferred or all requirement fields are empty.
+		// If Inferred=false and any field is populated, preserve the explicit requirements.
+		hasExplicitRequirements := len(meta.Requirements.Tools) > 0 ||
+			len(meta.Requirements.MCPServers) > 0 ||
+			meta.Requirements.Model.ToolUse != ""
+		if meta.Requirements.Inferred || !hasExplicitRequirements {
 			inferred := inferRequirements(detectors, skillBody)
 			meta.Requirements = inferred
 			meta.Requirements.Inferred = true
