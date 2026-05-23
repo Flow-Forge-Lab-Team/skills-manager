@@ -1194,17 +1194,21 @@ origin:
 	}
 
 	newSKILLContent := []byte("---\nname: advanced\ndescription: Advanced skill\n---\nBody v1 updated\n")
+	oldSKILLContent := []byte("---\nname: advanced\ndescription: Advanced skill\n---\nBody v1\n")
 	oldFetcher := fetcher
 	fetcher = &fakeFetcher{
 		files: map[string][]byte{
 			"user/advanced-skill:def5678:SKILL.md": newSKILLContent,
 		},
 		tree: map[string][]TreeEntry{
+			// Old upstream tree (at installed commit abc1234): sibling files present.
+			"user/advanced-skill:abc1234:": {
+				{Path: "SKILL.md", SHA: gitBlobSHA(oldSKILLContent), Type: "blob"},
+				{Path: "references/example.md", SHA: gitBlobSHA([]byte("# Example\nThis is a reference file\n")), Type: "blob"},
+				{Path: "scripts/foo.sh", SHA: gitBlobSHA([]byte("#!/bin/bash\necho hello\n")), Type: "blob"},
+			},
+			// New upstream tree (at new commit def5678): sibling files unchanged.
 			"user/advanced-skill:def5678:": {
-				// Upstream still has the sibling files unchanged — declaring them
-				// in the tree with matching blob SHAs proves "no upstream change"
-				// for those paths, so multi-file detection allows the SKILL.md-only
-				// update through.
 				{Path: "SKILL.md", SHA: gitBlobSHA(newSKILLContent), Type: "blob"},
 				{Path: "references/example.md", SHA: gitBlobSHA([]byte("# Example\nThis is a reference file\n")), Type: "blob"},
 				{Path: "scripts/foo.sh", SHA: gitBlobSHA([]byte("#!/bin/bash\necho hello\n")), Type: "blob"},
@@ -1807,8 +1811,13 @@ origin:
 			"user/pdf-skill:def5678:SKILL.md": []byte("---\nname: pdf\n---\nBody v2\n"),
 		},
 		tree: map[string][]TreeEntry{
+			// Old upstream tree (at installed commit abc1234): references/foo.md was present.
+			"user/pdf-skill:abc1234:": {
+				{Path: "SKILL.md", SHA: gitBlobSHA([]byte("---\nname: pdf\n---\nBody v1\n")), Type: "blob"},
+				{Path: "references/foo.md", SHA: gitBlobSHA([]byte("reference content")), Type: "blob"},
+			},
+			// New upstream tree (at new commit def5678): references/foo.md deleted upstream.
 			"user/pdf-skill:def5678:": {
-				// Upstream only has SKILL.md (deleted references/foo.md)
 				{Path: "SKILL.md", SHA: gitBlobSHA([]byte("---\nname: pdf\n---\nBody v2\n")), Type: "blob"},
 			},
 		},
@@ -1946,4 +1955,298 @@ origin:
 	if poll.ETag != "w/\"new-etag\"" {
 		t.Fatalf("skill_polls.etag should be updated to new-etag, got: %s", poll.ETag)
 	}
+}
+
+// TestCheckAllowsSkillMdUpdateWithLocalCompanionEdit is the regression case for the
+// codex pass-12 finding: a user has hand-edited a companion file locally (references/foo.md)
+// but upstream only changed SKILL.md. The old live-comparison algorithm would see the local
+// edit as a SHA mismatch and reject the update as a multi-file change. The new tree-vs-tree
+// algorithm correctly ignores local edits — only upstream changes matter.
+func TestCheckAllowsSkillMdUpdateWithLocalCompanionEdit(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+
+	stateDB, err := state.Open(home)
+	if err != nil {
+		t.Fatalf("Open state: %v", err)
+	}
+	defer stateDB.Close()
+
+	libraryPath := filepath.Join(home, "library")
+	skillDir := filepath.Join(libraryPath, "pdf")
+	if err := os.MkdirAll(skillDir, 0755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	// Live state: SKILL.md at old content, references/foo.md locally edited (different from upstream).
+	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte("---\nname: pdf\n---\nBody v1\n"), 0644); err != nil {
+		t.Fatalf("write SKILL.md: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(skillDir, "references"), 0755); err != nil {
+		t.Fatalf("mkdir references: %v", err)
+	}
+	// Locally edited companion file — differs from the upstream SHA.
+	if err := os.WriteFile(filepath.Join(skillDir, "references", "foo.md"), []byte("locally edited content\n"), 0644); err != nil {
+		t.Fatalf("write references/foo.md: %v", err)
+	}
+
+	metaContent := `version: 1
+origin:
+  type: github
+  url: https://github.com/user/pdf-skill
+  commit: abc1234
+`
+	if err := os.WriteFile(filepath.Join(skillDir, ".skill-meta.yaml"), []byte(metaContent), 0644); err != nil {
+		t.Fatalf("write meta: %v", err)
+	}
+
+	poller := &fakePoller{
+		responses: map[string]fakeResponse{
+			"user/pdf-skill": {
+				commit: "def5678",
+				etag:   "w/\"new-etag\"",
+			},
+		},
+	}
+
+	newSKILLContent := []byte("---\nname: pdf\n---\nBody v2\n")
+	oldFetcher := fetcher
+	fetcher = &fakeFetcher{
+		files: map[string][]byte{
+			"user/pdf-skill:def5678:SKILL.md": newSKILLContent,
+		},
+		tree: map[string][]TreeEntry{
+			// Old upstream tree: SKILL.md=A, references/foo.md=X (original upstream content).
+			"user/pdf-skill:abc1234:": {
+				{Path: "SKILL.md", SHA: gitBlobSHA([]byte("---\nname: pdf\n---\nBody v1\n")), Type: "blob"},
+				{Path: "references/foo.md", SHA: gitBlobSHA([]byte("upstream original content\n")), Type: "blob"},
+			},
+			// New upstream tree: SKILL.md=B, references/foo.md=X (unchanged upstream).
+			"user/pdf-skill:def5678:": {
+				{Path: "SKILL.md", SHA: gitBlobSHA(newSKILLContent), Type: "blob"},
+				{Path: "references/foo.md", SHA: gitBlobSHA([]byte("upstream original content\n")), Type: "blob"},
+			},
+		},
+	}
+	defer func() { fetcher = oldFetcher }()
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := runCheckWithPoller([]string{"--force"}, &stdout, &stderr, globalFlags{}, poller)
+	if code != 0 {
+		t.Fatalf("runCheck returned %d, want 0\nstderr: %s", code, stderr.String())
+	}
+
+	output := stdout.String()
+	// Must NOT reject as multi-file: the companion edit is local, upstream only changed SKILL.md.
+	if strings.Contains(output, "multi-file") {
+		t.Fatalf("should NOT reject as multi-file when companion file is only locally edited, got:\n%s", output)
+	}
+	if !strings.Contains(output, "updated") {
+		t.Fatalf("stdout should show 'updated', got:\n%s", output)
+	}
+
+	// Verify staging proceeded
+	pendingRoot := filepath.Join(skillDir, ".update-pending")
+	if _, err := os.Stat(pendingRoot); err != nil {
+		t.Fatalf("pending dir should be created: %v", err)
+	}
+}
+
+// TestCheckRejectsRealUpstreamMultiFile verifies that when upstream genuinely modifies a
+// companion file (different SHA in old vs new upstream tree), the check is rejected.
+func TestCheckRejectsRealUpstreamMultiFile(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+
+	stateDB, err := state.Open(home)
+	if err != nil {
+		t.Fatalf("Open state: %v", err)
+	}
+	defer stateDB.Close()
+
+	libraryPath := filepath.Join(home, "library")
+	skillDir := filepath.Join(libraryPath, "pdf")
+	if err := os.MkdirAll(skillDir, 0755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte("---\nname: pdf\n---\nBody v1\n"), 0644); err != nil {
+		t.Fatalf("write SKILL.md: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(skillDir, "references"), 0755); err != nil {
+		t.Fatalf("mkdir references: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(skillDir, "references", "foo.md"), []byte("original upstream content\n"), 0644); err != nil {
+		t.Fatalf("write references/foo.md: %v", err)
+	}
+
+	metaContent := `version: 1
+origin:
+  type: github
+  url: https://github.com/user/pdf-skill
+  commit: abc1234
+`
+	if err := os.WriteFile(filepath.Join(skillDir, ".skill-meta.yaml"), []byte(metaContent), 0644); err != nil {
+		t.Fatalf("write meta: %v", err)
+	}
+
+	poller := &fakePoller{
+		responses: map[string]fakeResponse{
+			"user/pdf-skill": {
+				commit: "def5678",
+				etag:   "w/\"new-etag\"",
+			},
+		},
+	}
+
+	newSKILLContent := []byte("---\nname: pdf\n---\nBody v2\n")
+	oldFetcher := fetcher
+	fetcher = &fakeFetcher{
+		files: map[string][]byte{
+			"user/pdf-skill:def5678:SKILL.md": newSKILLContent,
+		},
+		tree: map[string][]TreeEntry{
+			// Old upstream tree: SKILL.md=A, references/foo.md=X.
+			"user/pdf-skill:abc1234:": {
+				{Path: "SKILL.md", SHA: gitBlobSHA([]byte("---\nname: pdf\n---\nBody v1\n")), Type: "blob"},
+				{Path: "references/foo.md", SHA: gitBlobSHA([]byte("original upstream content\n")), Type: "blob"},
+			},
+			// New upstream tree: SKILL.md=B, references/foo.md=Y (upstream modified it).
+			"user/pdf-skill:def5678:": {
+				{Path: "SKILL.md", SHA: gitBlobSHA(newSKILLContent), Type: "blob"},
+				{Path: "references/foo.md", SHA: gitBlobSHA([]byte("upstream modified content\n")), Type: "blob"},
+			},
+		},
+	}
+	defer func() { fetcher = oldFetcher }()
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := runCheckWithPoller([]string{"--force"}, &stdout, &stderr, globalFlags{}, poller)
+	if code != 0 {
+		t.Fatalf("runCheck returned %d, want 0", code)
+	}
+
+	output := stdout.String()
+	if !strings.Contains(output, "multi-file") {
+		t.Fatalf("stdout should indicate multi-file error for real upstream change, got:\n%s", output)
+	}
+
+	// Verify .update-pending was NOT created
+	pendingRoot := filepath.Join(skillDir, ".update-pending")
+	if _, err := os.Stat(pendingRoot); !os.IsNotExist(err) {
+		t.Fatalf("should NOT create .update-pending on real upstream multi-file change")
+	}
+}
+
+// TestCheckFallsBackToLiveWhenOldTreeMissing verifies that when the old upstream tree
+// cannot be fetched (e.g. old commit was force-pushed away), the check falls back to
+// live-comparison rather than crashing or silently skipping detection.
+func TestCheckFallsBackToLiveWhenOldTreeMissing(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+
+	stateDB, err := state.Open(home)
+	if err != nil {
+		t.Fatalf("Open state: %v", err)
+	}
+	defer stateDB.Close()
+
+	libraryPath := filepath.Join(home, "library")
+	skillDir := filepath.Join(libraryPath, "pdf")
+	if err := os.MkdirAll(skillDir, 0755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte("---\nname: pdf\n---\nBody v1\n"), 0644); err != nil {
+		t.Fatalf("write SKILL.md: %v", err)
+	}
+
+	metaContent := `version: 1
+origin:
+  type: github
+  url: https://github.com/user/pdf-skill
+  commit: abc1234
+`
+	if err := os.WriteFile(filepath.Join(skillDir, ".skill-meta.yaml"), []byte(metaContent), 0644); err != nil {
+		t.Fatalf("write meta: %v", err)
+	}
+
+	poller := &fakePoller{
+		responses: map[string]fakeResponse{
+			"user/pdf-skill": {
+				commit: "def5678",
+				etag:   "w/\"new-etag\"",
+			},
+		},
+	}
+
+	newSKILLContent := []byte("---\nname: pdf\n---\nBody v2\n")
+
+	// Use a fetcher that errors on old-tree fetch but succeeds for the new tree and file.
+	// We implement this with a custom fakeFetcher that tracks which ref is requested.
+	oldFetcher := fetcher
+	fetcher = &treeErrorOnOldCommitFetcher{
+		oldCommit: "abc1234",
+		files: map[string][]byte{
+			"user/pdf-skill:def5678:SKILL.md": newSKILLContent,
+		},
+		newTree: map[string][]TreeEntry{
+			"user/pdf-skill:def5678:": {
+				{Path: "SKILL.md", SHA: gitBlobSHA(newSKILLContent), Type: "blob"},
+			},
+		},
+	}
+	defer func() { fetcher = oldFetcher }()
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := runCheckWithPoller([]string{"--force"}, &stdout, &stderr, globalFlags{}, poller)
+	if code != 0 {
+		t.Fatalf("runCheck returned %d, want 0\nstderr: %s", code, stderr.String())
+	}
+
+	output := stdout.String()
+	// Should warn about fallback
+	if !strings.Contains(output, "warn") || !strings.Contains(output, "old tree unavailable") {
+		t.Fatalf("stdout should contain fallback warning, got:\n%s", output)
+	}
+	// Detection still ran (live-comparison fallback); only SKILL.md differs, so update proceeds.
+	if !strings.Contains(output, "updated") {
+		t.Fatalf("stdout should show 'updated' after fallback succeeds, got:\n%s", output)
+	}
+
+	// Verify staging proceeded despite fallback
+	pendingRoot := filepath.Join(skillDir, ".update-pending")
+	if _, err := os.Stat(pendingRoot); err != nil {
+		t.Fatalf("pending dir should be created: %v", err)
+	}
+}
+
+// treeErrorOnOldCommitFetcher is a helper that returns an error when FetchTree is called
+// with the old commit ref, simulating a force-push that removed the old commit.
+type treeErrorOnOldCommitFetcher struct {
+	oldCommit string
+	files     map[string][]byte
+	newTree   map[string][]TreeEntry
+}
+
+func (f *treeErrorOnOldCommitFetcher) FetchFile(owner, repo, ref, path string) ([]byte, error) {
+	key := owner + "/" + repo + ":" + ref + ":" + path
+	if content, ok := f.files[key]; ok {
+		return content, nil
+	}
+	return nil, &MockError{msg: "file not found"}
+}
+
+func (f *treeErrorOnOldCommitFetcher) FetchTree(owner, repo, ref, subPath string) ([]TreeEntry, error) {
+	if ref == f.oldCommit {
+		return nil, &MockError{msg: "old commit not found (force-pushed away)"}
+	}
+	key := owner + "/" + repo + ":" + ref + ":" + subPath
+	if tree, ok := f.newTree[key]; ok {
+		return tree, nil
+	}
+	return []TreeEntry{}, nil
 }

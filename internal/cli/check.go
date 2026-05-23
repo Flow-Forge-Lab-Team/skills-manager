@@ -264,8 +264,19 @@ func runCheckWithPoller(args []string, stdout io.Writer, stderr io.Writer, gf gl
 			continue
 		}
 
-		// Check if any files other than SKILL.md differ from live
-		multiFileChange, upstreamSkillSHA, err := detectMultiFileChange(skillName, libraryPath, meta, upstreamTree, upstreamPath)
+		// Fetch the OLD upstream tree (at the installed commit) so we can compare
+		// old-vs-new upstream rather than new-upstream-vs-live. This prevents local
+		// edits to companion files from being misidentified as upstream multi-file changes.
+		// On error, fall back to live-comparison (e.g. old commit was force-pushed away).
+		var multiFileChange bool
+		var upstreamSkillSHA string
+		oldTree, oldTreeErr := fetcher.FetchTree(treeOwner, treeRepo, meta.Origin.Commit, upstreamPath)
+		if oldTreeErr != nil {
+			fmt.Fprintf(outWriter, "%s: warn (old tree unavailable, falling back to live comparison)\n", skillName)
+			multiFileChange, upstreamSkillSHA, err = detectMultiFileChangeFromLive(skillName, libraryPath, meta, upstreamTree, upstreamPath)
+		} else {
+			multiFileChange, upstreamSkillSHA, err = detectMultiFileChangeFromTrees(oldTree, upstreamTree, upstreamPath)
+		}
 		if err != nil {
 			fmt.Fprintf(outWriter, "%s: error (tree comparison failed)\n", skillName)
 			results = append(results, checkResult{
@@ -440,7 +451,6 @@ func parseGitHubURL(url string) (owner, repo string, err error) {
 	return owner, repo, nil
 }
 
-// detectMultiFileChange compares the upstream tree against the live skill directory.
 // isWhitelistedLocalPath returns true if a skill-relative path is a local-only
 // artifact that the manager itself creates, so its presence in live (but not
 // upstream) is not real divergence.
@@ -449,6 +459,10 @@ func parseGitHubURL(url string) (owner, repo string, err error) {
 // content directories like references/ and scripts/ are NOT whitelisted —
 // upstream changes (additions, modifications, or deletions) there must be
 // surfaced as multi-file changes per the v0.1 boundary.
+//
+// The whitelist is used by detectMultiFileChangeFromLive (the fallback path).
+// detectMultiFileChangeFromTrees does not need it: local-only files do not
+// appear in either upstream tree, so they are never seen.
 func isWhitelistedLocalPath(rel string) bool {
 	parts := strings.Split(filepath.ToSlash(rel), "/")
 	if len(parts) == 0 {
@@ -463,100 +477,120 @@ func isWhitelistedLocalPath(rel string) bool {
 	return false
 }
 
-// Returns (multiFileChange bool, upstreamSkillSHA string, err error).
-// upstreamSkillSHA is the git blob SHA of SKILL.md in the upstream tree ("" if not present).
-// Whitelisted paths (not counted as divergence if only in live, not upstream):
-//   - .skill-meta.yaml
-//   - .update-pending/**
-//   - .git, .DS_Store, .gitignore
-func detectMultiFileChange(skillName string, libraryPath string, meta skillMeta, upstreamTree []TreeEntry, upstreamPath string) (bool, string, error) {
-	skillDir := filepath.Join(libraryPath, skillName)
-
-	// Build a map of upstream entries. Entries from FetchTree have the full path from repo root,
-	// which includes upstreamPath as a prefix. Strip that to get skill-relative paths.
-	upstreamMap := make(map[string]string)
+// buildSkillRelativeMap builds a path→SHA map from a FetchTree result, stripping the
+// upstreamPath prefix so keys are skill-relative (e.g. "SKILL.md", "references/foo.md").
+func buildSkillRelativeMap(tree []TreeEntry, upstreamPath string) map[string]string {
+	m := make(map[string]string, len(tree))
 	prefix := ""
 	if upstreamPath != "" {
 		prefix = strings.Trim(upstreamPath, "/") + "/"
 	}
-
-	var upstreamSkillSHA string
-	for _, entry := range upstreamTree {
-		// Remove the prefix to get skill-relative path
-		relativePath := entry.Path
-		if prefix != "" && strings.HasPrefix(relativePath, prefix) {
-			relativePath = relativePath[len(prefix):]
+	for _, entry := range tree {
+		rel := entry.Path
+		if prefix != "" && strings.HasPrefix(rel, prefix) {
+			rel = rel[len(prefix):]
 		}
-		upstreamMap[relativePath] = entry.SHA
+		m[rel] = entry.SHA
 	}
-	upstreamSkillSHA = upstreamMap["SKILL.md"]
+	return m
+}
 
-	// Check each upstream file against live
-	for upstreamPath, upstreamSHA := range upstreamMap {
-		if upstreamPath == "SKILL.md" {
-			// SKILL.md is expected to differ; continue
+// detectMultiFileChangeFromTrees compares oldTree (upstream at the installed commit)
+// against newTree (upstream at the new commit). Returns true if anything other than
+// SKILL.md changed upstream (added, removed, or modified). Local edits are irrelevant
+// because neither tree contains local-only files.
+//
+// Returns (multiFileChange bool, upstreamSkillSHA string, err error).
+// upstreamSkillSHA is the blob SHA of SKILL.md in newTree ("" if absent).
+func detectMultiFileChangeFromTrees(oldTree, newTree []TreeEntry, upstreamPath string) (bool, string, error) {
+	oldMap := buildSkillRelativeMap(oldTree, upstreamPath)
+	newMap := buildSkillRelativeMap(newTree, upstreamPath)
+
+	upstreamSkillSHA := newMap["SKILL.md"]
+
+	// Walk every path that appears in either tree.
+	seen := make(map[string]bool, len(oldMap)+len(newMap))
+	for p := range oldMap {
+		seen[p] = true
+	}
+	for p := range newMap {
+		seen[p] = true
+	}
+
+	for p := range seen {
+		if p == "SKILL.md" {
+			// Expected to differ; skip.
 			continue
 		}
-
-		liveFilePath := filepath.Join(skillDir, filepath.FromSlash(upstreamPath))
-		content, err := os.ReadFile(liveFilePath)
-		if err != nil && !os.IsNotExist(err) {
-			return false, upstreamSkillSHA, fmt.Errorf("read live file %s: %w", upstreamPath, err)
-		}
-
-		if os.IsNotExist(err) {
-			// File exists upstream but not in live: multi-file change
-			return true, upstreamSkillSHA, nil
-		}
-
-		// File exists in both: check if content differs
-		liveSHA := gitBlobSHA(content)
-		if liveSHA != upstreamSHA {
-			// Content differs: multi-file change
+		oldSHA, inOld := oldMap[p]
+		newSHA, inNew := newMap[p]
+		switch {
+		case inOld && inNew && oldSHA == newSHA:
+			// Unchanged upstream — allowed.
+		default:
+			// Added, removed, or modified upstream → multi-file change.
 			return true, upstreamSkillSHA, nil
 		}
 	}
 
-	// Check if upstream deleted any non-whitelisted files. Walk live directory and
-	// for each file not in upstream, check if it's whitelisted (local-only).
-	// If any non-whitelisted deletion is found, treat as multi-file change.
+	return false, upstreamSkillSHA, nil
+}
+
+// detectMultiFileChangeFromLive compares the new upstream tree against the live skill
+// directory. This is the fallback used when the old upstream tree cannot be fetched
+// (e.g. the old commit was force-pushed away). The whitelist prevents local-only
+// manager-generated files from being misidentified as upstream deletions.
+//
+// Returns (multiFileChange bool, upstreamSkillSHA string, err error).
+func detectMultiFileChangeFromLive(skillName string, libraryPath string, meta skillMeta, upstreamTree []TreeEntry, upstreamPath string) (bool, string, error) {
+	skillDir := filepath.Join(libraryPath, skillName)
+	upstreamMap := buildSkillRelativeMap(upstreamTree, upstreamPath)
+	upstreamSkillSHA := upstreamMap["SKILL.md"]
+
+	// Check each upstream file against live.
+	for p, upstreamSHA := range upstreamMap {
+		if p == "SKILL.md" {
+			continue
+		}
+		liveFilePath := filepath.Join(skillDir, filepath.FromSlash(p))
+		content, err := os.ReadFile(liveFilePath)
+		if err != nil && !os.IsNotExist(err) {
+			return false, upstreamSkillSHA, fmt.Errorf("read live file %s: %w", p, err)
+		}
+		if os.IsNotExist(err) {
+			return true, upstreamSkillSHA, nil
+		}
+		if gitBlobSHA(content) != upstreamSHA {
+			return true, upstreamSkillSHA, nil
+		}
+	}
+
+	// Check for upstream deletions: live files absent from the new upstream tree.
 	var deletionFound bool
 	if err := filepath.WalkDir(skillDir, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-
 		rel, err := filepath.Rel(skillDir, path)
 		if err != nil {
 			return err
 		}
-
 		if rel == "." {
 			return nil
 		}
-
-		// Skip .update-pending directory
 		if rel == ".update-pending" {
 			return filepath.SkipDir
 		}
-
-		// Only check files, not directories
 		if d.IsDir() {
 			return nil
 		}
-
-		// Normalize path for comparison with upstreamMap
 		normalizedPath := filepath.ToSlash(rel)
-
-		// If file exists in live but not upstream, check if it's whitelisted
 		if _, existsInUpstream := upstreamMap[normalizedPath]; !existsInUpstream {
 			if !isWhitelistedLocalPath(rel) {
-				// Upstream deleted this non-whitelisted file → multi-file change
 				deletionFound = true
-				return filepath.SkipDir // Short-circuit
+				return filepath.SkipDir
 			}
 		}
-
 		return nil
 	}); err != nil {
 		return false, upstreamSkillSHA, err
@@ -565,7 +599,6 @@ func detectMultiFileChange(skillName string, libraryPath string, meta skillMeta,
 	if deletionFound {
 		return true, upstreamSkillSHA, nil
 	}
-
 	return false, upstreamSkillSHA, nil
 }
 
