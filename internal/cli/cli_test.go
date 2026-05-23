@@ -669,3 +669,40 @@ func assertFileContent(t *testing.T, path string, want string) {
 		t.Fatalf("%s = %q, want %q", path, string(data), want)
 	}
 }
+
+func TestInstallBlocksObjectFormToolRequirements(t *testing.T) {
+	home := t.TempDir()
+	project := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+
+	writeFile(t, filepath.Join(project, ".skills", "project.yaml"), `version: 1
+name: demo
+categories: [Engineering]
+harnesses: [claude]
+`)
+	writeFile(t, filepath.Join(home, "library", "catalog.yaml"), `version: 1
+skills:
+  - name: tool-needer
+    categories: [Engineering]
+    compatibility:
+      mode: portable
+    requirements:
+      tools:
+        - name: definitely-missing-tool-xyz
+          required: true
+`)
+	writeFile(t, filepath.Join(home, "library", "tool-needer", "SKILL.md"), "needs tool\n")
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := Run([]string{"install", "--project", project}, &stdout, &stderr)
+	if code != 3 {
+		t.Fatalf("Run returned %d, want 3 (blocked)\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "blocked, missing required tools: definitely-missing-tool-xyz") {
+		t.Fatalf("expected blocked message; stdout:\n%s", stdout.String())
+	}
+	if _, err := os.Stat(filepath.Join(project, ".claude", "skills", "tool-needer")); !os.IsNotExist(err) {
+		t.Fatalf("skill should not be installed when required tool missing")
+	}
+}
