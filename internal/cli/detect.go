@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/Flow-Forge-Lab-Team/skills-manager/detectors"
@@ -279,6 +280,7 @@ func applyAutoClassification(detected map[string]detectionResult) compatibilityD
 
 	// If multiple harnesses with at-least-medium confidence: compatible
 	if len(mediumOrHigher) > 1 {
+		sort.Strings(mediumOrHigher)
 		return compatibilityDeclaration{
 			Mode:      "compatible",
 			Harnesses: mediumOrHigher,

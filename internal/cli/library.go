@@ -206,6 +206,7 @@ func readSkillMeta(path string) (skillMeta, error) {
 	meta := skillMeta{Version: 1}
 	var section string
 	var sectionIndent int
+	var detectedHarness string // current harness key under compatibility:detected
 
 	for i := 0; i < len(lines); i++ {
 		raw := stripComment(lines[i])
@@ -362,6 +363,17 @@ func readSkillMeta(path string) (skillMeta, error) {
 				if meta.Compatibility.Detected == nil {
 					meta.Compatibility.Detected = make(map[string]detectionResult)
 				}
+				detectedHarness = ""
+			}
+		// When inside compatibility:detected, a new key at the harness level is a harness name
+		default:
+			if section == "compatibility:detected" && currentIndent == sectionIndent+1 {
+				// Treat this key as a harness name under detected
+				detectedHarness = key
+				if _, exists := meta.Compatibility.Detected[detectedHarness]; !exists {
+					meta.Compatibility.Detected[detectedHarness] = detectionResult{}
+				}
+				continue // do not fall through to other cases for this key
 			}
 		case "tools":
 			if section == "requirements" || section == "requirements:model" {
@@ -661,6 +673,15 @@ func rebuildCatalogFromLibrary(libraryPath string) (catalog, error) {
 
 		// Read skill body once for detection and inference
 		skillBody, _ := readSkillBody(skillMdPath)
+
+		// Ensure Detected is populated from live detection for the purpose of the
+		// "did anything change?" comparison. This makes the no-op rewrite protection
+		// work even though we don't yet fully round-trip the detected map on read.
+		if len(meta.Compatibility.Detected) == 0 {
+			if d := detectCompatibility(detectors, skillBody); len(d) > 0 {
+				meta.Compatibility.Detected = d
+			}
+		}
 
 		// Refresh the sidecar's Declared block from frontmatter when present (source of truth).
 		// Only mark for write if the modeled compatibility state actually changes.
