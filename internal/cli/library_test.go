@@ -726,3 +726,312 @@ func TestParseSkillFrontmatter(t *testing.T) {
 		})
 	}
 }
+
+func TestParseSkillFrontmatterFull_Exclusive(t *testing.T) {
+	dir := t.TempDir()
+	skillPath := filepath.Join(dir, "SKILL.md")
+
+	content := `---
+name: qa
+description: QA testing tool
+exclusive: claude
+reason: "Uses AskUserQuestion + gstack preamble"
+---
+# QA Testing
+`
+	if err := os.WriteFile(skillPath, []byte(content), 0644); err != nil {
+		t.Fatalf("write skill failed: %v", err)
+	}
+
+	decl, compDecl, err := parseSkillFrontmatterFull(skillPath)
+	if err != nil {
+		t.Fatalf("parseSkillFrontmatterFull failed: %v", err)
+	}
+
+	if decl.name != "qa" {
+		t.Errorf("name = %q, want qa", decl.name)
+	}
+	if decl.exclusive != "claude" {
+		t.Errorf("exclusive = %q, want claude", decl.exclusive)
+	}
+	if decl.reason != "Uses AskUserQuestion + gstack preamble" {
+		t.Errorf("reason = %q, want 'Uses AskUserQuestion + gstack preamble'", decl.reason)
+	}
+
+	if compDecl.Mode != "exclusive" {
+		t.Errorf("compDecl.Mode = %q, want exclusive", compDecl.Mode)
+	}
+	if compDecl.Harness != "claude" {
+		t.Errorf("compDecl.Harness = %q, want claude", compDecl.Harness)
+	}
+}
+
+func TestParseSkillFrontmatterFull_Compatible(t *testing.T) {
+	dir := t.TempDir()
+	skillPath := filepath.Join(dir, "SKILL.md")
+
+	content := `---
+name: linear-feature
+description: Multi-harness feature
+compatible: [claude, codex, grok]
+---
+# Linear Feature
+`
+	if err := os.WriteFile(skillPath, []byte(content), 0644); err != nil {
+		t.Fatalf("write skill failed: %v", err)
+	}
+
+	decl, compDecl, err := parseSkillFrontmatterFull(skillPath)
+	if err != nil {
+		t.Fatalf("parseSkillFrontmatterFull failed: %v", err)
+	}
+
+	if decl.name != "linear-feature" {
+		t.Errorf("name = %q, want linear-feature", decl.name)
+	}
+	if len(decl.compatible) != 3 {
+		t.Errorf("len(compatible) = %d, want 3", len(decl.compatible))
+	}
+
+	if compDecl.Mode != "compatible" {
+		t.Errorf("compDecl.Mode = %q, want compatible", compDecl.Mode)
+	}
+	if len(compDecl.Harnesses) != 3 {
+		t.Errorf("len(compDecl.Harnesses) = %d, want 3", len(compDecl.Harnesses))
+	}
+}
+
+func TestParseSkillFrontmatterFull_Portable(t *testing.T) {
+	dir := t.TempDir()
+	skillPath := filepath.Join(dir, "SKILL.md")
+
+	content := `---
+name: pdf
+description: PDF tool
+---
+# PDF
+`
+	if err := os.WriteFile(skillPath, []byte(content), 0644); err != nil {
+		t.Fatalf("write skill failed: %v", err)
+	}
+
+	decl, compDecl, err := parseSkillFrontmatterFull(skillPath)
+	if err != nil {
+		t.Fatalf("parseSkillFrontmatterFull failed: %v", err)
+	}
+
+	if decl.name != "pdf" {
+		t.Errorf("name = %q, want pdf", decl.name)
+	}
+	if decl.exclusive != "" || len(decl.compatible) > 0 {
+		t.Errorf("expected no compatibility declaration")
+	}
+
+	if compDecl.Mode != "" {
+		t.Errorf("compDecl.Mode = %q, want empty", compDecl.Mode)
+	}
+}
+
+func TestDetectCompatibility_ClaudeSkillTool(t *testing.T) {
+	detectors, err := loadDetectors()
+	if err != nil {
+		t.Fatalf("loadDetectors failed: %v", err)
+	}
+
+	skillBody := `# A skill that uses the Skill tool
+The Skill tool is used here for advanced operations.
+`
+
+	results := detectCompatibility(detectors, skillBody)
+	if len(results) == 0 {
+		t.Errorf("expected detection results, got none")
+		return
+	}
+
+	if results["claude"].Confidence == "" {
+		t.Errorf("expected claude detection, got none")
+	}
+}
+
+func TestDetectCompatibility_CursorRules(t *testing.T) {
+	detectors, err := loadDetectors()
+	if err != nil {
+		t.Fatalf("loadDetectors failed: %v", err)
+	}
+
+	skillBody := `# Cursor rules configuration
+Use .cursor/rules/ for configuration.
+`
+
+	results := detectCompatibility(detectors, skillBody)
+	if results["cursor"].Confidence == "" {
+		t.Errorf("expected cursor detection, got none")
+	}
+}
+
+func TestRebuildCatalogFromLibrary_WithDeclaration(t *testing.T) {
+	libraryPath := t.TempDir()
+
+	// Create a skill with exclusive declaration
+	skillDir := filepath.Join(libraryPath, "test-skill")
+	if err := os.MkdirAll(skillDir, 0755); err != nil {
+		t.Fatalf("mkdir failed: %v", err)
+	}
+
+	skillMdPath := filepath.Join(skillDir, "SKILL.md")
+	skillMdContent := `---
+name: test-skill
+description: A test skill
+exclusive: claude
+reason: "Claude-only implementation"
+---
+# Test Skill
+Content here.
+`
+	if err := os.WriteFile(skillMdPath, []byte(skillMdContent), 0644); err != nil {
+		t.Fatalf("write SKILL.md failed: %v", err)
+	}
+
+	cat, err := rebuildCatalogFromLibrary(libraryPath)
+	if err != nil {
+		t.Fatalf("rebuildCatalogFromLibrary failed: %v", err)
+	}
+
+	if len(cat.Skills) != 1 {
+		t.Fatalf("expected 1 skill, got %d", len(cat.Skills))
+	}
+
+	skill := cat.Skills[0]
+	if skill.Compatibility.Mode != "exclusive" {
+		t.Errorf("mode = %q, want exclusive", skill.Compatibility.Mode)
+	}
+	if skill.Compatibility.Harness != "claude" {
+		t.Errorf("harness = %q, want claude", skill.Compatibility.Harness)
+	}
+	if skill.Compatibility.Declared == nil {
+		t.Errorf("expected declared block to be set")
+	} else if skill.Compatibility.Declared.Reason != "Claude-only implementation" {
+		t.Errorf("declared reason = %q, want 'Claude-only implementation'", skill.Compatibility.Declared.Reason)
+	}
+}
+
+func TestSetCommand_Exclusive(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+
+	// Create library and skill
+	libraryPath := filepath.Join(home, "library")
+	skillDir := filepath.Join(libraryPath, "test-skill")
+	if err := os.MkdirAll(skillDir, 0755); err != nil {
+		t.Fatalf("mkdir failed: %v", err)
+	}
+
+	skillMdPath := filepath.Join(skillDir, "SKILL.md")
+	skillMdContent := `---
+name: test-skill
+description: A test skill
+---
+# Test Skill
+`
+	if err := os.WriteFile(skillMdPath, []byte(skillMdContent), 0644); err != nil {
+		t.Fatalf("write SKILL.md failed: %v", err)
+	}
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := runSet([]string{"test-skill", "--compatibility", "exclusive", "--harness", "claude", "--reason", "Test reason"}, &stdout, &stderr, globalFlags{})
+
+	if code != 0 {
+		t.Fatalf("runSet returned %d, want 0\nstderr: %s", code, stderr.String())
+	}
+
+	// Verify the SKILL.md was updated
+	newContent, err := os.ReadFile(skillMdPath)
+	if err != nil {
+		t.Fatalf("read updated SKILL.md failed: %v", err)
+	}
+
+	contentStr := string(newContent)
+	if !strings.Contains(contentStr, "exclusive: claude") {
+		t.Errorf("expected 'exclusive: claude' in SKILL.md, got: %s", contentStr)
+	}
+	if !strings.Contains(contentStr, `reason: "Test reason"`) {
+		t.Errorf("expected reason in SKILL.md, got: %s", contentStr)
+	}
+}
+
+func TestSetCommand_Compatible(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+
+	// Create library and skill
+	libraryPath := filepath.Join(home, "library")
+	skillDir := filepath.Join(libraryPath, "test-skill")
+	if err := os.MkdirAll(skillDir, 0755); err != nil {
+		t.Fatalf("mkdir failed: %v", err)
+	}
+
+	skillMdPath := filepath.Join(skillDir, "SKILL.md")
+	skillMdContent := `---
+name: test-skill
+description: A test skill
+---
+# Test Skill
+`
+	if err := os.WriteFile(skillMdPath, []byte(skillMdContent), 0644); err != nil {
+		t.Fatalf("write SKILL.md failed: %v", err)
+	}
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := runSet([]string{"test-skill", "--compatibility", "compatible", "--harnesses", "claude,codex"}, &stdout, &stderr, globalFlags{})
+
+	if code != 0 {
+		t.Fatalf("runSet returned %d, want 0\nstderr: %s", code, stderr.String())
+	}
+
+	// Verify the SKILL.md was updated
+	newContent, err := os.ReadFile(skillMdPath)
+	if err != nil {
+		t.Fatalf("read updated SKILL.md failed: %v", err)
+	}
+
+	contentStr := string(newContent)
+	if !strings.Contains(contentStr, "compatible:") {
+		t.Errorf("expected 'compatible:' in SKILL.md, got: %s", contentStr)
+	}
+}
+
+func TestSetCommand_RequiresHarnessForExclusive(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+
+	// Create library and skill
+	libraryPath := filepath.Join(home, "library")
+	skillDir := filepath.Join(libraryPath, "test-skill")
+	if err := os.MkdirAll(skillDir, 0755); err != nil {
+		t.Fatalf("mkdir failed: %v", err)
+	}
+
+	skillMdPath := filepath.Join(skillDir, "SKILL.md")
+	skillMdContent := `---
+name: test-skill
+description: A test skill
+---
+`
+	if err := os.WriteFile(skillMdPath, []byte(skillMdContent), 0644); err != nil {
+		t.Fatalf("write SKILL.md failed: %v", err)
+	}
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := runSet([]string{"test-skill", "--compatibility", "exclusive"}, &stdout, &stderr, globalFlags{})
+
+	if code == 0 {
+		t.Fatalf("runSet should have failed without --harness, got 0")
+	}
+	if !strings.Contains(stderr.String(), "--harness") {
+		t.Fatalf("error should mention --harness, got: %s", stderr.String())
+	}
+}
+
