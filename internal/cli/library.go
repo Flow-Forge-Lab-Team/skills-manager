@@ -596,6 +596,11 @@ func rebuildCatalogFromLibrary(libraryPath string) (catalog, error) {
 			meta.Compatibility.Mode = effectiveDecl.Mode
 			meta.Compatibility.Harness = effectiveDecl.Harness
 			meta.Compatibility.Harnesses = effectiveDecl.Harnesses
+			// If portable, ensure harness fields are cleared
+			if effectiveDecl.Mode == "portable" {
+				meta.Compatibility.Harness = ""
+				meta.Compatibility.Harnesses = nil
+			}
 		} else {
 			// No explicit declaration: run detection and apply auto-classification
 			detected := detectCompatibility(detectors, skillBody)
