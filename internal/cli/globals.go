@@ -204,6 +204,19 @@ Flags:
 Show details for a single skill, including requirements and install locations.
 
 ` + globalFlagHelp()
+	case "update":
+		return `skills-manager update --safety <skill>
+       skills-manager update --accept-all-safe
+
+Review and accept pending library updates staged under
+library/<skill>/.update-pending/.
+
+Forms:
+  --safety <skill>     print a safety report for one pending update
+  --accept-all-safe    apply every pending update that has no blocking flags;
+                       refuses (exit 4) if any update is blocked
+
+` + globalFlagHelp()
 	}
 	return `skills-manager: AI skill library manager
 
@@ -215,6 +228,7 @@ Commands:
   uninstall   remove managed skills from a project
   list        list skills in the canonical library
   show        show details for a single skill
+  update      review and accept pending library updates
   help        show help for a command
 
 ` + globalFlagHelp()

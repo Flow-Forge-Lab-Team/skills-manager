@@ -299,6 +299,14 @@ func refreshSkillMeta(skillDir string, incoming *skillMeta) error {
 		if incoming.Version != 0 {
 			meta.Version = incoming.Version
 		}
+		// Advance upstream identity so the next update check doesn't replay
+		// this revision. Preserve local install-time fields.
+		if incoming.Origin.Version != "" {
+			meta.Origin.Version = incoming.Origin.Version
+		}
+		if incoming.Origin.Commit != "" {
+			meta.Origin.Commit = incoming.Origin.Commit
+		}
 	}
 	if meta.Version == 0 {
 		meta.Version = 1
