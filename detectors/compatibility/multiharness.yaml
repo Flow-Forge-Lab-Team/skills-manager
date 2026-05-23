@@ -1,0 +1,18 @@
+version: 1
+detectors:
+  - id: mcp-uuid-local
+    harness: multi
+    confidence: medium
+    patterns:
+      - "mcp__"
+  - id: arguments-env
+    harness: multi
+    confidence: low
+    patterns:
+      - "$ARGUMENTS"
+  - id: agents-md
+    harness: multi
+    confidence: low
+    patterns:
+      - "AGENTS.md"
+      - "agents.md"

@@ -1,0 +1,8 @@
+version: 1
+detectors:
+  - id: cursor-rules
+    harness: cursor
+    confidence: high
+    patterns:
+      - ".cursor/rules/"
+      - "globs:"

@@ -1,0 +1,7 @@
+version: 1
+detectors:
+  - id: openclaw-home
+    harness: openclaw
+    confidence: high
+    patterns:
+      - "~/.openclaw/"

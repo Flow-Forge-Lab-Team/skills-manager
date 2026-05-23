@@ -1,0 +1,8 @@
+version: 1
+detectors:
+  - id: hermes-memory
+    harness: hermes
+    confidence: high
+    patterns:
+      - "~/.hermes/"
+      - "/memory"

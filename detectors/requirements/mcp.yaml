@@ -1,0 +1,11 @@
+version: 1
+detectors:
+  - id: linear-connector
+    requirement:
+      kind: mcp_server
+      name: linear
+      required: true
+    confidence: high
+    patterns:
+      - "mcp__linear__"
+      - "Linear connector"
