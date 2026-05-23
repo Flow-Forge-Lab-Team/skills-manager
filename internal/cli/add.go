@@ -34,7 +34,7 @@ func expandTilde(path string) (string, error) {
 
 func runAdd(args []string, stdout io.Writer, stderr io.Writer, gf globalFlags) int {
 	if len(args) < 1 {
-		fmt.Fprintln(stderr, "usage: skills-manager add <source> [--auto] [--yes] [--name <override>]")
+		fmt.Fprintln(stderr, "usage: skills-manager add <source> [--auto] [--yes] [--name <override>] [--handoff] [--from <file>]")
 		return ExitUsageError
 	}
 
@@ -58,9 +58,21 @@ func runAdd(args []string, stdout io.Writer, stderr io.Writer, gf globalFlags) i
 				fmt.Fprintln(stderr, "--name requires a value")
 				return ExitUsageError
 			}
+		case "--handoff":
+			opts.handoff = true
+		case "--from":
+			if i+1 < len(args) {
+				opts.from = args[i+1]
+				i++
+			} else {
+				fmt.Fprintln(stderr, "--from requires a value")
+				return ExitUsageError
+			}
 		default:
 			if strings.HasPrefix(arg, "--name=") {
 				nameOverride = strings.TrimPrefix(arg, "--name=")
+			} else if strings.HasPrefix(arg, "--from=") {
+				opts.from = strings.TrimPrefix(arg, "--from=")
 			} else if source == "" && !strings.HasPrefix(arg, "--") {
 				source = arg
 			}
@@ -68,7 +80,7 @@ func runAdd(args []string, stdout io.Writer, stderr io.Writer, gf globalFlags) i
 	}
 
 	if source == "" {
-		fmt.Fprintln(stderr, "usage: skills-manager add <source> [--auto] [--yes] [--name <override>]")
+		fmt.Fprintln(stderr, "usage: skills-manager add <source> [--auto] [--yes] [--name <override>] [--handoff] [--from <file>]")
 		return ExitUsageError
 	}
 
@@ -140,6 +152,8 @@ func runAdd(args []string, stdout io.Writer, stderr io.Writer, gf globalFlags) i
 
 	if gf.JSON {
 		writeJSON(stdout, result)
+	} else if strings.Contains(result.Reason, "handoff") {
+		fmt.Fprintf(humanOut, "Handoff prompt written to %s\n", result.LibraryPath)
 	} else if !result.Skipped {
 		fmt.Fprintf(humanOut, "Ingested %s to %s\n", result.Name, result.LibraryPath)
 	} else {
