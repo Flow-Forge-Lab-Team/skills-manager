@@ -4,7 +4,7 @@ detectors:
     harness: multi
     confidence: medium
     patterns:
-      - "mcp__"
+      - "mcp__[hex]__"
   - id: arguments-env
     harness: multi
     confidence: low
