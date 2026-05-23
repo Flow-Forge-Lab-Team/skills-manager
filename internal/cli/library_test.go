@@ -854,19 +854,7 @@ The Skill tool is used here for advanced operations.
 }
 
 func TestDetectCompatibility_CursorRules(t *testing.T) {
-	detectors, err := loadDetectors()
-	if err != nil {
-		t.Fatalf("loadDetectors failed: %v", err)
-	}
-
-	skillBody := `# Cursor rules configuration
-Use .cursor/rules/ for configuration.
-`
-
-	results := detectCompatibility(detectors, skillBody)
-	if results["cursor"].Confidence == "" {
-		t.Errorf("expected cursor detection, got none")
-	}
+	t.Skip("Cursor detector disabled for v0.1 (full Cursor/Copilot support is v1.0 scope per ROADMAP). Re-enable when cursor.yaml is restored and harnessProjectPaths has a cursor target.")
 }
 
 // FLO-235 Issue 3: mcp__ pattern matching should handle literal patterns correctly
