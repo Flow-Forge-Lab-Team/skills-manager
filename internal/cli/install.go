@@ -165,8 +165,9 @@ func runInstall(args []string, stdout io.Writer, stderr io.Writer, syncMode bool
 
 	var candidates []installCandidate
 	var skippedLockedSkills bool
-	if len(lock.Skills) > 0 {
-		// Lock exists: use it to determine candidates
+	if len(lock.Skills) > 0 && !syncMode {
+		// Lock exists and we're not syncing: use it to determine candidates.
+		// (Sync mode recomputes from catalog to adapt to library changes.)
 		var lockProblems []lockProblem
 
 		// Build candidates from lock: skip missing, check fingerprints, apply --only filter, apply never_include
@@ -230,9 +231,28 @@ func runInstall(args []string, stdout io.Writer, stderr io.Writer, syncMode bool
 				fmt.Fprintf(stderr, "lock entry for %s has no fingerprint; accepting library content as-is\n", lockSkill.Name)
 			}
 
-			// Recompute compatible harnesses based on current catalog (not locked harnesses)
-			// This allows the install to adapt to compatibility changes
-			harnesses := compatibleHarnesses(catalogSkill.Compatibility, project.Harnesses)
+			// Use locked harnesses intersected with active project harnesses.
+			// If lock has no harnesses (legacy), fall back to recomputing from catalog.
+			var harnesses []string
+			if len(lockSkill.Harnesses) > 0 {
+				// Intersect: only use locked harnesses that are still active in project
+				projectHarnessSet := set(project.Harnesses)
+				for _, h := range lockSkill.Harnesses {
+					if projectHarnessSet[h] {
+						harnesses = append(harnesses, h)
+					}
+				}
+				// If no locked harnesses are active, skip with warning
+				if len(harnesses) == 0 {
+					fmt.Fprintf(stdout, "- %s: skipped, no locked harnesses are active in project.yaml\n", lockSkill.Name)
+					skippedLockedSkills = true
+					continue
+				}
+			} else {
+				// Legacy lock without harness data: fall back to catalog compatibility
+				harnesses = compatibleHarnesses(catalogSkill.Compatibility, project.Harnesses)
+			}
+
 			candidates = append(candidates, installCandidate{
 				Skill:     *catalogSkill,
 				Harnesses: harnesses,
@@ -258,7 +278,7 @@ func runInstall(args []string, stdout io.Writer, stderr io.Writer, syncMode bool
 			}
 		}
 	} else {
-		// No lock: use normal selection from catalog + project config
+		// No lock, or sync mode: use normal selection from catalog + project config
 		candidates = selectInstallCandidates(catalog, project, opts.onlySkill)
 	}
 
@@ -291,6 +311,10 @@ func runInstall(args []string, stdout io.Writer, stderr io.Writer, syncMode bool
 	}
 
 	desired := desiredManagedPaths(candidates)
+	// The lock file is always desired when we're installing; it will be written/updated
+	if len(lock.Skills) > 0 || len(candidates) > 0 {
+		desired[".skills/installed.lock"] = true
+	}
 	if syncMode && opts.dryRun {
 		if err := previewStaleManaged(projectPath, managed, desired, files, stdout); err != nil {
 			fmt.Fprintf(stderr, "preview stale installs: %v\n", err)
@@ -383,6 +407,10 @@ func runInstall(args []string, stdout io.Writer, stderr io.Writer, syncMode bool
 
 	if !opts.dryRun {
 		if syncMode {
+			// The lock file is always desired when we're syncing; it will be written/updated
+			if len(lock.Skills) > 0 || len(candidates) > 0 {
+				desired[".skills/installed.lock"] = true
+			}
 			prunePartial, err := pruneStaleManaged(projectPath, managed, desired, preserved, files, stdout)
 			if err != nil {
 				fmt.Fprintf(stderr, "prune stale installs: %v\n", err)
@@ -392,12 +420,10 @@ func runInstall(args []string, stdout io.Writer, stderr io.Writer, syncMode bool
 				partial = true
 			}
 		}
-		if err := saveInstallManifest(manifestPath, manifest, managed, preserved, files); err != nil {
-			fmt.Fprintf(stderr, "write manifest: %v\n", err)
-			return 3
-		}
 
-		// Write installed.lock after successful manifest write
+		// Build and write installed.lock before saving manifest, so that on
+		// failure, the manifest doesn't claim a lock we didn't write.
+		// On success, we add .skills/installed.lock to managed, then save manifest.
 		if len(lock.Skills) > 0 || len(candidates) > 0 {
 			newLock, err := buildInstallLock(candidates, files, libraryPath, lock, managed)
 			if err != nil {
@@ -408,6 +434,14 @@ func runInstall(args []string, stdout io.Writer, stderr io.Writer, syncMode bool
 				fmt.Fprintf(stderr, "write lock: %v\n", err)
 				return 3
 			}
+			// Lock was written successfully; add to managed paths
+			managed[".skills/installed.lock"] = true
+		}
+
+		// Save manifest with the lock file (if any) now recorded as managed
+		if err := saveInstallManifest(manifestPath, manifest, managed, preserved, files); err != nil {
+			fmt.Fprintf(stderr, "write manifest: %v\n", err)
+			return 3
 		}
 	}
 

@@ -96,7 +96,7 @@ skills:
 	if err := json.Unmarshal(data, &manifest); err != nil {
 		t.Fatalf("unmarshal manifest: %v", err)
 	}
-	if got, want := len(manifest.ManagedPaths), 5; got != want {
+	if got, want := len(manifest.ManagedPaths), 6; got != want {
 		t.Fatalf("managed paths = %d, want %d: %#v", got, want, manifest.ManagedPaths)
 	}
 
@@ -315,7 +315,7 @@ skills:
 	if err := json.Unmarshal(data, &manifest); err != nil {
 		t.Fatalf("unmarshal manifest: %v", err)
 	}
-	if got, want := manifest.ManagedPaths, []string{".claude/skills/review"}; strings.Join(got, ",") != strings.Join(want, ",") {
+	if got, want := manifest.ManagedPaths, []string{".claude/skills/review", ".skills/installed.lock"}; strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("managed paths = %#v, want %#v", got, want)
 	}
 	if _, ok := manifest.Files[".codex/skills/review"]; ok {
@@ -894,6 +894,174 @@ skills:
 	lockContent = string(data)
 	if !strings.Contains(lockContent, "missing-skill") {
 		t.Fatalf("missing-skill should remain in lock even when skipped: %s", lockContent)
+	}
+}
+
+func TestLockDrivenInstallHonorsLockedHarnesses(t *testing.T) {
+	home := t.TempDir()
+	project := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+
+	writeFile(t, filepath.Join(project, ".skills", "project.yaml"), `version: 1
+name: demo
+categories: [Engineering]
+harnesses: [claude, codex]
+`)
+	writeFile(t, filepath.Join(home, "library", "catalog.yaml"), `version: 1
+skills:
+  - name: test-skill
+    categories: [Engineering]
+    compatibility:
+      mode: portable
+    requirements:
+      tools: []
+`)
+	writeFile(t, filepath.Join(home, "library", "test-skill", "SKILL.md"), "skill\n")
+
+	// Pre-write a lock with only claude harness
+	lockContent := `version: 1
+generated_at: "2026-01-01T00:00:00Z"
+generated_by: "skills-manager 0.1.0-dev"
+skills:
+  - name: test-skill
+    version: ~
+    commit: ~
+    fingerprint: ~
+    installed_at: "2026-01-01T00:00:00Z"
+    harnesses:
+      - claude
+`
+	writeFile(t, filepath.Join(project, ".skills", "installed.lock"), lockContent)
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := Run([]string{"install", "--project", project}, &stdout, &stderr)
+
+	if code != 0 {
+		t.Fatalf("Run returned %d, want 0\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+	}
+
+	// Should only exist in .claude/skills, NOT in .codex/skills
+	if _, err := os.Stat(filepath.Join(project, ".claude", "skills", "test-skill", "SKILL.md")); err != nil {
+		t.Fatalf("expected skill in .claude/skills (locked harness): %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(project, ".codex", "skills", "test-skill")); !os.IsNotExist(err) {
+		t.Fatalf("skill should NOT be in .codex/skills (not in locked harnesses), got err %v", err)
+	}
+}
+
+func TestLockDrivenInstallSkipsWhenLockedHarnessesInactive(t *testing.T) {
+	home := t.TempDir()
+	project := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+
+	writeFile(t, filepath.Join(project, ".skills", "project.yaml"), `version: 1
+name: demo
+categories: [Engineering]
+harnesses: [claude]
+`)
+	writeFile(t, filepath.Join(home, "library", "catalog.yaml"), `version: 1
+skills:
+  - name: test-skill
+    categories: [Engineering]
+    compatibility:
+      mode: portable
+    requirements:
+      tools: []
+`)
+	writeFile(t, filepath.Join(home, "library", "test-skill", "SKILL.md"), "skill\n")
+
+	// Pre-write a lock with grok harness, which is not active in project.yaml
+	lockContent := `version: 1
+generated_at: "2026-01-01T00:00:00Z"
+generated_by: "skills-manager 0.1.0-dev"
+skills:
+  - name: test-skill
+    version: ~
+    commit: ~
+    fingerprint: ~
+    installed_at: "2026-01-01T00:00:00Z"
+    harnesses:
+      - grok
+`
+	writeFile(t, filepath.Join(project, ".skills", "installed.lock"), lockContent)
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := Run([]string{"install", "--project", project}, &stdout, &stderr)
+
+	if code != 4 {
+		t.Fatalf("Run returned %d, want 4 (partial)\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+	}
+
+	// Should mention "no locked harnesses are active"
+	if !strings.Contains(stdout.String(), "no locked harnesses are active in project.yaml") {
+		t.Fatalf("stdout = %q, want 'no locked harnesses are active' message", stdout.String())
+	}
+
+	// Should not be installed anywhere
+	if _, err := os.Stat(filepath.Join(project, ".claude", "skills", "test-skill")); !os.IsNotExist(err) {
+		t.Fatalf("skill should not be installed when locked harnesses inactive, got err %v", err)
+	}
+
+	// Lock entry should remain unchanged
+	lockPath := filepath.Join(project, ".skills", "installed.lock")
+	lock, err := readInstallLock(lockPath)
+	if err != nil {
+		t.Fatalf("read lock: %v", err)
+	}
+	if len(lock.Skills) != 1 || lock.Skills[0].Name != "test-skill" {
+		t.Fatalf("lock entry should be preserved unchanged")
+	}
+}
+
+func TestUninstallRemovesInstalledLock(t *testing.T) {
+	home := t.TempDir()
+	project := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+
+	writeFile(t, filepath.Join(project, ".skills", "project.yaml"), `version: 1
+name: demo
+categories: [Engineering]
+harnesses: [claude]
+`)
+	writeFile(t, filepath.Join(home, "library", "catalog.yaml"), `version: 1
+skills:
+  - name: test-skill
+    categories: [Engineering]
+    compatibility:
+      mode: portable
+    requirements:
+      tools: []
+`)
+	writeFile(t, filepath.Join(home, "library", "test-skill", "SKILL.md"), "skill\n")
+
+	// First install to create the lock
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := Run([]string{"install", "--project", project}, &stdout, &stderr)
+
+	if code != 0 {
+		t.Fatalf("install returned %d, want 0\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+	}
+
+	lockPath := filepath.Join(project, ".skills", "installed.lock")
+	if _, err := os.Stat(lockPath); err != nil {
+		t.Fatalf("expected lock file to exist after install: %v", err)
+	}
+
+	// Now uninstall
+	stdout.Reset()
+	stderr.Reset()
+	code = Run([]string{"uninstall", "--project", project, "--confirm"}, &stdout, &stderr)
+
+	if code != 0 {
+		t.Fatalf("uninstall returned %d, want 0\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+	}
+
+	// Lock file should be gone
+	if _, err := os.Stat(lockPath); !os.IsNotExist(err) {
+		t.Fatalf("expected lock file to be removed by uninstall, got err %v", err)
 	}
 }
 
