@@ -58,6 +58,10 @@ func runAdd(args []string, stdout io.Writer, stderr io.Writer, gf globalFlags) i
 	}
 
 	opts.interactive = !gf.NonInteractive && !gf.JSON && !gf.Quiet
+	// If stdin is not a TTY, require explicit consent (--yes or --auto)
+	if !stdinIsTTY() && !opts.auto && !opts.yes {
+		opts.interactive = false
+	}
 	opts.name = nameOverride
 	humanOut := gf.outWriter(stdout)
 
@@ -137,13 +141,61 @@ func classifyAddArgument(arg string) (string, error) {
 	return "", fmt.Errorf("cannot classify source: %q", arg)
 }
 
+func normalizeGitHubURL(raw string) (cloneURL string, err error) {
+	// If input starts with "github.com/" (no scheme), prepend "https://"
+	if strings.HasPrefix(raw, "github.com/") {
+		raw = "https://" + raw
+	}
+
+	// Parse the URL to extract the org/repo part
+	urlStr := raw
+	if !strings.Contains(urlStr, "://") {
+		return "", fmt.Errorf("invalid github URL format: %q", raw)
+	}
+
+	// Extract path after github.com/
+	var pathPart string
+	if strings.HasPrefix(urlStr, "https://github.com/") {
+		pathPart = strings.TrimPrefix(urlStr, "https://github.com/")
+	} else if strings.HasPrefix(urlStr, "http://github.com/") {
+		pathPart = strings.TrimPrefix(urlStr, "http://github.com/")
+	} else {
+		return "", fmt.Errorf("invalid github URL: %q (must be github.com)", raw)
+	}
+
+	// Strip trailing slashes before splitting
+	pathPart = strings.TrimRight(pathPart, "/")
+
+	// Count path segments: exactly 2 (org/repo) is valid
+	segments := strings.Split(pathPart, "/")
+	if len(segments) < 2 {
+		return "", fmt.Errorf("github URL needs at least org/repo: %q", raw)
+	}
+	if len(segments) > 2 {
+		// Subdirectory form like github.com/org/repo/sub/path
+		return "", fmt.Errorf("github subpath syntax not supported in v0.1; clone github.com/%s/%s and use `skills-manager add <local-path>` for subdirs", segments[0], segments[1])
+	}
+
+	// Build canonical URL: https://github.com/org/repo (no trailing .git or /)
+	org := segments[0]
+	repo := strings.TrimSuffix(segments[1], ".git")
+
+	return "https://github.com/" + org + "/" + repo, nil
+}
+
 func fetchGitHub(url string) (ingestSource, error) {
+	// Normalize the GitHub URL
+	cloneURL, err := normalizeGitHubURL(url)
+	if err != nil {
+		return ingestSource{}, err
+	}
+
 	tmpDir, err := os.MkdirTemp("", "sm-github-*")
 	if err != nil {
 		return ingestSource{}, fmt.Errorf("create temp dir: %w", err)
 	}
 
-	cmd := exec.Command("git", "clone", "--depth=1", url, tmpDir)
+	cmd := exec.Command("git", "clone", "--depth=1", cloneURL, tmpDir)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
@@ -159,10 +211,10 @@ func fetchGitHub(url string) (ingestSource, error) {
 	return ingestSource{
 		kind:   "github",
 		raw:    url,
-		url:    url,
+		url:    cloneURL,
 		commit: commit,
 		path:   tmpDir,
-		label:  url + " @ " + commit[:12],
+		label:  cloneURL + " @ " + commit[:12],
 	}, nil
 }
 

@@ -97,3 +97,41 @@ func TestAddMarketplaceMissingErrors(t *testing.T) {
 		t.Errorf("expected error message in stderr")
 	}
 }
+
+func TestNormalizeGitHubURL(t *testing.T) {
+	tests := []struct {
+		input   string
+		want    string
+		wantErr bool
+	}{
+		// Valid forms
+		{"github.com/owner/repo", "https://github.com/owner/repo", false},
+		{"github.com/owner/repo.git", "https://github.com/owner/repo", false},
+		{"github.com/owner/repo/", "https://github.com/owner/repo", false},
+		{"https://github.com/owner/repo", "https://github.com/owner/repo", false},
+		{"http://github.com/owner/repo", "https://github.com/owner/repo", false},
+
+		// Subdirectory forms (should error)
+		{"github.com/owner/repo/subdir/path", "", true},
+		{"https://github.com/owner/repo/subdir", "", true},
+
+		// Invalid forms
+		{"github.com/onlyowner", "", true},
+		{"invalid.com/owner/repo", "", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			got, err := normalizeGitHubURL(tt.input)
+			if tt.wantErr && err == nil {
+				t.Fatalf("expected error, got nil")
+			}
+			if !tt.wantErr && err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got != tt.want {
+				t.Errorf("got %q, want %q", got, tt.want)
+			}
+		})
+	}
+}

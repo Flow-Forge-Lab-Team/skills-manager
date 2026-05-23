@@ -150,10 +150,15 @@ func runScan(args []string, stdout io.Writer, stderr io.Writer, gf globalFlags) 
 	// Handle --ingest or --auto-ingest
 	if ingest || autoIngest {
 		home, _ := managerHome()
+		interactive := ingest && !autoIngest && !gf.NonInteractive
+		// If stdin is not a TTY, require explicit consent
+		if !stdinIsTTY() && interactive {
+			interactive = false
+		}
 		opts := ingestOptions{
 			auto:        autoIngest,
 			yes:         autoIngest,
-			interactive: ingest && !autoIngest && !gf.NonInteractive,
+			interactive: interactive,
 		}
 
 		for _, r := range results {
@@ -172,7 +177,12 @@ func runScan(args []string, stdout io.Writer, stderr io.Writer, gf globalFlags) 
 			if ingest && !autoIngest {
 				fmt.Fprintf(humanOut, "\nIngest %s? [Y/n/s] ", r.Name)
 				var response string
-				fmt.Scanln(&response)
+				_, err := fmt.Scanln(&response)
+				// EOF or read error means stdin was closed/empty — treat as skip
+				if err != nil {
+					fmt.Fprintf(humanOut, "Skipped %s (no input)\n", r.Name)
+					continue
+				}
 				response = strings.ToLower(strings.TrimSpace(response))
 				if response == "n" {
 					fmt.Fprintf(humanOut, "Skipped %s\n", r.Name)

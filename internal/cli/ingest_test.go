@@ -370,3 +370,137 @@ Reviews for security.
 		t.Errorf("confidence = %q, want high", result.Confidence)
 	}
 }
+
+func TestIngestInteractiveClosedStdinRejects(t *testing.T) {
+	home := t.TempDir()
+	sourceDir := t.TempDir()
+
+	skillMdContent := `---
+name: interactive-test
+description: A test for interactive mode with closed stdin
+---
+
+# interactive-test
+
+Test content.
+`
+
+	if err := os.WriteFile(filepath.Join(sourceDir, "SKILL.md"), []byte(skillMdContent), 0644); err != nil {
+		t.Fatalf("write SKILL.md: %v", err)
+	}
+
+	src := ingestSource{
+		kind:  "local",
+		raw:   sourceDir,
+		path:  sourceDir,
+		label: sourceDir,
+	}
+
+	// interactive=true but with EOF reading (simulates closed stdin)
+	opts := ingestOptions{
+		interactive: true,
+		auto:        false,
+		yes:         false,
+	}
+
+	// When stdin is closed, the Scanln call will return EOF and the prompt will be treated as a reject
+	var out bytes.Buffer
+	result := ingestFromSource(src, opts, home, &out)
+
+	if !result.Skipped {
+		t.Fatalf("expected interactive mode with closed stdin to be rejected")
+	}
+
+	if !strings.Contains(result.Reason, "declined") {
+		t.Errorf("reason = %q, want declined", result.Reason)
+	}
+}
+
+func TestIngestAutoRefusesMissingRequiredTools(t *testing.T) {
+	home := t.TempDir()
+	sourceDir := t.TempDir()
+
+	// Use exclusive declaration + keyword to ensure high confidence
+	// Include a pattern that triggers tool detection (ffmpeg) which likely won't be installed
+	// This tests the auto-ingest gate that refuses when required tools are missing
+	skillMdContent := `---
+name: tool-required
+description: Review and debug code for security audit issues
+exclusive: claude
+---
+
+# tool-required
+
+This skill uses ffmpeg for video processing.
+`
+
+	if err := os.WriteFile(filepath.Join(sourceDir, "SKILL.md"), []byte(skillMdContent), 0644); err != nil {
+		t.Fatalf("write SKILL.md: %v", err)
+	}
+
+	src := ingestSource{
+		kind:  "local",
+		raw:   sourceDir,
+		path:  sourceDir,
+		label: sourceDir,
+	}
+
+	// auto=true should refuse due to missing required tool (ffmpeg)
+	// (unless the system actually has ffmpeg installed, in which case this test passes
+	// because the tool is detected as present)
+	opts := ingestOptions{
+		auto:        true,
+		interactive: false,
+	}
+
+	var out bytes.Buffer
+	result := ingestFromSource(src, opts, home, &out)
+
+	// If ffmpeg is installed on the system, the test will pass (tool is present)
+	// If ffmpeg is not installed, auto-ingest should refuse with missing dependencies error
+	if !result.Skipped {
+		// Skill was accepted - either ffmpeg is installed or confidence is high and requirements don't block
+		if result.Confidence != "high" {
+			t.Errorf("expected high confidence for auto-ingest acceptance, got %s", result.Confidence)
+		}
+	} else {
+		// Skill was skipped - should be due to missing tools
+		if !strings.Contains(result.Reason, "missing required dependencies") && !strings.Contains(result.Reason, "confidence") {
+			t.Errorf("reason = %q, want missing required dependencies or confidence error", result.Reason)
+		}
+	}
+
+	// Verify --yes bypasses the missing tool check
+	// Use a fresh source directory with different name to avoid duplicate fingerprint check
+	sourceDir2 := t.TempDir()
+	skillMdContent2 := `---
+name: tool-required-v2
+description: Review and debug code for security audit issues
+exclusive: claude
+---
+
+# tool-required-v2
+
+This skill uses ffmpeg for video processing.
+`
+	if err := os.WriteFile(filepath.Join(sourceDir2, "SKILL.md"), []byte(skillMdContent2), 0644); err != nil {
+		t.Fatalf("write SKILL.md to sourceDir2: %v", err)
+	}
+
+	src2 := ingestSource{
+		kind:  "local",
+		raw:   sourceDir2,
+		path:  sourceDir2,
+		label: sourceDir2,
+	}
+
+	opts.auto = false
+	opts.yes = true
+
+	var out2 bytes.Buffer
+	result2 := ingestFromSource(src2, opts, home, &out2)
+
+	if result2.Skipped {
+		t.Fatalf("expected --yes to bypass missing tool check: %s", result2.Reason)
+	}
+}

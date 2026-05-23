@@ -145,11 +145,37 @@ func ingestFromSource(src ingestSource, opts ingestOptions, home string, out io.
 		}
 	}
 
-	if opts.auto && confidence != "high" {
-		return ingestResult{
-			Name:    decl.name,
-			Skipped: true,
-			Reason:  "auto-ingest refused: confidence " + confidence + "; rerun without --auto",
+	if opts.auto {
+		if confidence != "high" {
+			return ingestResult{
+				Name:    decl.name,
+				Skipped: true,
+				Reason:  "auto-ingest refused: confidence " + confidence + "; rerun without --auto",
+			}
+		}
+
+		// Check for missing required dependencies
+		missing := missingRequiredTools(reqs)
+		missingMCP := missingRequiredMCPServers(reqs)
+		missingModel := missingModelCapabilities(reqs)
+		allMissing := append(append(missing, missingMCP...), missingModel...)
+
+		if len(allMissing) > 0 {
+			var parts []string
+			if len(missing) > 0 {
+				parts = append(parts, "tools="+strings.Join(missing, ","))
+			}
+			if len(missingMCP) > 0 {
+				parts = append(parts, "mcp="+strings.Join(missingMCP, ","))
+			}
+			if len(missingModel) > 0 {
+				parts = append(parts, "model="+strings.Join(missingModel, ","))
+			}
+			return ingestResult{
+				Name:    decl.name,
+				Skipped: true,
+				Reason:  "auto-ingest refused: missing required dependencies (" + strings.Join(parts, ", ") + "); rerun without --auto",
+			}
 		}
 	}
 
@@ -160,7 +186,15 @@ func ingestFromSource(src ingestSource, opts ingestOptions, home string, out io.
 		fmt.Fprintf(out, "  Confidence: %s\n", confidence)
 		fmt.Fprint(out, "Accept? [Y/n/e] ")
 		var response string
-		fmt.Scanln(&response)
+		_, err := fmt.Scanln(&response)
+		// EOF or read error means stdin was closed/empty — treat as reject
+		if err == io.EOF || err != nil {
+			return ingestResult{
+				Name:    decl.name,
+				Skipped: true,
+				Reason:  "declined (no input)",
+			}
+		}
 		response = strings.ToLower(strings.TrimSpace(response))
 		if response == "e" {
 			fmt.Fprintln(out, "edit not implemented in v0.1; rerun with --yes after hand-editing the source")

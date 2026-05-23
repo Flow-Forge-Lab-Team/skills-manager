@@ -10,6 +10,15 @@ import (
 	"time"
 )
 
+// stdinIsTTY checks whether stdin is connected to a terminal.
+func stdinIsTTY() bool {
+	info, err := os.Stdin.Stat()
+	if err != nil {
+		return false
+	}
+	return (info.Mode() & os.ModeCharDevice) != 0
+}
+
 // Exit code conventions (see docs/CLI_REFERENCE.md).
 const (
 	ExitSuccess    = 0

@@ -76,8 +76,10 @@ TODO body
 		editor = "vi"
 	}
 
-	// Execute editor
-	cmd := exec.Command(editor, skillMdPath)
+	// Execute editor using sh -c to handle editor values with arguments (e.g., "code --wait")
+	// Single-quote the path and escape internal single quotes: 'path'\''with'\''quotes'
+	shellEscapedPath := "'" + strings.ReplaceAll(skillMdPath, "'", "'\\''") + "'"
+	cmd := exec.Command("sh", "-c", editor+" "+shellEscapedPath)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
