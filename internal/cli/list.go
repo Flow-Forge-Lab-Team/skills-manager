@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -14,30 +13,28 @@ type listOptions struct {
 	category string
 	tag      string
 	rebuild  bool
-	jsonOut  bool
 }
 
-type showOptions struct {
-	jsonOut bool
-}
+type showOptions struct{}
 
-func runList(args []string, stdout io.Writer, stderr io.Writer) int {
+func runList(args []string, stdout io.Writer, stderr io.Writer, gf globalFlags) int {
 	opts, err := parseListOptions(args)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
-		return 2
+		return ExitUsageError
 	}
+	humanOut := gf.outWriter(stdout)
 
 	home, err := managerHome()
 	if err != nil {
 		fmt.Fprintf(stderr, "manager home: %v\n", err)
-		return 3
+		return ExitOpError
 	}
 
 	libraryPath, err := ensureLibrary(home)
 	if err != nil {
 		fmt.Fprintf(stderr, "ensure library: %v\n", err)
-		return 3
+		return ExitOpError
 	}
 
 	catalogPath := filepath.Join(libraryPath, "catalog.yaml")
@@ -53,18 +50,18 @@ func runList(args []string, stdout io.Writer, stderr io.Writer) int {
 		cat, err = rebuildCatalogFromLibrary(libraryPath)
 		if err != nil {
 			fmt.Fprintf(stderr, "rebuild catalog: %v\n", err)
-			return 3
+			return ExitOpError
 		}
 		if err := writeCatalog(catalogPath, cat); err != nil {
 			fmt.Fprintf(stderr, "write catalog: %v\n", err)
-			return 3
+			return ExitOpError
 		}
 	} else {
 		var err error
 		cat, err = readCatalog(catalogPath)
 		if err != nil {
 			fmt.Fprintf(stderr, "read catalog: %v\n", err)
-			return 3
+			return ExitOpError
 		}
 	}
 
@@ -99,7 +96,7 @@ func runList(args []string, stdout io.Writer, stderr io.Writer) int {
 		filtered = append(filtered, skill)
 	}
 
-	if opts.jsonOut {
+	if gf.JSON {
 		output := make([]map[string]interface{}, len(filtered))
 		for i, skill := range filtered {
 			output[i] = map[string]interface{}{
@@ -110,52 +107,51 @@ func runList(args []string, stdout io.Writer, stderr io.Writer) int {
 				"compatibility": skill.Compatibility,
 			}
 		}
-		data, err := json.MarshalIndent(output, "", "  ")
-		if err != nil {
-			fmt.Fprintf(stderr, "marshal json: %v\n", err)
-			return 3
+		if err := writeJSON(stdout, output); err != nil {
+			fmt.Fprintln(stderr, err)
+			return ExitOpError
 		}
-		fmt.Fprintln(stdout, string(data))
 	} else {
 		for _, skill := range filtered {
 			summary := skill.Summary
 			if len(summary) > 50 {
 				summary = summary[:50]
 			}
-			fmt.Fprintf(stdout, "%s  %s\n", skill.Name, summary)
+			fmt.Fprintf(humanOut, "%s  %s\n", skill.Name, summary)
 		}
 	}
 
-	return 0
+	return ExitSuccess
 }
 
-func runShow(args []string, stdout io.Writer, stderr io.Writer) int {
+func runShow(args []string, stdout io.Writer, stderr io.Writer, gf globalFlags) int {
 	if len(args) == 0 {
 		fmt.Fprintln(stderr, "usage: skills-manager show <skill>")
-		return 2
+		return ExitUsageError
 	}
 
-	opts, skillName, err := parseShowOptions(args)
+	_, skillName, err := parseShowOptions(args)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
-		return 2
+		return ExitUsageError
 	}
 
 	if skillName == "" {
 		fmt.Fprintln(stderr, "no skill name provided")
-		return 2
+		return ExitUsageError
 	}
+	humanOut := gf.outWriter(stdout)
 
 	home, err := managerHome()
 	if err != nil {
 		fmt.Fprintf(stderr, "manager home: %v\n", err)
-		return 3
+		return ExitOpError
 	}
 
 	libraryPath, err := ensureLibrary(home)
 	if err != nil {
 		fmt.Fprintf(stderr, "ensure library: %v\n", err)
-		return 3
+		return ExitOpError
 	}
 
 	catalogPath := filepath.Join(libraryPath, "catalog.yaml")
@@ -171,18 +167,18 @@ func runShow(args []string, stdout io.Writer, stderr io.Writer) int {
 		cat, err = rebuildCatalogFromLibrary(libraryPath)
 		if err != nil {
 			fmt.Fprintf(stderr, "rebuild catalog: %v\n", err)
-			return 3
+			return ExitOpError
 		}
 		if err := writeCatalog(catalogPath, cat); err != nil {
 			fmt.Fprintf(stderr, "write catalog: %v\n", err)
-			return 3
+			return ExitOpError
 		}
 	} else {
 		var err error
 		cat, err = readCatalog(catalogPath)
 		if err != nil {
 			fmt.Fprintf(stderr, "read catalog: %v\n", err)
-			return 3
+			return ExitOpError
 		}
 	}
 
@@ -196,7 +192,7 @@ func runShow(args []string, stdout io.Writer, stderr io.Writer) int {
 
 	if skill == nil {
 		fmt.Fprintf(stderr, "skill %q not found\n", skillName)
-		return 3
+		return ExitOpError
 	}
 
 	skillPath := filepath.Join(libraryPath, skillName)
@@ -219,7 +215,7 @@ func runShow(args []string, stdout io.Writer, stderr io.Writer) int {
 		displayFp = displayFp[:12]
 	}
 
-	if opts.jsonOut {
+	if gf.JSON {
 		fingerprintOut := meta.Fingerprint
 		if fp != "" {
 			fingerprintOut.SHA256 = fp
@@ -243,64 +239,62 @@ func runShow(args []string, stdout io.Writer, stderr io.Writer) int {
 		sort.Strings(installPaths)
 		output["install_locations"] = installPaths
 
-		data, err := json.MarshalIndent(output, "", "  ")
-		if err != nil {
-			fmt.Fprintf(stderr, "marshal json: %v\n", err)
-			return 3
+		if err := writeJSON(stdout, output); err != nil {
+			fmt.Fprintln(stderr, err)
+			return ExitOpError
 		}
-		fmt.Fprintln(stdout, string(data))
 	} else {
-		fmt.Fprintf(stdout, "Name: %s\n", skill.Name)
+		fmt.Fprintf(humanOut, "Name: %s\n", skill.Name)
 		if skill.Summary != "" {
-			fmt.Fprintf(stdout, "Summary: %s\n", skill.Summary)
+			fmt.Fprintf(humanOut, "Summary: %s\n", skill.Summary)
 		}
 
 		if len(skill.Categories) > 0 {
-			fmt.Fprintf(stdout, "Categories: %s\n", strings.Join(skill.Categories, ", "))
+			fmt.Fprintf(humanOut, "Categories: %s\n", strings.Join(skill.Categories, ", "))
 		}
 
 		if len(skill.Tags) > 0 {
-			fmt.Fprintf(stdout, "Tags: %s\n", strings.Join(skill.Tags, ", "))
+			fmt.Fprintf(humanOut, "Tags: %s\n", strings.Join(skill.Tags, ", "))
 		}
 
-		fmt.Fprintf(stdout, "Compatibility: %s\n", skill.Compatibility.Mode)
+		fmt.Fprintf(humanOut, "Compatibility: %s\n", skill.Compatibility.Mode)
 		if skill.Compatibility.Harness != "" {
-			fmt.Fprintf(stdout, "  Harness: %s\n", skill.Compatibility.Harness)
+			fmt.Fprintf(humanOut, "  Harness: %s\n", skill.Compatibility.Harness)
 		}
 		if len(skill.Compatibility.Harnesses) > 0 {
-			fmt.Fprintf(stdout, "  Harnesses: %s\n", strings.Join(skill.Compatibility.Harnesses, ", "))
+			fmt.Fprintf(humanOut, "  Harnesses: %s\n", strings.Join(skill.Compatibility.Harnesses, ", "))
 		}
 
 		if len(skill.Requirements.Tools) > 0 {
-			fmt.Fprint(stdout, "Requirements:\n")
+			fmt.Fprint(humanOut, "Requirements:\n")
 			for _, tool := range skill.Requirements.Tools {
 				status := "optional"
 				if tool.Required {
 					status = "required"
 				}
-				fmt.Fprintf(stdout, "  - %s (%s)\n", tool.Name, status)
+				fmt.Fprintf(humanOut, "  - %s (%s)\n", tool.Name, status)
 			}
 		}
 
 		if meta.Origin.Type != "" {
-			fmt.Fprintf(stdout, "Origin: %s\n", meta.Origin.Type)
+			fmt.Fprintf(humanOut, "Origin: %s\n", meta.Origin.Type)
 			if meta.Origin.Source != "" {
-				fmt.Fprintf(stdout, "  Source: %s\n", meta.Origin.Source)
+				fmt.Fprintf(humanOut, "  Source: %s\n", meta.Origin.Source)
 			}
 			if meta.Origin.Version != "" {
-				fmt.Fprintf(stdout, "  Version: %s\n", meta.Origin.Version)
+				fmt.Fprintf(humanOut, "  Version: %s\n", meta.Origin.Version)
 			}
 		}
 
 		if displayFp != "" || sz > 0 {
-			fmt.Fprint(stdout, "Fingerprint: ")
+			fmt.Fprint(humanOut, "Fingerprint: ")
 			if displayFp != "" {
-				fmt.Fprint(stdout, displayFp)
+				fmt.Fprint(humanOut, displayFp)
 			}
 			if sz > 0 {
-				fmt.Fprintf(stdout, " (%d bytes)", sz)
+				fmt.Fprintf(humanOut, " (%d bytes)", sz)
 			}
-			fmt.Fprint(stdout, "\n")
+			fmt.Fprint(humanOut, "\n")
 		}
 
 		var installPaths []string
@@ -309,14 +303,14 @@ func runShow(args []string, stdout io.Writer, stderr io.Writer) int {
 		}
 		sort.Strings(installPaths)
 		if len(installPaths) > 0 {
-			fmt.Fprint(stdout, "Install Locations:\n")
+			fmt.Fprint(humanOut, "Install Locations:\n")
 			for _, path := range installPaths {
-				fmt.Fprintf(stdout, "  - %s\n", path)
+				fmt.Fprintf(humanOut, "  - %s\n", path)
 			}
 		}
 	}
 
-	return 0
+	return ExitSuccess
 }
 
 func parseListOptions(args []string) (listOptions, error) {
@@ -337,8 +331,6 @@ func parseListOptions(args []string) (listOptions, error) {
 			i++
 		case "--rebuild":
 			opts.rebuild = true
-		case "--json":
-			opts.jsonOut = true
 		default:
 			return opts, fmt.Errorf("unknown flag: %s", args[i])
 		}
@@ -351,16 +343,11 @@ func parseShowOptions(args []string) (showOptions, string, error) {
 	var skillName string
 
 	for i := 0; i < len(args); i++ {
-		switch args[i] {
-		case "--json":
-			opts.jsonOut = true
-		default:
-			if !strings.HasPrefix(args[i], "-") {
-				skillName = args[i]
-			} else {
-				return opts, "", fmt.Errorf("unknown flag: %s", args[i])
-			}
+		if !strings.HasPrefix(args[i], "-") {
+			skillName = args[i]
+			continue
 		}
+		return opts, "", fmt.Errorf("unknown flag: %s", args[i])
 	}
 
 	return opts, skillName, nil

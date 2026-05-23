@@ -1984,3 +1984,142 @@ skills:
 		t.Fatalf("sync --only alpha must not prune beta's managed copy: %v", err)
 	}
 }
+
+func setupUninstallFixture(t *testing.T) (string, string) {
+	t.Helper()
+	home := t.TempDir()
+	project := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+	writeFile(t, filepath.Join(project, ".skills", "project.yaml"), `version: 1
+name: demo
+categories: [Engineering]
+harnesses: [claude]
+`)
+	writeFile(t, filepath.Join(home, "library", "catalog.yaml"), `version: 1
+skills:
+  - name: review
+    categories: [Engineering]
+    compatibility:
+      mode: portable
+    requirements:
+      tools: []
+`)
+	writeFile(t, filepath.Join(home, "library", "review", "SKILL.md"), "first\n")
+	var stdout, stderr bytes.Buffer
+	if code := Run([]string{"install", "--project", project}, &stdout, &stderr); code != 0 {
+		t.Fatalf("install returned %d, want 0\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+	}
+	return home, project
+}
+
+func TestUninstallDryRunDoesNotModifyOrBackup(t *testing.T) {
+	home, project := setupUninstallFixture(t)
+
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{"uninstall", "--project", project, "--dry-run"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("dry-run returned %d, want 0\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "dry-run") {
+		t.Fatalf("stdout = %q, want dry-run marker", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "- remove .claude/skills/review") {
+		t.Fatalf("stdout = %q, want remove line", stdout.String())
+	}
+	// File still present.
+	if _, err := os.Stat(filepath.Join(project, ".claude", "skills", "review", "SKILL.md")); err != nil {
+		t.Fatalf("dry-run must not remove files: %v", err)
+	}
+	// No backups created.
+	if _, err := os.Stat(filepath.Join(home, "backups")); !os.IsNotExist(err) {
+		t.Fatalf("dry-run must not create backups, got err %v", err)
+	}
+}
+
+func TestUninstallCreatesBackupsByDefault(t *testing.T) {
+	home, project := setupUninstallFixture(t)
+
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{"uninstall", "--project", project, "--confirm"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("uninstall returned %d, want 0\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+	}
+	backupsRoot := filepath.Join(home, "backups", projectSlug(project))
+	entries, err := os.ReadDir(backupsRoot)
+	if err != nil {
+		t.Fatalf("read backups dir: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected one backup snapshot, got %d", len(entries))
+	}
+	backupSkill := filepath.Join(backupsRoot, entries[0].Name(), ".claude", "skills", "review", "SKILL.md")
+	if _, err := os.Stat(backupSkill); err != nil {
+		t.Fatalf("expected backed-up skill at %s: %v", backupSkill, err)
+	}
+}
+
+func TestUninstallNoBackupSkipsBackups(t *testing.T) {
+	home, project := setupUninstallFixture(t)
+
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{"uninstall", "--project", project, "--confirm", "--no-backup"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("uninstall returned %d, want 0\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+	}
+	if _, err := os.Stat(filepath.Join(home, "backups")); !os.IsNotExist(err) {
+		t.Fatalf("--no-backup must not create backups, got err %v", err)
+	}
+}
+
+func TestUninstallPreviewListsPreservedPaths(t *testing.T) {
+	home, project := setupUninstallFixture(t)
+
+	// Pre-existing unmanaged file should be recorded as preserved.
+	writeFile(t, filepath.Join(project, ".claude", "skills", "other", "SKILL.md"), "user\n")
+	// Re-run install to register the unmanaged path as preserved.
+	var stdout, stderr bytes.Buffer
+	_ = Run([]string{"install", "--project", project}, &stdout, &stderr)
+
+	// Add another preserved entry by mutating manifest directly to simulate a
+	// previously-recorded preservation outside the managed set.
+	mp := filepath.Join(home, "manifests", projectSlug(project)+".json")
+	m, err := readManifest(mp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.PreservedPaths = unionSorted(m.PreservedPaths, []string{".claude/skills/other"})
+	if err := writeManifest(mp, m); err != nil {
+		t.Fatal(err)
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	code := Run([]string{"uninstall", "--project", project, "--dry-run"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("dry-run returned %d, want 0\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "preserve .claude/skills/other (already preserved)") {
+		t.Fatalf("stdout = %q, want already-preserved line for unmanaged path", stdout.String())
+	}
+	// Pre-existing user file must remain on disk after a real uninstall.
+	stdout.Reset()
+	stderr.Reset()
+	if code := Run([]string{"uninstall", "--project", project, "--confirm"}, &stdout, &stderr); code != 0 {
+		t.Fatalf("uninstall returned %d, want 0\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+	}
+	if _, err := os.Stat(filepath.Join(project, ".claude", "skills", "other", "SKILL.md")); err != nil {
+		t.Fatalf("unmanaged user file must survive uninstall: %v", err)
+	}
+}
+
+func TestUninstallRefusesUnknownArg(t *testing.T) {
+	_, project := setupUninstallFixture(t)
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{"uninstall", "--project", project, "--bogus"}, &stdout, &stderr)
+	if code != 2 {
+		t.Fatalf("uninstall returned %d, want 2", code)
+	}
+	if !strings.Contains(stderr.String(), "unknown uninstall argument") {
+		t.Fatalf("stderr = %q, want unknown argument message", stderr.String())
+	}
+}

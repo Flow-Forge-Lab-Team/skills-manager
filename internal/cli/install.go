@@ -24,6 +24,7 @@ type installOptions struct {
 	allowMissingRequirements bool
 	skipMissingLocked        bool
 	confirm                  bool
+	noBackup                 bool
 }
 
 type lockProblem struct {
@@ -112,12 +113,15 @@ var harnessProjectPaths = map[string]string{
 	"openclaw":    "skills",
 }
 
-func runInstall(args []string, stdout io.Writer, stderr io.Writer, syncMode bool) int {
+func runInstall(args []string, realStdout io.Writer, stderr io.Writer, syncMode bool, gf globalFlags) int {
 	opts, err := parseInstallOptions(args)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
-		return 2
+		return ExitUsageError
 	}
+	// stdout below is the human-text sink: io.Discard when --quiet, real stdout
+	// otherwise. JSON output, when requested, is written to realStdout at the end.
+	stdout := gf.outWriter(realStdout)
 
 	projectPath, err := absoluteProjectPath(opts.projectPath)
 	if err != nil {
@@ -126,10 +130,14 @@ func runInstall(args []string, stdout io.Writer, stderr io.Writer, syncMode bool
 	}
 	opts.projectPath = projectPath
 
-	project, err := readProjectConfig(filepath.Join(projectPath, ".skills", "project.yaml"))
+	projectConfigPath := filepath.Join(projectPath, ".skills", "project.yaml")
+	if gf.Config != "" {
+		projectConfigPath = gf.Config
+	}
+	project, err := readProjectConfig(projectConfigPath)
 	if err != nil {
 		fmt.Fprintf(stderr, "read project config: %v\n", err)
-		return 3
+		return ExitOpError
 	}
 
 	home, err := managerHome()
@@ -340,6 +348,9 @@ func runInstall(args []string, stdout io.Writer, stderr io.Writer, syncMode bool
 
 	blocked := 0
 	installed := 0
+	var blockedSkills []string
+	var skippedSkills []string
+	installedSkillSet := map[string]bool{}
 	preserved := mapFromSlice(manifest.PreservedPaths)
 	managed := mapFromSlice(manifest.ManagedPaths)
 	files := manifest.Files
@@ -380,6 +391,7 @@ func runInstall(args []string, stdout io.Writer, stderr io.Writer, syncMode bool
 		if len(candidate.Harnesses) == 0 {
 			fmt.Fprintf(stdout, "- %s: skipped, no compatible active harnesses\n", candidate.Skill.Name)
 			skippedCandidates[candidate.Skill.Name] = true
+			skippedSkills = append(skippedSkills, candidate.Skill.Name)
 			continue
 		}
 
@@ -389,6 +401,7 @@ func runInstall(args []string, stdout io.Writer, stderr io.Writer, syncMode bool
 			blocked++
 			fmt.Fprintf(stdout, "- %s: blocked, missing required tools: %s\n", candidate.Skill.Name, strings.Join(missing, ", "))
 			skippedCandidates[candidate.Skill.Name] = true
+			blockedSkills = append(blockedSkills, candidate.Skill.Name)
 			continue
 		}
 		if len(missing) > 0 {
@@ -448,6 +461,7 @@ func runInstall(args []string, stdout io.Writer, stderr io.Writer, syncMode bool
 			}
 			if wrote {
 				installed++
+				installedSkillSet[candidate.Skill.Name] = true
 				managed[relTarget] = true
 				delete(preserved, relTarget)
 				fingerprint, err := fingerprintDir(target)
@@ -542,96 +556,227 @@ func runInstall(args []string, stdout io.Writer, stderr io.Writer, syncMode bool
 		partial = true
 	}
 
-	if blocked > 0 {
-		if installed > 0 {
-			return 4
+	exit := ExitSuccess
+	switch {
+	case blocked > 0 && installed > 0:
+		exit = ExitPartial
+	case blocked > 0:
+		exit = ExitOpError
+	case partial:
+		exit = ExitPartial
+	}
+
+	if gf.JSON {
+		installedNames := sortedKeys(installedSkillSet)
+		if installedNames == nil {
+			installedNames = []string{}
 		}
-		return 3
+		if blockedSkills == nil {
+			blockedSkills = []string{}
+		}
+		if skippedSkills == nil {
+			skippedSkills = []string{}
+		}
+		mode := "install"
+		if syncMode {
+			mode = "sync"
+		}
+		result := map[string]interface{}{
+			"mode":      mode,
+			"project":   projectPath,
+			"dry_run":   opts.dryRun,
+			"installed": installedNames,
+			"blocked":   blockedSkills,
+			"skipped":   skippedSkills,
+			"partial":   partial,
+			"exit_code": exit,
+		}
+		if err := writeJSON(realStdout, result); err != nil {
+			fmt.Fprintln(stderr, err)
+			return ExitOpError
+		}
 	}
-	if partial {
-		return 4
-	}
-	return 0
+
+	return exit
 }
 
-func runUninstall(args []string, stdout io.Writer, stderr io.Writer) int {
+func runUninstall(args []string, realStdout io.Writer, stderr io.Writer, gf globalFlags) int {
 	opts, err := parseUninstallOptions(args)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
-		return 2
+		return ExitUsageError
 	}
+	stdout := gf.outWriter(realStdout)
 	projectPath, err := absoluteProjectPath(opts.projectPath)
 	if err != nil {
 		fmt.Fprintf(stderr, "project path: %v\n", err)
-		return 3
+		return ExitOpError
 	}
 	home, err := managerHome()
 	if err != nil {
 		fmt.Fprintf(stderr, "manager home: %v\n", err)
-		return 3
+		return ExitOpError
 	}
 	path := manifestPath(home, projectPath)
 	manifest, err := readManifest(path)
 	if err != nil {
 		fmt.Fprintf(stderr, "read manifest: %v\n", err)
-		return 3
+		return ExitOpError
 	}
 	if manifest.ProjectPath == "" {
 		fmt.Fprintln(stderr, "no manifest found for project")
-		return 3
+		return ExitOpError
 	}
 	if manifest.ProjectPath != projectPath {
 		fmt.Fprintf(stderr, "manifest belongs to %s, not %s\n", manifest.ProjectPath, projectPath)
-		return 3
+		return ExitOpError
 	}
 
-	fmt.Fprintln(stdout, "Uninstall preview:")
+	type uninstallPlanEntry struct {
+		rel      string
+		preserve bool
+		reason   string
+	}
+	var plan []uninstallPlanEntry
 	for _, rel := range manifest.ManagedPaths {
-		fmt.Fprintf(stdout, "- remove %s\n", rel)
+		target := filepath.Join(projectPath, filepath.FromSlash(rel))
+		expected := manifest.Files[rel]
+		entry := uninstallPlanEntry{rel: rel}
+		if expected != "" {
+			actual, ferr := fingerprintDir(target)
+			if ferr == nil && actual != expected {
+				entry.preserve = true
+				entry.reason = "manager-owned copy has local edits"
+			} else if ferr != nil && !errors.Is(ferr, os.ErrNotExist) {
+				fmt.Fprintf(stderr, "fingerprint %s: %v\n", rel, ferr)
+				return ExitOpError
+			}
+		}
+		plan = append(plan, entry)
+	}
+
+	if opts.dryRun {
+		fmt.Fprintln(stdout, "Uninstall preview (dry-run):")
+	} else {
+		fmt.Fprintln(stdout, "Uninstall preview:")
+	}
+	for _, e := range plan {
+		if e.preserve {
+			fmt.Fprintf(stdout, "- preserve %s (%s)\n", e.rel, e.reason)
+		} else {
+			fmt.Fprintf(stdout, "- remove %s\n", e.rel)
+		}
+	}
+	for _, rel := range manifest.PreservedPaths {
+		fmt.Fprintf(stdout, "- preserve %s (already preserved)\n", rel)
+	}
+	if opts.dryRun {
+		return ExitSuccess
 	}
 	if !opts.confirm {
 		fmt.Fprintln(stderr, "refusing to uninstall without --confirm")
-		return 2
+		return ExitUsageError
+	}
+
+	var backupDir string
+	if !opts.noBackup {
+		needBackup := false
+		for _, e := range plan {
+			if !e.preserve {
+				needBackup = true
+				break
+			}
+		}
+		if needBackup {
+			backupDir = filepath.Join(home, "backups", projectSlug(projectPath), time.Now().UTC().Format("20060102T150405Z"))
+			if err := os.MkdirAll(backupDir, 0o755); err != nil {
+				fmt.Fprintf(stderr, "create backup dir: %v\n", err)
+				return ExitOpError
+			}
+			fmt.Fprintf(stdout, "Backing up removed paths to %s\n", backupDir)
+		}
 	}
 
 	remaining := map[string]bool{}
-	for i := len(manifest.ManagedPaths) - 1; i >= 0; i-- {
-		rel := manifest.ManagedPaths[i]
+	var removed []string
+	for _, e := range plan {
+		rel := e.rel
 		target := filepath.Join(projectPath, filepath.FromSlash(rel))
-		expected := manifest.Files[rel]
-		if expected != "" {
-			actual, err := fingerprintDir(target)
-			if err == nil && actual != expected {
-				fmt.Fprintf(stdout, "- preserve %s (manager-owned copy has local edits)\n", rel)
-				remaining[rel] = true
-				continue
-			}
-			if err != nil && !errors.Is(err, os.ErrNotExist) {
-				fmt.Fprintf(stderr, "fingerprint %s: %v\n", rel, err)
-				return 3
+		if e.preserve {
+			fmt.Fprintf(stdout, "- preserved %s (%s)\n", rel, e.reason)
+			remaining[rel] = true
+			continue
+		}
+		if backupDir != "" {
+			info, statErr := os.Stat(target)
+			if statErr == nil {
+				dst := filepath.Join(backupDir, filepath.FromSlash(rel))
+				if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+					fmt.Fprintf(stderr, "backup %s: %v\n", rel, err)
+					return ExitOpError
+				}
+				if info.IsDir() {
+					if err := copyDir(target, dst); err != nil {
+						fmt.Fprintf(stderr, "backup %s: %v\n", rel, err)
+						return ExitOpError
+					}
+				} else {
+					if err := copyFile(target, dst, info.Mode()); err != nil {
+						fmt.Fprintf(stderr, "backup %s: %v\n", rel, err)
+						return ExitOpError
+					}
+				}
+			} else if !errors.Is(statErr, os.ErrNotExist) {
+				fmt.Fprintf(stderr, "stat %s: %v\n", rel, statErr)
+				return ExitOpError
 			}
 		}
 		if err := os.RemoveAll(target); err != nil {
 			fmt.Fprintf(stderr, "remove %s: %v\n", rel, err)
-			return 3
+			return ExitOpError
 		}
 		pruneEmptyParents(projectPath, filepath.Dir(target))
 		delete(manifest.Files, rel)
+		removed = append(removed, rel)
+		fmt.Fprintf(stdout, "- removed %s\n", rel)
 	}
+
+	exit := ExitSuccess
 	if len(remaining) > 0 {
 		manifest.ManagedPaths = sortedKeys(remaining)
 		manifest.PreservedPaths = unionSorted(manifest.PreservedPaths, manifest.ManagedPaths)
 		if err := writeManifest(path, manifest); err != nil {
 			fmt.Fprintf(stderr, "write manifest: %v\n", err)
-			return 3
+			return ExitOpError
 		}
-		return 4
+		exit = ExitPartial
+	} else {
+		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			fmt.Fprintf(stderr, "remove manifest: %v\n", err)
+			return ExitOpError
+		}
 	}
-	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
-		fmt.Fprintf(stderr, "remove manifest: %v\n", err)
-		return 3
+
+	if gf.JSON {
+		if removed == nil {
+			removed = []string{}
+		}
+		preservedPaths := sortedKeys(remaining)
+		if preservedPaths == nil {
+			preservedPaths = []string{}
+		}
+		result := map[string]interface{}{
+			"project":   projectPath,
+			"removed":   removed,
+			"preserved": preservedPaths,
+			"exit_code": exit,
+		}
+		if err := writeJSON(realStdout, result); err != nil {
+			fmt.Fprintln(stderr, err)
+			return ExitOpError
+		}
 	}
-	return 0
+	return exit
 }
 
 func parseInstallOptions(args []string) (installOptions, error) {
@@ -675,6 +820,10 @@ func parseUninstallOptions(args []string) (installOptions, error) {
 			opts.projectPath = args[i]
 		case "--confirm":
 			opts.confirm = true
+		case "--dry-run":
+			opts.dryRun = true
+		case "--no-backup":
+			opts.noBackup = true
 		default:
 			return opts, fmt.Errorf("unknown uninstall argument: %s", args[i])
 		}

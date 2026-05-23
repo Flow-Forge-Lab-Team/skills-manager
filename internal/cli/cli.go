@@ -8,33 +8,68 @@ import (
 const Version = "0.1.0-dev"
 
 func Run(args []string, stdout io.Writer, stderr io.Writer) int {
-	if len(args) == 1 && args[0] == "--version" {
-		fmt.Fprintf(stdout, "skills-manager %s\n", Version)
-		return 0
+	gf, rest, err := extractGlobalFlags(args)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return ExitUsageError
 	}
 
-	if len(args) == 0 {
-		fmt.Fprintln(stdout, "skills-manager: AI skill library manager")
-		fmt.Fprintln(stdout, "Usage: skills-manager <command>")
-		return 0
+	// --version is a top-level concern, handled before any subcommand dispatch.
+	for _, a := range rest {
+		if a == "--version" {
+			fmt.Fprintf(stdout, "skills-manager %s\n", Version)
+			return ExitSuccess
+		}
 	}
 
-	switch args[0] {
+	// Bare `skills-manager` or `--help`: print top-level help.
+	if len(rest) == 0 || (gf.Help && len(rest) == 0) {
+		fmt.Fprintln(stdout, helpText(""))
+		return ExitSuccess
+	}
+
+	cmd := rest[0]
+	cmdArgs := rest[1:]
+
+	// `help [cmd]` and `--help` on a subcommand.
+	if cmd == "help" {
+		topic := ""
+		if len(cmdArgs) > 0 {
+			topic = cmdArgs[0]
+		}
+		fmt.Fprintln(stdout, helpText(topic))
+		return ExitSuccess
+	}
+	if gf.Help {
+		fmt.Fprintln(stdout, helpText(cmd))
+		return ExitSuccess
+	}
+
+	log := openLogger(gf.Verbose)
+	defer log.close()
+	log.log("info", cmd, map[string]string{"args": fmt.Sprint(cmdArgs)})
+
+	var code int
+	switch cmd {
 	case "install":
-		return runInstall(args[1:], stdout, stderr, false)
+		code = runInstall(cmdArgs, stdout, stderr, false, gf)
 	case "sync":
-		return runInstall(args[1:], stdout, stderr, true)
+		code = runInstall(cmdArgs, stdout, stderr, true, gf)
 	case "uninstall":
-		return runUninstall(args[1:], stdout, stderr)
+		code = runUninstall(cmdArgs, stdout, stderr, gf)
 	case "list":
-		return runList(args[1:], stdout, stderr)
+		code = runList(cmdArgs, stdout, stderr, gf)
 	case "show":
-		return runShow(args[1:], stdout, stderr)
+		code = runShow(cmdArgs, stdout, stderr, gf)
 	case "update":
-		return runUpdate(args[1:], stdout, stderr)
+		code = runUpdate(cmdArgs, stdout, stderr)
+	default:
+		fmt.Fprintf(stderr, "unknown argument: %s\n", cmd)
+		fmt.Fprintln(stderr, "Usage: skills-manager <command>")
+		log.log("error", cmd, map[string]string{"reason": "unknown command"})
+		return ExitUsageError
 	}
 
-	fmt.Fprintf(stderr, "unknown argument: %s\n", args[0])
-	fmt.Fprintln(stderr, "Usage: skills-manager <command>")
-	return 2
+	log.log("info", cmd, map[string]string{"exit": fmt.Sprint(code)})
+	return code
 }
