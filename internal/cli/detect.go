@@ -141,9 +141,9 @@ func detectCompatibility(detectors detectorSet, skillBody string) map[string]det
 				}
 				detectedHarnesses[det.Harness][det.ID] = true
 
-				if results[det.Harness].Confidence == "" {
-					results[det.Harness] = detectionResult{Confidence: det.Confidence}
-				}
+				current := results[det.Harness]
+				current.Confidence = maxConfidence(current.Confidence, det.Confidence)
+				results[det.Harness] = current
 			}
 		}
 	}
@@ -230,6 +230,20 @@ func matchPattern(pattern, text string) bool {
 
 	// Simple substring match for all other patterns
 	return strings.Contains(text, pattern)
+}
+
+// maxConfidence returns the stronger of two confidence levels ("high" > "medium" > "low").
+func maxConfidence(a, b string) string {
+	if a == "high" || b == "high" {
+		return "high"
+	}
+	if a == "medium" || b == "medium" {
+		return "medium"
+	}
+	if a == "low" || b == "low" {
+		return "low"
+	}
+	return b
 }
 
 // applyAutoClassification returns a compatibility declaration based on detection results.

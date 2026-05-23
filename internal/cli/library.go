@@ -663,20 +663,15 @@ func rebuildCatalogFromLibrary(libraryPath string) (catalog, error) {
 		skillBody, _ := readSkillBody(skillMdPath)
 
 		// Refresh the sidecar's Declared block from frontmatter when present (source of truth).
+		// Only mark for write if the modeled compatibility state actually changes.
 		needsWrite := false
-		oldDeclared := meta.Compatibility.Declared
+		oldCompat := meta.Compatibility // snapshot before refresh
 
 		if compDecl.Mode != "" {
 			meta.Compatibility.Declared = &compDecl
-			// Clear explicit_portable if frontmatter now has a declaration (frontmatter wins)
 			meta.Compatibility.ExplicitPortable = false
-			needsWrite = true
 		} else {
-			// Frontmatter has no declaration, so clear the stale Declared block
 			meta.Compatibility.Declared = nil
-			if oldDeclared != nil {
-				needsWrite = true // we cleared a previous declaration
-			}
 		}
 
 		// Check for explicit declaration: either from frontmatter OR from explicit_portable flag
@@ -717,6 +712,13 @@ func rebuildCatalogFromLibrary(libraryPath string) (catalog, error) {
 				meta.Compatibility.Harnesses = nil
 				needsWrite = true
 			}
+		}
+
+		// Only mark the sidecar for rewrite if the modeled compatibility state actually changed.
+		// This prevents unnecessary rewrites (and loss of unmodeled fields) when the
+		// frontmatter declaration is already reflected in the sidecar.
+		if !reflect.DeepEqual(oldCompat, meta.Compatibility) {
+			needsWrite = true
 		}
 
 		// Infer requirements only if marked as inferred or all requirement fields are empty.
