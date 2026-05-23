@@ -80,6 +80,9 @@ func runScan(args []string, stdout io.Writer, stderr io.Writer, gf globalFlags) 
 		return ExitOpError
 	}
 
+	// Build fingerprint index of library skills
+	fingerprintIndex := buildFingerprintIndex(libraryPath)
+
 	// Load scan-ignore list
 	ignoreList, _ := loadScanIgnore(managerHomeDir)
 
@@ -114,17 +117,26 @@ func runScan(args []string, stdout io.Writer, stderr io.Writer, gf globalFlags) 
 				continue
 			}
 
-			// Check library
+			// Check library: match by fingerprint first, then by name as fallback
 			var status string
-			libraryEntry := filepath.Join(libraryPath, entry.Name())
-			libraryMeta, _ := readSkillMeta(filepath.Join(libraryEntry, ".skill-meta.yaml"))
+			_, hasFingerprintMatch := fingerprintIndex[fp]
 
-			if libraryMeta.Fingerprint.SHA256 == "" {
-				status = "unregistered"
-			} else if libraryMeta.Fingerprint.SHA256 == fp {
+			if hasFingerprintMatch {
+				// Found by fingerprint — skill is in library
 				status = "in library"
 			} else {
-				status = "drift"
+				// No fingerprint match; check by directory name (fallback)
+				libraryEntry := filepath.Join(libraryPath, entry.Name())
+				libraryMeta, _ := readSkillMeta(filepath.Join(libraryEntry, ".skill-meta.yaml"))
+
+				if libraryMeta.Fingerprint.SHA256 == "" {
+					status = "unregistered"
+				} else if libraryMeta.Fingerprint.SHA256 == fp {
+					status = "in library"
+				} else {
+					// Name matches but fingerprint differs — drift
+					status = "drift"
+				}
 			}
 
 			guessedOrigin := guessOrigin(skillPath)
@@ -269,4 +281,31 @@ func findArg(name string, args []string) int {
 		}
 	}
 	return -1
+}
+
+// buildFingerprintIndex creates a map from fingerprint -> library skill name
+// Used for fast fingerprint-based matching in scan.
+func buildFingerprintIndex(libraryPath string) map[string]string {
+	index := make(map[string]string)
+
+	entries, err := os.ReadDir(libraryPath)
+	if err != nil {
+		return index
+	}
+
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+
+		metaPath := filepath.Join(libraryPath, entry.Name(), ".skill-meta.yaml")
+		meta, err := readSkillMeta(metaPath)
+		if err != nil || meta.Fingerprint.SHA256 == "" {
+			continue
+		}
+
+		index[meta.Fingerprint.SHA256] = entry.Name()
+	}
+
+	return index
 }

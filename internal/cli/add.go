@@ -10,6 +10,28 @@ import (
 	"strings"
 )
 
+func expandTilde(path string) (string, error) {
+	if !strings.HasPrefix(path, "~") {
+		return path, nil
+	}
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("get home directory: %w", err)
+	}
+
+	if path == "~" {
+		return home, nil
+	}
+
+	if strings.HasPrefix(path, "~/") {
+		return filepath.Join(home, path[2:]), nil
+	}
+
+	// ~user/... form is not supported in v0.1
+	return "", fmt.Errorf("~user expansion not supported")
+}
+
 func runAdd(args []string, stdout io.Writer, stderr io.Writer, gf globalFlags) int {
 	if len(args) < 1 {
 		fmt.Fprintln(stderr, "usage: skills-manager add <source> [--auto] [--yes] [--name <override>]")
@@ -84,7 +106,12 @@ func runAdd(args []string, stdout io.Writer, stderr io.Writer, gf globalFlags) i
 			return ExitOpError
 		}
 	case "local":
-		absPath, err := filepath.Abs(source)
+		expandedPath, err := expandTilde(source)
+		if err != nil {
+			fmt.Fprintf(stderr, "expand path: %v\n", err)
+			return ExitUsageError
+		}
+		absPath, err := filepath.Abs(expandedPath)
 		if err != nil {
 			fmt.Fprintf(stderr, "resolve path: %v\n", err)
 			return ExitUsageError
@@ -101,6 +128,13 @@ func runAdd(args []string, stdout io.Writer, stderr io.Writer, gf globalFlags) i
 		fmt.Fprintf(stderr, "unknown kind: %v\n", kind)
 		return ExitUsageError
 	}
+
+	// Clean up temp directory for GitHub sources after ingest completes
+	defer func() {
+		if src.kind == "github" && src.path != "" {
+			os.RemoveAll(src.path)
+		}
+	}()
 
 	result := ingestFromSource(src, opts, home, humanOut)
 
@@ -183,6 +217,23 @@ func normalizeGitHubURL(raw string) (cloneURL string, err error) {
 	return "https://github.com/" + org + "/" + repo, nil
 }
 
+func truncateCommitSHA(sha string) (string, error) {
+	// Validate: must be at least 12 hex chars or exactly 40 hex chars
+	if len(sha) < 12 {
+		return "", fmt.Errorf("unexpected git rev-parse output: %q (too short)", sha)
+	}
+
+	// Check all characters are hex
+	for _, ch := range sha {
+		if !((ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'f')) {
+			return "", fmt.Errorf("unexpected git rev-parse output: %q (contains non-hex chars)", sha)
+		}
+	}
+
+	// Truncate to 12 chars
+	return sha[:12], nil
+}
+
 func fetchGitHub(url string) (ingestSource, error) {
 	// Normalize the GitHub URL
 	cloneURL, err := normalizeGitHubURL(url)
@@ -206,7 +257,19 @@ func fetchGitHub(url string) (ingestSource, error) {
 	// Get the commit
 	cmdRev := exec.Command("git", "-C", tmpDir, "rev-parse", "HEAD")
 	outRev, err := cmdRev.Output()
+	if err != nil {
+		os.RemoveAll(tmpDir)
+		return ingestSource{}, fmt.Errorf("could not resolve commit SHA from cloned repo: %w", err)
+	}
+
 	commit := strings.TrimSpace(string(outRev))
+
+	// Validate and truncate commit SHA
+	commitShort, err := truncateCommitSHA(commit)
+	if err != nil {
+		os.RemoveAll(tmpDir)
+		return ingestSource{}, err
+	}
 
 	return ingestSource{
 		kind:   "github",
@@ -214,7 +277,7 @@ func fetchGitHub(url string) (ingestSource, error) {
 		url:    cloneURL,
 		commit: commit,
 		path:   tmpDir,
-		label:  cloneURL + " @ " + commit[:12],
+		label:  cloneURL + " @ " + commitShort,
 	}, nil
 }
 

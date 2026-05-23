@@ -67,6 +67,15 @@ func ingestFromSource(src ingestSource, opts ingestOptions, home string, out io.
 		decl.name = opts.name
 	}
 
+	// Validate skill name to prevent path traversal
+	if !isValidSkillName(decl.name) {
+		return ingestResult{
+			Name:    decl.name,
+			Skipped: true,
+			Reason:  fmt.Sprintf("invalid skill name %q: must be 3-64 alphanumeric chars + dashes", decl.name),
+		}
+	}
+
 	result.Name = decl.name
 
 	// 3. Compute fingerprint

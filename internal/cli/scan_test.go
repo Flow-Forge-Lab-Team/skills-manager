@@ -179,6 +179,85 @@ Content here.
 	}
 }
 
+func TestScanMatchesByFingerprint(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+
+	// Set up library with a skill named "foo" whose SKILL.md has a specific fingerprint
+	libraryPath, err := ensureLibrary(home)
+	if err != nil {
+		t.Fatalf("ensureLibrary: %v", err)
+	}
+
+	skillMdContent := `---
+name: foo
+description: A skill in the library
+---
+
+# foo
+
+Library content.
+`
+
+	// Pre-populate library with skill named "foo"
+	fooLibraryDir := filepath.Join(libraryPath, "foo")
+	if err := os.MkdirAll(fooLibraryDir, 0755); err != nil {
+		t.Fatalf("create foo library dir: %v", err)
+	}
+
+	fooMdPath := filepath.Join(fooLibraryDir, "SKILL.md")
+	if err := os.WriteFile(fooMdPath, []byte(skillMdContent), 0644); err != nil {
+		t.Fatalf("write foo SKILL.md: %v", err)
+	}
+
+	// Record the fingerprint
+	fp, size, _ := fingerprintSkillMd(fooMdPath)
+	meta := skillMeta{
+		Version: 1,
+		Fingerprint: skillFingerprint{
+			SHA256: fp,
+			Size:   size,
+		},
+	}
+	_ = writeSkillMeta(filepath.Join(fooLibraryDir, ".skill-meta.yaml"), meta)
+
+	// Now create a scanned skill directory "bar" with the SAME content/fingerprint
+	// This tests that scan identifies it as "in library" by fingerprint, not by name
+	skillsDir := filepath.Join(home, ".claude", "skills")
+	if err := os.MkdirAll(skillsDir, 0755); err != nil {
+		t.Fatalf("create skills dir: %v", err)
+	}
+
+	barDir := filepath.Join(skillsDir, "bar")
+	if err := os.MkdirAll(barDir, 0755); err != nil {
+		t.Fatalf("create bar dir: %v", err)
+	}
+
+	barMdPath := filepath.Join(barDir, "SKILL.md")
+	if err := os.WriteFile(barMdPath, []byte(skillMdContent), 0644); err != nil {
+		t.Fatalf("write bar SKILL.md: %v", err)
+	}
+
+	args := []string{"--paths=" + skillsDir}
+	var stdout, stderr bytes.Buffer
+	gf := globalFlags{JSON: false}
+
+	code := runScan(args, &stdout, &stderr, gf)
+
+	if code != ExitSuccess {
+		t.Errorf("exit code = %d, want %d", code, ExitSuccess)
+	}
+
+	output := stdout.String()
+	// bar directory should match by fingerprint and report "in library", not "unregistered"
+	if !strings.Contains(output, "bar") {
+		t.Errorf("expected 'bar' in output: %s", output)
+	}
+	if !strings.Contains(output, "in library") {
+		t.Errorf("expected 'in library' status for bar (matched by fingerprint), got: %s", output)
+	}
+}
+
 func TestScanJSONOutput(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("SKILLS_MANAGER_HOME", home)

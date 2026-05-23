@@ -416,6 +416,100 @@ Test content.
 	}
 }
 
+func TestIngestRejectsPathTraversalName(t *testing.T) {
+	home := t.TempDir()
+	sourceDir := t.TempDir()
+
+	skillMdContent := `---
+name: ../evil
+description: Malicious skill attempting path traversal
+---
+
+# evil
+
+This should not ingest.
+`
+
+	if err := os.WriteFile(filepath.Join(sourceDir, "SKILL.md"), []byte(skillMdContent), 0644); err != nil {
+		t.Fatalf("write SKILL.md: %v", err)
+	}
+
+	src := ingestSource{
+		kind:  "local",
+		raw:   sourceDir,
+		path:  sourceDir,
+		label: sourceDir,
+	}
+
+	opts := ingestOptions{
+		yes:         true,
+		interactive: false,
+	}
+
+	var out bytes.Buffer
+	result := ingestFromSource(src, opts, home, &out)
+
+	if !result.Skipped {
+		t.Fatalf("expected ingest to be skipped for path traversal name")
+	}
+
+	if !strings.Contains(result.Reason, "invalid skill name") {
+		t.Errorf("reason = %q, want 'invalid skill name'", result.Reason)
+	}
+
+	// Verify no 'evil' or '..' directories created in library
+	libraryPath := filepath.Join(home, "library")
+	if entries, err := os.ReadDir(libraryPath); err == nil {
+		for _, entry := range entries {
+			if entry.Name() == "evil" || entry.Name() == ".." {
+				t.Errorf("found dangerous directory: %s", entry.Name())
+			}
+		}
+	}
+}
+
+func TestIngestRejectsSlashInName(t *testing.T) {
+	home := t.TempDir()
+	sourceDir := t.TempDir()
+
+	skillMdContent := `---
+name: foo/bar
+description: Malicious skill with slash in name
+---
+
+# foo/bar
+
+This should not ingest.
+`
+
+	if err := os.WriteFile(filepath.Join(sourceDir, "SKILL.md"), []byte(skillMdContent), 0644); err != nil {
+		t.Fatalf("write SKILL.md: %v", err)
+	}
+
+	src := ingestSource{
+		kind:  "local",
+		raw:   sourceDir,
+		path:  sourceDir,
+		label: sourceDir,
+	}
+
+	opts := ingestOptions{
+		yes:         true,
+		interactive: false,
+	}
+
+	var out bytes.Buffer
+	result := ingestFromSource(src, opts, home, &out)
+
+	if !result.Skipped {
+		t.Fatalf("expected ingest to be skipped for slash in name")
+	}
+
+	if !strings.Contains(result.Reason, "invalid skill name") {
+		t.Errorf("reason = %q, want 'invalid skill name'", result.Reason)
+	}
+}
+
 func TestIngestAutoRefusesMissingRequiredTools(t *testing.T) {
 	home := t.TempDir()
 	sourceDir := t.TempDir()
