@@ -196,9 +196,10 @@ func ingestFromSource(src ingestSource, opts ingestOptions, home string, out io.
 		fmt.Fprintln(out, "  3. Save the agent's JSON output to a file (e.g. /tmp/ingest-foo.json)")
 		fmt.Fprintf(out, "  4. Re-run the ingest using: skills-manager add %s --from /path/to/output.json [--yes|--auto]\n\n", src.raw)
 		return ingestResult{
-			Name:    decl.name,
-			Skipped: true,
-			Reason:  "handoff prompt written to " + promptPath,
+			Name:        decl.name,
+			Skipped:     false,
+			LibraryPath: promptPath,
+			Reason:      "handoff prompt written",
 		}
 	} else if opts.from != "" {
 		var err error
@@ -397,16 +398,8 @@ func ingestFromSource(src ingestSource, opts ingestOptions, home string, out io.
 		meta.Compatibility.Detected = map[string]detectionResult{
 			"skills-ingest": {Confidence: fromOut.Confidence.Compatibility, Reasons: []string{llmReason}},
 		}
-		// Use the LLM-suggested mode/harnesses (can override the default derived from frontmatter alone)
-		if m := fromOut.Compatibility.Mode; m != "" {
-			meta.Compatibility.Mode = m
-		}
-		if h := fromOut.Compatibility.Harness; h != "" {
-			meta.Compatibility.Harness = h
-		}
-		if len(fromOut.Compatibility.Harnesses) > 0 {
-			meta.Compatibility.Harnesses = fromOut.Compatibility.Harnesses
-		}
+		// Do NOT overwrite Mode/Harness/Harnesses from frontmatter declarations.
+		// LLM output only contributes to the Detected map; frontmatter Declared is authoritative.
 		meta.Requirements = reqs
 	} else {
 		meta.Compatibility.Detected = compatResults
@@ -566,6 +559,11 @@ func loadIngestOutput(path string) (*ingestOutput, error) {
 		if !validConf[v] {
 			return nil, fmt.Errorf("confidence.%s must be high|medium|low (got %q)", k, v)
 		}
+	}
+
+	validToolUse := map[string]bool{"required": true, "optional": true, "none": true}
+	if tu := out.Requirements.Model.ToolUse; tu != "" && !validToolUse[tu] {
+		return nil, fmt.Errorf("requirements.model.tool_use must be required|optional|none (got %q)", tu)
 	}
 
 	return &out, nil
