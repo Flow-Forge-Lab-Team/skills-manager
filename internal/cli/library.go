@@ -725,13 +725,13 @@ func rebuildCatalogFromLibrary(libraryPath string) (catalog, error) {
 				meta.Compatibility.Mode = autoClass.Mode
 				meta.Compatibility.Harness = autoClass.Harness
 				meta.Compatibility.Harnesses = autoClass.Harnesses
-				needsWrite = true
+				// Do not set needsWrite here — let the final DeepEqual decide
 			} else if meta.Compatibility.Mode != "portable" || meta.Compatibility.Harness != "" || len(meta.Compatibility.Harnesses) > 0 {
-				// No detection signals: default to portable, but only write if we are changing something
+				// No detection signals: default to portable
 				meta.Compatibility.Mode = "portable"
 				meta.Compatibility.Harness = ""
 				meta.Compatibility.Harnesses = nil
-				needsWrite = true
+				// Do not set needsWrite here — let the final DeepEqual decide
 			}
 		}
 
