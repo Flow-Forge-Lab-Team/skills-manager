@@ -77,7 +77,8 @@ class="sourceCode bash"><code class="sourceCode bash"><span id="cb2-1"><a href="
 <span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a><span class="co"># returns current main commit</span></span></code></pre></div>
 <p>If returned SHA ≠ stored commit, update available. Diff =
 <code>git diff stored_commit..current_main</code> against the relevant
-file paths.</p>
+file paths. In v0.1, only SKILL.md updates are supported; upstream
+changes to other files are rejected with a clear error.</p>
 <p>Rate budget: with a GitHub token, 5,000 req/hr. 251 skills polled
 daily uses ~7 reqs/min on a one-shot scan — trivial. With
 ETag/<code>If-None-Match</code> headers, most poll calls return 304
@@ -295,6 +296,40 @@ summarization.</p>
 <li>UI and CLI show the raw suspicious lines</li>
 <li>The user can still accept manually after reviewing the raw diff</li>
 </ul>
+<h3 id="divergence-guard-on-accept">Divergence guard on accept</h3>
+<p>Between the moment an update is staged under
+<code>library/&lt;skill&gt;/.update-pending/</code> and the moment the
+user runs <code>--accept-all-safe</code>, the live skill directory can
+change — the user might edit a file, another tool might drop in a
+local-only support file, or a sibling workspace could sync new content.
+If accept blindly replaced the live contents with the incoming snapshot,
+those local edits and local-only files would be silently destroyed.</p>
+<p>To prevent that, <code>--accept-all-safe</code> compares each live
+skill directory against the <code>from/</code> snapshot (the "what the
+live state was supposed to look like when the update was staged") before
+applying. The guard branches on the same key the apply step uses (the
+<code>to</code> snapshot's shape), so its view of what apply will touch
+is always aligned:</p>
+<ul>
+<li><strong>If <code>to/</code> is a directory</strong> (apply wipes and
+replaces): compare every file in the live dir against the base. Any
+extra, missing, modified, or exec-bit-changed file is divergence.</li>
+<li><strong>If <code>to</code> is a single file</strong> (apply only
+rewrites <code>SKILL.md</code>): compare only the live
+<code>SKILL.md</code> against the base. Other live files are untouched
+by apply, so they don't count as divergence.</li>
+<li><code>.skill-meta.yaml</code> is excluded symmetrically on both
+sides — apply preserves the local sidecar across updates rather than
+overwriting it.</li>
+<li><code>.update-pending/</code> is excluded from the live side (it is
+the staging area itself).</li>
+</ul>
+<p>If any pending update diverges, the whole batch is refused with exit
+code <code>4</code> (partial) — mirroring the all-or-nothing behavior
+used when any update has blocking safety flags. The diverged skill is
+listed with the specific reason. Manual resolution is required (re-stage
+the update or revert the local change). The manager never attempts to
+merge automatically.</p>
 <h3 id="accept--reject--pin">Accept / reject / pin</h3>
 <pre><code>$ skills-manager update --accept pdf
 

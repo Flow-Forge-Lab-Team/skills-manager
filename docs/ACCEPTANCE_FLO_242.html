@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FLO-242 acceptance smoke — skills-manager</title>
+<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/styles/atom-one-dark.min.css">
+<script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/highlight.min.js"></script>
+<script>document.addEventListener('DOMContentLoaded', () => {
+  // Pandoc emits class="sourceCode <lang>"; normalize to language-<lang> for hljs.
+  document.querySelectorAll('pre code.sourceCode').forEach(el => {
+    const lang = [...el.classList].find(c => c !== 'sourceCode');
+    if (lang) {
+      el.classList.add('language-' + lang);
+      hljs.highlightElement(el);
+    }
+  });
+});</script>
+</head>
+<body>
+<div class="app">
+  <nav class="sidebar">
+    <a href="index.html" class="brand">
+      <span class="brand-logo">s</span>
+      <span class="brand-name">skills-manager</span>
+    </a>
+    <div class="nav-section">Foundation</div>
+    <a href="VISION.html" class="nav-item">Vision</a>
+    <a href="ARCHITECTURE.html" class="nav-item">Architecture</a>
+    <a href="ROADMAP.html" class="nav-item">Roadmap</a>
+    <a href="DATA_MODEL.html" class="nav-item">Data model</a>
+    <div class="nav-section">Surface</div>
+    <a href="CLI_REFERENCE.html" class="nav-item">CLI reference</a>
+    <a href="TAXONOMY.html" class="nav-item">Taxonomy</a>
+    <div class="nav-section">Subsystems</div>
+    <a href="COMPATIBILITY.html" class="nav-item">Compatibility</a>
+    <a href="INGEST_FLOW.html" class="nav-item">Ingest flow</a>
+    <a href="UPDATE_FLOW.html" class="nav-item">Update flow</a>
+    <a href="BUNDLED_SKILLS.html" class="nav-item">Bundled skills</a>
+    <a href="SCHEDULING.html" class="nav-item">Scheduling</a>
+    <a href="CROSS_MACHINE.html" class="nav-item">Cross-machine sync</a>
+    <div class="nav-section">Out-of-band</div>
+    <a href="../mockup.html" class="nav-item">UI mockup ↗</a>
+    <a href="../README.html" class="nav-item">README</a>
+  </nav>
+  <main class="content">
+    <div class="doc-meta">
+      <span class="crumb"><a href="index.html">docs</a></span>
+      <span class="sep">/</span>
+      <span class="crumb">ACCEPTANCE_FLO_242.md</span>
+    </div>
+<h1 id="flo-242-v01-acceptance-smoke">FLO-242 v0.1 Acceptance Smoke</h1>
+<p>Date: 2026-05-23</p>
+<h2 id="scope">Scope</h2>
+<p>This smoke validates the v0.1 local-library workflow against a
+disposable realistic Next.js project and an isolated manager home. It
+does not touch the real user library.</p>
+<p>Out of scope matches the Linear issue and roadmap: cross-machine
+sync, scheduling, LLM summaries, web UI, watcher daemon, and cloud
+scheduling.</p>
+<h2 id="fixture">Fixture</h2>
+<ul>
+<li>Manager home:
+<code>/tmp/skills-manager-flo242.A3OVns/home</code></li>
+<li>Project:
+<code>/tmp/skills-manager-flo242.A3OVns/next-realistic</code></li>
+<li>Drift project:
+<code>/tmp/skills-manager-flo242.A3OVns/next-drift</code></li>
+<li>Binary: <code>./bin/skills-manager</code> built from this
+branch</li>
+</ul>
+<p>The project fixture included:</p>
+<ul>
+<li><code>package.json</code> with <code>next</code>,
+<code>react</code>, <code>tailwindcss</code>,
+<code>@prisma/client</code>, <code>@playwright/test</code>, and
+<code>vitest</code></li>
+<li><code>next.config.js</code></li>
+<li><code>tailwind.config.js</code></li>
+<li><code>.github/workflows/ci.yml</code></li>
+<li>harness config directories for <code>.claude</code>,
+<code>.codex</code>, <code>.grok</code>, <code>.agents</code>, and
+<code>.hermes</code></li>
+<li>a pre-existing unmanaged file at
+<code>.claude/skills/preexisting/SKILL.md</code></li>
+</ul>
+<p>The isolated library included:</p>
+<ul>
+<li><code>next-review</code>: Next.js/React skill, portable</li>
+<li><code>qa-check</code>: Playwright/Vitest skill, portable, requires
+<code>rg</code></li>
+<li><code>update-demo</code>: GitHub-origin update fixture pointing at
+<code>Flow-Forge-Lab-Team/skills-manager/bundled-skills/skills-diff-summary</code></li>
+<li><code>linear-doctor</code>: non-matching fixture requiring the
+Linear MCP, used to verify <code>doctor</code> reports missing
+requirements</li>
+</ul>
+<h2 id="results">Results</h2>
+<h3 id="init">Init</h3>
+<p>Command:</p>
+<div class="sourceCode" id="cb1"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="va">SKILLS_MANAGER_HOME</span><span class="op">=</span><span class="st">&quot;</span><span class="va">$HOME_DIR</span><span class="st">&quot;</span> <span class="ex">./bin/skills-manager</span> <span class="at">--json</span> init <span class="st">&quot;</span><span class="va">$PROJECT</span><span class="st">&quot;</span></span></code></pre></div>
+<p>Result: pass.</p>
+<p>Detected categories:</p>
+<pre class="text"><code>Engineering, Quality, Operations, Data, Design</code></pre>
+<p>Detected tags:</p>
+<pre class="text"><code>nextjs, nodejs, playwright, prisma, react, tailwind, vitest</code></pre>
+<p>Detected harnesses:</p>
+<pre class="text"><code>claude, codex, grok, antigravity, gemini, hermes, openclaw</code></pre>
+<h3 id="match">Match</h3>
+<p>Command:</p>
+<div class="sourceCode" id="cb5"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a><span class="va">SKILLS_MANAGER_HOME</span><span class="op">=</span><span class="st">&quot;</span><span class="va">$HOME_DIR</span><span class="st">&quot;</span> <span class="ex">./bin/skills-manager</span> <span class="at">--json</span> match <span class="at">--project</span> <span class="st">&quot;</span><span class="va">$PROJECT</span><span class="st">&quot;</span> <span class="at">--explain</span></span></code></pre></div>
+<p>Result: pass.</p>
+<p><code>match --explain</code> returned ranked candidates without
+installing anything:</p>
+<ul>
+<li><code>next-review</code>, score 6, category and tag overlap</li>
+<li><code>qa-check</code>, score 6, category and tag overlap</li>
+<li><code>update-demo</code>, score 5, category and tag overlap</li>
+</ul>
+<h3 id="install">Install</h3>
+<p>Command:</p>
+<div class="sourceCode" id="cb6"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a><span class="va">SKILLS_MANAGER_HOME</span><span class="op">=</span><span class="st">&quot;</span><span class="va">$HOME_DIR</span><span class="st">&quot;</span> <span class="ex">./bin/skills-manager</span> install <span class="at">--project</span> <span class="st">&quot;</span><span class="va">$PROJECT</span><span class="st">&quot;</span></span></code></pre></div>
+<p>Result: pass.</p>
+<p>The install populated the expected five distinct project target bases
+for each matching skill:</p>
+<pre class="text"><code>.agents/skills/&lt;skill&gt;
+.claude/skills/&lt;skill&gt;
+.codex/skills/&lt;skill&gt;
+.grok/skills/&lt;skill&gt;
+skills/&lt;skill&gt;</code></pre>
+<p><code>antigravity</code> and <code>gemini</code> share
+<code>.agents/skills</code>; <code>hermes</code> and
+<code>openclaw</code> share <code>skills</code>.</p>
+<h3 id="check">Check</h3>
+<p>Command:</p>
+<div class="sourceCode" id="cb8"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a><span class="va">SKILLS_MANAGER_HOME</span><span class="op">=</span><span class="st">&quot;</span><span class="va">$HOME_DIR</span><span class="st">&quot;</span> <span class="ex">./bin/skills-manager</span> check <span class="at">--force</span> <span class="at">--skill</span> update-demo</span></code></pre></div>
+<p>Result: pass.</p>
+<p>Output:</p>
+<pre class="text"><code>update-demo: warn (old tree unavailable, falling back to live comparison)
+update-demo: updated (pending)</code></pre>
+<p>The warning is expected for the fixture because the stored commit
+predates the fixture path. The fallback still staged a real pending
+GitHub update.</p>
+<h3 id="update-diff">Update Diff</h3>
+<p>Command:</p>
+<div class="sourceCode" id="cb10"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb10-1"><a href="#cb10-1" aria-hidden="true" tabindex="-1"></a><span class="va">SKILLS_MANAGER_HOME</span><span class="op">=</span><span class="st">&quot;</span><span class="va">$HOME_DIR</span><span class="st">&quot;</span> <span class="ex">./bin/skills-manager</span> update <span class="at">--diff</span> update-demo</span></code></pre></div>
+<p>Result: pass.</p>
+<p>The command printed a raw unified diff from the local
+<code>update-demo</code> skill to the incoming
+<code>skills-diff-summary</code> skill.</p>
+<h3 id="safety-flags">Safety Flags</h3>
+<p>Command:</p>
+<div class="sourceCode" id="cb11"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb11-1"><a href="#cb11-1" aria-hidden="true" tabindex="-1"></a><span class="va">SKILLS_MANAGER_HOME</span><span class="op">=</span><span class="st">&quot;</span><span class="va">$HOME_DIR</span><span class="st">&quot;</span> <span class="ex">./bin/skills-manager</span> update <span class="at">--safety</span> update-demo</span></code></pre></div>
+<p>Result: pass.</p>
+<p>Output:</p>
+<pre class="text"><code>Safety review for update-demo
+Safety flags (2):
+- description-changed [block] SKILL.md:3 - frontmatter description changed
+- suspicious-instructions [block] SKILL.md:17 - exfiltrate, reveal secrets, disable safety, bypass policy, or summarize the
+summary_status=tainted</code></pre>
+<h3 id="doctor">Doctor</h3>
+<p>Command:</p>
+<div class="sourceCode" id="cb13"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb13-1"><a href="#cb13-1" aria-hidden="true" tabindex="-1"></a><span class="va">SKILLS_MANAGER_HOME</span><span class="op">=</span><span class="st">&quot;</span><span class="va">$HOME_DIR</span><span class="st">&quot;</span> <span class="ex">./bin/skills-manager</span> doctor</span></code></pre></div>
+<p>Result: pass.</p>
+<p><code>doctor</code> exited nonzero as expected and reported the
+missing Linear MCP requirement:</p>
+<pre class="text"><code>missing required MCP linear (configure connector for your harness)</code></pre>
+<h3 id="doctor-rebuild-state">Doctor Rebuild State</h3>
+<p>Command:</p>
+<div class="sourceCode" id="cb15"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb15-1"><a href="#cb15-1" aria-hidden="true" tabindex="-1"></a><span class="va">SKILLS_MANAGER_HOME</span><span class="op">=</span><span class="st">&quot;</span><span class="va">$HOME_DIR</span><span class="st">&quot;</span> <span class="ex">./bin/skills-manager</span> doctor <span class="at">--rebuild-state</span></span></code></pre></div>
+<p>Result: pass.</p>
+<p>Output:</p>
+<pre class="text"><code>rebuilt state.db
+missing required MCP linear (configure connector for your harness)</code></pre>
+<p>The command rebuilt derived state and then still reported the
+intentionally missing Linear MCP requirement.</p>
+<h3 id="manifest-drift">Manifest Drift</h3>
+<p>Command:</p>
+<div class="sourceCode" id="cb17"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb17-1"><a href="#cb17-1" aria-hidden="true" tabindex="-1"></a><span class="bu">printf</span> <span class="st">&#39;\nlocal edit\n&#39;</span> <span class="op">&gt;&gt;</span> <span class="st">&quot;</span><span class="va">$DRIFT_PROJECT</span><span class="st">/.codex/skills/next-review/SKILL.md&quot;</span></span>
+<span id="cb17-2"><a href="#cb17-2" aria-hidden="true" tabindex="-1"></a><span class="va">SKILLS_MANAGER_HOME</span><span class="op">=</span><span class="st">&quot;</span><span class="va">$HOME_DIR</span><span class="st">&quot;</span> <span class="ex">./bin/skills-manager</span> doctor</span></code></pre></div>
+<p>Result: pass.</p>
+<p>Output included:</p>
+<pre class="text"><code>fingerprint drift: .codex/skills/next-review modified in /tmp/skills-manager-flo242.A3OVns/next-drift
+missing required MCP linear (configure connector for your harness)</code></pre>
+<h3 id="uninstall">Uninstall</h3>
+<p>Command:</p>
+<div class="sourceCode" id="cb19"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb19-1"><a href="#cb19-1" aria-hidden="true" tabindex="-1"></a><span class="va">SKILLS_MANAGER_HOME</span><span class="op">=</span><span class="st">&quot;</span><span class="va">$HOME_DIR</span><span class="st">&quot;</span> <span class="ex">./bin/skills-manager</span> uninstall <span class="at">--project</span> <span class="st">&quot;</span><span class="va">$PROJECT</span><span class="st">&quot;</span> <span class="at">--confirm</span> <span class="at">--no-backup</span></span></code></pre></div>
+<p>Result: pass.</p>
+<p>All manifest-owned paths for <code>next-review</code>,
+<code>qa-check</code>, and <code>update-demo</code> were removed
+from:</p>
+<pre class="text"><code>.agents/skills
+.claude/skills
+.codex/skills
+.grok/skills
+skills</code></pre>
+<p>The pre-existing unmanaged file remained:</p>
+<pre class="text"><code>.claude/skills/preexisting/SKILL.md</code></pre>
+<h2 id="conclusion">Conclusion</h2>
+<p>FLO-242 acceptance passed against a realistic disposable Next.js
+project. No product code changes were required.</p>
+    <footer class="doc-footer">
+      <span>skills-manager · design doc</span>
+      <span><a href="ACCEPTANCE_FLO_242.md">view source (.md)</a></span>
+    </footer>
+  </main>
+</div>
+</body>
+</html>
