@@ -42,31 +42,31 @@ type projectConfig struct {
 }
 
 type catalog struct {
-	Skills []catalogSkill
+	Skills []catalogSkill `json:"skills"`
 }
 
 type catalogSkill struct {
-	Name          string
-	Summary       string
-	Categories    []string
-	Tags          []string
-	Compatibility compatibility
-	Requirements  requirements
+	Name          string        `json:"name"`
+	Summary       string        `json:"summary,omitempty"`
+	Categories    []string      `json:"categories,omitempty"`
+	Tags          []string      `json:"tags,omitempty"`
+	Compatibility compatibility `json:"compatibility"`
+	Requirements  requirements  `json:"requirements,omitempty"`
 }
 
 type compatibility struct {
-	Mode      string
-	Harness   string
-	Harnesses []string
+	Mode      string   `json:"mode,omitempty"`
+	Harness   string   `json:"harness,omitempty"`
+	Harnesses []string `json:"harnesses,omitempty"`
 }
 
 type requirements struct {
-	Tools []toolRequirement
+	Tools []toolRequirement `json:"tools,omitempty"`
 }
 
 type toolRequirement struct {
-	Name     string
-	Required bool
+	Name     string `json:"name"`
+	Required bool   `json:"required"`
 }
 
 type installManifest struct {

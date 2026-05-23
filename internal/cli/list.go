@@ -221,7 +221,7 @@ func runShow(args []string, stdout io.Writer, stderr io.Writer) int {
 
 	if opts.jsonOut {
 		fingerprintOut := meta.Fingerprint
-		if fingerprintOut.SHA256 == "" && fp != "" {
+		if fp != "" {
 			fingerprintOut.SHA256 = fp
 			fingerprintOut.Size = sz
 		}
