@@ -1300,6 +1300,7 @@ func readProjectConfig(path string) (projectConfig, error) {
 	var project projectConfig
 	project.PinnedVersions = map[string]string{}
 	var section string
+	var harnessesSeen bool
 	for i := 0; i < len(lines); i++ {
 		key, value, ok := splitYAMLKey(lines[i])
 		if !ok {
@@ -1312,6 +1313,9 @@ func readProjectConfig(path string) (projectConfig, error) {
 			items, next := readYAMLStringList(lines, i, value)
 			i = next
 			assignProjectList(&project, key, items)
+			if key == "harnesses" {
+				harnessesSeen = true
+			}
 		case "skills":
 			section = "skills"
 		case "always_include", "never_include":
@@ -1342,7 +1346,7 @@ func readProjectConfig(path string) (projectConfig, error) {
 			}
 		}
 	}
-	if len(project.Harnesses) == 0 {
+	if !harnessesSeen {
 		project.Harnesses = []string{"claude", "codex", "grok", "antigravity", "gemini", "hermes", "openclaw"}
 	}
 	return project, nil
