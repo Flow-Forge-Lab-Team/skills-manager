@@ -542,7 +542,8 @@ func writeSkillMeta(path string, meta skillMeta) error {
 
 		if len(meta.Compatibility.Detected) > 0 {
 			fmt.Fprint(&buf, "  detected:\n")
-			for harness, result := range meta.Compatibility.Detected {
+			for _, harness := range sortedDetectionHarnesses(meta.Compatibility.Detected) {
+				result := meta.Compatibility.Detected[harness]
 				fmt.Fprintf(&buf, "    %s:\n", harness)
 				fmt.Fprintf(&buf, "      confidence: %s\n", result.Confidence)
 				if len(result.Reasons) > 0 {
@@ -769,7 +770,8 @@ func updateCompatibilitySection(path string, meta skillMeta) error {
 	}
 	if len(meta.Compatibility.Detected) > 0 {
 		fmt.Fprint(&newBlock, "  detected:\n")
-		for harness, result := range meta.Compatibility.Detected {
+		for _, harness := range sortedDetectionHarnesses(meta.Compatibility.Detected) {
+			result := meta.Compatibility.Detected[harness]
 			fmt.Fprintf(&newBlock, "    %s:\n", harness)
 			fmt.Fprintf(&newBlock, "      confidence: %s\n", result.Confidence)
 			if len(result.Reasons) > 0 {
@@ -793,6 +795,15 @@ func updateCompatibilitySection(path string, meta skillMeta) error {
 	}
 
 	return os.WriteFile(path, []byte(result.String()), 0644)
+}
+
+func sortedDetectionHarnesses(detected map[string]detectionResult) []string {
+	harnesses := make([]string, 0, len(detected))
+	for harness := range detected {
+		harnesses = append(harnesses, harness)
+	}
+	sort.Strings(harnesses)
+	return harnesses
 }
 
 func rebuildCatalogFromLibrary(libraryPath string) (catalog, error) {
@@ -882,10 +893,24 @@ func rebuildCatalogFromLibrary(libraryPath string) (catalog, error) {
 				meta.Compatibility.Detected = detected
 				// Apply auto-classification rule to set effective mode/harness/harnesses
 				autoClass := applyAutoClassification(detected)
-				meta.Compatibility.Mode = autoClass.Mode
-				meta.Compatibility.Harness = autoClass.Harness
-				meta.Compatibility.Harnesses = autoClass.Harnesses
+				if autoClass.Mode != "" && autoClass.Mode != "portable" {
+					meta.Compatibility.Mode = autoClass.Mode
+					meta.Compatibility.Harness = autoClass.Harness
+					meta.Compatibility.Harnesses = autoClass.Harnesses
+				} else if meta.Categorization.Source == "seed-remap" &&
+					(meta.Compatibility.Mode == "exclusive" || meta.Compatibility.Mode == "compatible") {
+					// Seed catalog classifications are curated metadata. Preserve them
+					// when weak detector signals do not produce a stronger classification.
+				} else {
+					meta.Compatibility.Mode = autoClass.Mode
+					meta.Compatibility.Harness = autoClass.Harness
+					meta.Compatibility.Harnesses = autoClass.Harnesses
+				}
 				// Do not set needsWrite here — let the final DeepEqual decide
+			} else if meta.Categorization.Source == "seed-remap" &&
+				(meta.Compatibility.Mode == "exclusive" || meta.Compatibility.Mode == "compatible") {
+				// Seed catalog classifications are curated metadata. Preserve them
+				// when no stronger frontmatter or detector signal overrides them.
 			} else if meta.Compatibility.Mode != "portable" || meta.Compatibility.Harness != "" || len(meta.Compatibility.Harnesses) > 0 {
 				// No detection signals: default to portable
 				meta.Compatibility.Mode = "portable"
@@ -910,8 +935,13 @@ func rebuildCatalogFromLibrary(libraryPath string) (catalog, error) {
 		if meta.Requirements.Inferred || (!hasExplicitRequirements && !sidecarExisted) {
 			inferred := inferRequirements(detectors, skillBody)
 			inferred.Inferred = true // normalize so DeepEqual only cares about modeled data
-			if !reflect.DeepEqual(meta.Requirements, inferred) {
+			oldRequirements := meta.Requirements
+			if sidecarHasUnmodeledRequirements(metaPath) {
+				mergeSeedRequirements(&meta.Requirements, inferred)
+			} else {
 				meta.Requirements = inferred
+			}
+			if !reflect.DeepEqual(oldRequirements, meta.Requirements) {
 				requirementsChanged = true
 			}
 		}
@@ -925,7 +955,11 @@ func rebuildCatalogFromLibrary(libraryPath string) (catalog, error) {
 		// - If only compatibility changed → surgically update only the compatibility
 		//   section in the raw file so we don't clobber unmodeled requirement fields.
 		if requirementsChanged {
-			_ = writeSkillMeta(metaPath, meta)
+			if sidecarHasUnmodeledRequirements(metaPath) {
+				_ = writeSeedSkillMeta(metaPath, meta)
+			} else {
+				_ = writeSkillMeta(metaPath, meta)
+			}
 		} else if compatibilityChanged {
 			updateCompatibilitySection(metaPath, meta)
 		}
