@@ -1201,8 +1201,13 @@ origin:
 		},
 		tree: map[string][]TreeEntry{
 			"user/advanced-skill:def5678:": {
-				// Upstream only has SKILL.md, no references or scripts (they're local)
+				// Upstream still has the sibling files unchanged — declaring them
+				// in the tree with matching blob SHAs proves "no upstream change"
+				// for those paths, so multi-file detection allows the SKILL.md-only
+				// update through.
 				{Path: "SKILL.md", SHA: gitBlobSHA(newSKILLContent), Type: "blob"},
+				{Path: "references/example.md", SHA: gitBlobSHA([]byte("# Example\nThis is a reference file\n")), Type: "blob"},
+				{Path: "scripts/foo.sh", SHA: gitBlobSHA([]byte("#!/bin/bash\necho hello\n")), Type: "blob"},
 			},
 		},
 	}
@@ -1776,12 +1781,14 @@ origin:
 		t.Fatalf("write meta: %v", err)
 	}
 
-	// Create a data/config.json file locally (not whitelisted)
-	if err := os.MkdirAll(filepath.Join(skillDir, "data"), 0755); err != nil {
-		t.Fatalf("mkdir data: %v", err)
+	// Create a references/foo.md file locally — the exact case codex flagged.
+	// references/ is NOT whitelisted: it's real upstream content for many skills
+	// (e.g. Anthropic's pdf skill), so upstream deleting it must be detected.
+	if err := os.MkdirAll(filepath.Join(skillDir, "references"), 0755); err != nil {
+		t.Fatalf("mkdir references: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(skillDir, "data", "config.json"), []byte(`{"key": "value"}`), 0644); err != nil {
-		t.Fatalf("write data/config.json: %v", err)
+	if err := os.WriteFile(filepath.Join(skillDir, "references", "foo.md"), []byte("reference content"), 0644); err != nil {
+		t.Fatalf("write references/foo.md: %v", err)
 	}
 
 	poller := &fakePoller{

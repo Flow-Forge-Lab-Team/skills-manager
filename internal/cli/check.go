@@ -410,35 +410,27 @@ func parseGitHubURL(url string) (owner, repo string, err error) {
 }
 
 // detectMultiFileChange compares the upstream tree against the live skill directory.
-// isWhitelistedLocalPath returns true if a skill-relative path is a local-only file
-// (not counted as divergence if present in live but not in upstream).
-// Whitelisted paths:
-//   - .skill-meta.yaml
-//   - .update-pending/**
-//   - references/** (local documentation)
-//   - scripts/** (local scripts, deferred to future PR for enforcement)
-//   - anything starting with . at root (e.g., .myconfig, .hidden)
+// isWhitelistedLocalPath returns true if a skill-relative path is a local-only
+// artifact that the manager itself creates, so its presence in live (but not
+// upstream) is not real divergence.
+//
+// Whitelist is intentionally narrow: only manager-generated paths. Real skill
+// content directories like references/ and scripts/ are NOT whitelisted —
+// upstream changes (additions, modifications, or deletions) there must be
+// surfaced as multi-file changes per the v0.1 boundary.
 func isWhitelistedLocalPath(rel string) bool {
-	if rel == ".skill-meta.yaml" || rel == ".update-pending" {
-		return true
-	}
 	parts := strings.Split(filepath.ToSlash(rel), "/")
 	if len(parts) == 0 {
 		return false
 	}
-
 	first := parts[0]
-
-	// Whitelisted directories at root
-	if first == ".update-pending" || first == "references" || first == "scripts" {
+	if first == ".skill-meta.yaml" || first == ".update-pending" {
 		return true
 	}
-
-	// Dotfiles at root
+	// Dotfiles at root (.git, .DS_Store, user dotfiles, etc.) — never tracked upstream.
 	if strings.HasPrefix(first, ".") {
 		return true
 	}
-
 	return false
 }
 
