@@ -311,6 +311,30 @@ func TestSummarizeJSONIncludesBadges(t *testing.T) {
 	}
 }
 
+func TestSummarizeDoesNotBadgeNegatedSafetyFlags(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+	root := filepath.Join(home, "library", "notes", ".update-pending")
+	writeFile(t, filepath.Join(root, "from-current", "SKILL.md"), "---\nname: notes\ndescription: Take notes\n---\nOld\n")
+	writeFile(t, filepath.Join(root, "to-incoming", "SKILL.md"), "---\nname: notes\ndescription: Take notes\n---\nNew\n")
+	output := filepath.Join(t.TempDir(), "summary.md")
+	writeFile(t, output, validSummary("notes", "none; no script-added or large-rewrite", "no", "no", "no"))
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := Run([]string{"--json", "summarize", "notes", "--from", output}, &stdout, &stderr)
+	if code != ExitSuccess {
+		t.Fatalf("Run returned %d, want 0\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+	}
+	var result summarizeResult
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("unmarshal json: %v\n%s", err, stdout.String())
+	}
+	if containsString(result.Badges, "script-added") || containsString(result.Badges, "large-rewrite") {
+		t.Fatalf("badges include negated safety flags: %+v", result.Badges)
+	}
+}
+
 func TestSummarizeAutoWithoutProviderFailsClearly(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("SKILLS_MANAGER_HOME", home)

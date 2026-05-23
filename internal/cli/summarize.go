@@ -373,12 +373,36 @@ func summaryBadges(sections map[string]string) []string {
 			badges = append(badges, check.badge)
 		}
 	}
-	for _, flag := range []string{"script-added", "suspicious-instructions", "tool-guidance-changed", "large-rewrite"} {
-		if strings.Contains(text, flag) {
-			badges = append(badges, flag)
+	badges = append(badges, summarySafetyFlagBadges(sections["safety flags"])...)
+	return uniqueStrings(badges)
+}
+
+func summarySafetyFlagBadges(section string) []string {
+	known := map[string]bool{
+		"script-added":            true,
+		"suspicious-instructions": true,
+		"tool-guidance-changed":   true,
+		"large-rewrite":           true,
+	}
+	var badges []string
+	for _, line := range strings.Split(section, "\n") {
+		trimmed := strings.TrimSpace(strings.TrimPrefix(line, "-"))
+		field, value, ok := strings.Cut(trimmed, ":")
+		if !ok || strings.ToLower(strings.TrimSpace(field)) != "safety flags" {
+			continue
+		}
+		value = strings.Trim(strings.ToLower(value), " []")
+		if value == "" || value == "none" || strings.HasPrefix(value, "none;") {
+			continue
+		}
+		for _, token := range strings.Split(value, ",") {
+			flag := strings.Trim(strings.TrimSpace(token), `[] "'`)
+			if known[flag] {
+				badges = append(badges, flag)
+			}
 		}
 	}
-	return uniqueStrings(badges)
+	return badges
 }
 
 func validateSummaryAgainstReport(parsed parsedSummary, report safetyReport) error {
