@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -221,7 +222,16 @@ func runCheckWithPoller(args []string, stdout io.Writer, stderr io.Writer, gf gl
 	return ExitSuccess
 }
 
+// isSafeGitHubSegment validates that a GitHub owner or repo segment contains only safe characters.
+// GitHub allows [A-Za-z0-9._-], but we restrict further to [A-Za-z0-9._-] to be conservative.
+func isSafeGitHubSegment(s string) bool {
+	// Allow alphanumerics, dots, underscores, and hyphens only
+	matched, _ := regexp.MatchString(`^[A-Za-z0-9._-]+$`, s)
+	return matched && len(s) > 0
+}
+
 // parseGitHubURL extracts owner and repo from a GitHub URL like https://github.com/owner/repo.
+// Returns an error if the URL contains unsafe characters (defense against command injection).
 func parseGitHubURL(url string) (owner, repo string, err error) {
 	url = strings.TrimSpace(url)
 	url = strings.TrimSuffix(url, "/")
@@ -239,6 +249,14 @@ func parseGitHubURL(url string) (owner, repo string, err error) {
 
 	if owner == "" || repo == "" {
 		return "", "", fmt.Errorf("invalid github url: %s", url)
+	}
+
+	// Validate segments for safety (prevent injection attacks)
+	if !isSafeGitHubSegment(owner) {
+		return "", "", fmt.Errorf("unsafe github owner: %s (contains invalid characters)", owner)
+	}
+	if !isSafeGitHubSegment(repo) {
+		return "", "", fmt.Errorf("unsafe github repo: %s (contains invalid characters)", repo)
 	}
 
 	return owner, repo, nil
@@ -328,48 +346,102 @@ status: pending
 	return nil
 }
 
-// rewriteOriginCommit updates the origin.commit field in a .skill-meta.yaml file.
-// Uses line-based rewriting to preserve formatting.
+// rewriteOriginCommit updates the origin.commit field in a nested .skill-meta.yaml file.
+// Handles YAML structure like:
+//
+//	origin:
+//	  type: github
+//	  commit: old_sha
+//
+// Walks lines to find the "origin:" section, then locates the indented "commit:" key
+// within that section and updates its value, preserving formatting.
 func rewriteOriginCommit(metaPath string, newCommit string) error {
 	data, err := os.ReadFile(metaPath)
 	if err != nil {
 		return err
 	}
+
 	lines := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
-	found := false
+	originIdx := -1
+	originIndent := -1
+	commitIdx := -1
+
+	// Find the "origin:" line at root level (indent 0)
 	for i, line := range lines {
-		// Match "origin.commit:" at start of line (after any indent)
 		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "origin.commit:") {
-			// Preserve indentation
-			indent := len(line) - len(trimmed)
-			lines[i] = strings.Repeat(" ", indent) + "origin.commit: " + newCommit
-			found = true
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+
+		currentIndent := indent(line)
+
+		// If we already found origin section and we're at a root-level key (or end of file),
+		// we can stop searching
+		if originIdx != -1 && currentIndent == 0 && !strings.HasSuffix(trimmed, ":") && !strings.HasPrefix(trimmed, "-") {
 			break
 		}
+
+		// Look for "origin:" at root level
+		if originIdx == -1 && currentIndent == 0 {
+			if strings.HasPrefix(trimmed, "origin:") {
+				originIdx = i
+				originIndent = currentIndent
+				continue
+			}
+		}
+
+		// If we found the origin section, look for "commit:" at indent > originIndent
+		if originIdx != -1 && commitIdx == -1 && currentIndent > originIndent {
+			if strings.HasPrefix(trimmed, "commit:") {
+				commitIdx = i
+				break
+			}
+		}
+
+		// If we hit another root-level key after finding origin, stop
+		if originIdx != -1 && currentIndent == originIndent && i > originIdx && strings.HasPrefix(trimmed, "origin:") == false {
+			if strings.Contains(trimmed, ":") && !strings.HasPrefix(trimmed, "-") {
+				break
+			}
+		}
 	}
-	if !found {
-		// If not found, append it (shouldn't happen for valid meta, but be safe)
-		lines = append(lines, "origin.commit: "+newCommit)
+
+	// Update the commit line if found
+	if commitIdx != -1 {
+		line := lines[commitIdx]
+		trimmed := strings.TrimSpace(line)
+		lineIndent := len(line) - len(trimmed)
+		lines[commitIdx] = strings.Repeat(" ", lineIndent) + "commit: " + newCommit
+		return os.WriteFile(metaPath, []byte(strings.Join(lines, "\n")+"\n"), 0644)
 	}
-	return os.WriteFile(metaPath, []byte(strings.Join(lines, "\n")+"\n"), 0644)
+
+	// If commit not found but origin was, we still write the file but return an error
+	// (shouldn't happen for valid meta created by this tool, but don't corrupt the file)
+	if originIdx != -1 {
+		return fmt.Errorf("origin section found but no commit field to update")
+	}
+
+	// Origin not found at all; this is an error state
+	return fmt.Errorf("origin section not found in .skill-meta.yaml")
 }
 
 // fetchFileFromGitHub fetches a single file from a GitHub repo at a given ref.
+// Uses argv-style invocation (no shell) to prevent command injection attacks.
 func fetchFileFromGitHub(owner, repo, ref, path string) ([]byte, error) {
-	// Use gh api repos/{owner}/{repo}/contents/{path}?ref={ref}
-	// and extract the content field (base64 encoded)
-	apiPath := "repos/" + owner + "/" + repo + "/contents/" + path + "?ref=" + ref
-
 	var out strings.Builder
 	var errOut strings.Builder
 
-	// Call gh api with jq to extract content (which is base64-encoded)
-	sh := exec.Command("sh", "-c", "gh api "+apiPath+" --jq '.content'")
-	sh.Stdout = &out
-	sh.Stderr = &errOut
+	// Call gh api with argv-style arguments (no shell to prevent injection)
+	// gh api repos/{owner}/{repo}/contents/{path} --jq '.content' --query='{ref}'
+	cmd := exec.Command("gh", "api",
+		"repos/"+owner+"/"+repo+"/contents/"+path,
+		"--jq", ".content",
+		"-f", "ref="+ref,
+	)
+	cmd.Stdout = &out
+	cmd.Stderr = &errOut
 
-	if err := sh.Run(); err != nil {
+	if err := cmd.Run(); err != nil {
 		return nil, fmt.Errorf("fetch %s from %s:%s: %v (stderr: %s)", path, owner+"/"+repo, ref, err, errOut.String())
 	}
 

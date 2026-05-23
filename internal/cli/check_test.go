@@ -496,25 +496,23 @@ origin:
 		t.Fatalf("to-incoming/.skill-meta.yaml not created: %v", err)
 	}
 
-	// Verify to-incoming has origin.commit rewritten to new SHA
-	toMetaContent, err := os.ReadFile(toMetaPath)
+	// Verify to-incoming has origin.commit rewritten to new SHA using readSkillMeta
+	// (not just grep, to catch YAML parsing issues)
+	toMeta, err := readSkillMeta(toMetaPath)
 	if err != nil {
-		t.Fatalf("read to-incoming/.skill-meta.yaml: %v", err)
+		t.Fatalf("readSkillMeta to-incoming/.skill-meta.yaml: %v", err)
 	}
-	toMetaStr := string(toMetaContent)
-	// Use trimspace for comparison since YAML output may have different formatting
-	if !strings.Contains(strings.TrimSpace(toMetaStr), "commit: def5678") {
-		t.Fatalf("to-incoming/.skill-meta.yaml should have rewritten commit to def5678, got:\n%s", toMetaStr)
+	if toMeta.Origin.Commit != "def5678" {
+		t.Fatalf("to-incoming origin.commit should be def5678, got: %s", toMeta.Origin.Commit)
 	}
 
 	// Verify from-current has original commit unchanged
-	fromMetaContent, err := os.ReadFile(fromMetaPath)
+	fromMeta, err := readSkillMeta(fromMetaPath)
 	if err != nil {
-		t.Fatalf("read from-current/.skill-meta.yaml: %v", err)
+		t.Fatalf("readSkillMeta from-current/.skill-meta.yaml: %v", err)
 	}
-	fromMetaStr := string(fromMetaContent)
-	if !strings.Contains(strings.TrimSpace(fromMetaStr), "commit: abc1234") {
-		t.Fatalf("from-current/.skill-meta.yaml should preserve original commit abc1234, got:\n%s", fromMetaStr)
+	if fromMeta.Origin.Commit != "abc1234" {
+		t.Fatalf("from-current origin.commit should be abc1234, got: %s", fromMeta.Origin.Commit)
 	}
 }
 
@@ -579,12 +577,161 @@ origin:
 	// Verify to-incoming/.skill-meta.yaml has the NEW commit (def5678)
 	// so that when accept runs applyPendingUpdate, it reads this and advances origin.commit
 	toMetaPath := filepath.Join(skillDir, ".update-pending", "to-incoming", ".skill-meta.yaml")
-	toMetaContent, err := os.ReadFile(toMetaPath)
+	toMeta, err := readSkillMeta(toMetaPath)
 	if err != nil {
-		t.Fatalf("read to-incoming/.skill-meta.yaml: %v", err)
+		t.Fatalf("readSkillMeta to-incoming: %v", err)
 	}
-	toMetaStr := string(toMetaContent)
-	if !strings.Contains(toMetaStr, "commit: def5678") {
-		t.Fatalf("to-incoming/.skill-meta.yaml must have new commit def5678 so accept can advance origin, got:\n%s", toMetaStr)
+	if toMeta.Origin.Commit != "def5678" {
+		t.Fatalf("to-incoming origin.commit should be def5678, got: %s", toMeta.Origin.Commit)
+	}
+}
+
+// TestAcceptAdvancesOriginCommit is a regression test for nested origin.commit rewrite.
+// Verifies that after staging an update, accepting it (applyPendingUpdate) advances
+// the live .skill-meta.yaml's origin.commit to the new SHA.
+func TestAcceptAdvancesOriginCommit(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+
+	stateDB, err := state.Open(home)
+	if err != nil {
+		t.Fatalf("Open state: %v", err)
+	}
+	defer stateDB.Close()
+
+	libraryPath := filepath.Join(home, "library")
+	skillDir := filepath.Join(libraryPath, "pdf")
+	if err := os.MkdirAll(skillDir, 0755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	// Initial state: skill at old commit
+	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte("---\nname: pdf\n---\nBody v1\n"), 0644); err != nil {
+		t.Fatalf("write SKILL.md: %v", err)
+	}
+
+	metaContent := `version: 1
+origin:
+  type: github
+  url: https://github.com/user/pdf-skill
+  commit: abc1234
+`
+	liveMetaPath := filepath.Join(skillDir, ".skill-meta.yaml")
+	if err := os.WriteFile(liveMetaPath, []byte(metaContent), 0644); err != nil {
+		t.Fatalf("write meta: %v", err)
+	}
+
+	poller := &fakePoller{
+		responses: map[string]fakeResponse{
+			"user/pdf-skill": {
+				commit: "def5678",
+				etag:   "w/\"etag-1\"",
+			},
+		},
+	}
+
+	oldFetcher := fetcher
+	fetcher = &fakeFetcher{
+		files: map[string][]byte{
+			"user/pdf-skill:def5678:SKILL.md": []byte("---\nname: pdf\n---\nBody v2\n"),
+		},
+	}
+	defer func() { fetcher = oldFetcher }()
+
+	// Step 1: Run check to stage the update
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := runCheckWithPoller(nil, &stdout, &stderr, globalFlags{}, poller)
+	if code != 0 {
+		t.Fatalf("check returned %d, want 0", code)
+	}
+
+	// Step 2: Apply the pending update (simulates --accept-all-safe)
+	pendingRoot := filepath.Join(skillDir, ".update-pending")
+	pending := pendingUpdatePaths{
+		Skill: "pdf",
+		Root:  pendingRoot,
+		From:  filepath.Join(pendingRoot, "from-current"),
+		To:    filepath.Join(pendingRoot, "to-incoming"),
+	}
+	if err := applyPendingUpdate(pending); err != nil {
+		t.Fatalf("applyPendingUpdate: %v", err)
+	}
+
+	// Step 3: Verify live .skill-meta.yaml now has the NEW commit (def5678)
+	liveMeta, err := readSkillMeta(liveMetaPath)
+	if err != nil {
+		t.Fatalf("readSkillMeta live: %v", err)
+	}
+	if liveMeta.Origin.Commit != "def5678" {
+		t.Fatalf("live origin.commit should be def5678 after accept, got: %s", liveMeta.Origin.Commit)
+	}
+
+	// Verify .update-pending was cleaned up
+	pendingPath := filepath.Join(skillDir, ".update-pending")
+	if _, err := os.Stat(pendingPath); err == nil {
+		t.Fatalf(".update-pending directory should be removed after accept")
+	}
+}
+
+// TestUnsafeGitHubURL verifies that parseGitHubURL rejects URLs with injection attempts.
+func TestUnsafeGitHubURL(t *testing.T) {
+	tests := []struct {
+		name    string
+		url     string
+		wantErr bool
+	}{
+		// Safe cases
+		{"basic", "https://github.com/owner/repo", false},
+		{"hyphens", "https://github.com/my-owner/my-repo", false},
+		{"underscores", "https://github.com/my_owner/my_repo", false},
+		{"dots", "https://github.com/owner.name/repo.name", false},
+		{"numbers", "https://github.com/owner123/repo456", false},
+
+		// Unsafe cases (injection attempts)
+		{"semicolon injection", "https://github.com/foo;rm -rf/bar", true},
+		{"pipe injection", "https://github.com/foo|cat/bar", true},
+		{"backtick injection", "https://github.com/foo`whoami`/bar", true},
+		{"dollar injection", "https://github.com/foo$(whoami)/bar", true},
+		{"space injection", "https://github.com/foo bar/baz", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			owner, repo, err := parseGitHubURL(tt.url)
+			if tt.wantErr && err == nil {
+				t.Errorf("parseGitHubURL(%q) should error, got owner=%q repo=%q", tt.url, owner, repo)
+			}
+			if !tt.wantErr && err != nil {
+				t.Errorf("parseGitHubURL(%q) should not error, got: %v", tt.url, err)
+			}
+		})
+	}
+}
+
+// TestIsSafeGitHubSegment tests the segment validation helper.
+func TestIsSafeGitHubSegment(t *testing.T) {
+	tests := []struct {
+		segment string
+		safe    bool
+	}{
+		{"owner", true},
+		{"repo-name", true},
+		{"my_repo", true},
+		{"repo.name", true},
+		{"test123", true},
+		{"", false},             // empty
+		{"foo;bar", false},      // semicolon
+		{"foo|bar", false},      // pipe
+		{"foo$(whoami)", false}, // command substitution
+		{"foo`cmd`", false},     // backticks
+		{"foo bar", false},      // space
+		{"foo/bar", false},      // slash
+	}
+
+	for _, tt := range tests {
+		if got := isSafeGitHubSegment(tt.segment); got != tt.safe {
+			t.Errorf("isSafeGitHubSegment(%q) = %v, want %v", tt.segment, got, tt.safe)
+		}
 	}
 }
