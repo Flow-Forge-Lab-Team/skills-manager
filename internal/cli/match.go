@@ -1,0 +1,256 @@
+package cli
+
+import (
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+)
+
+type matchOptions struct {
+	projectPath string
+	explain     bool
+	suggest     bool
+}
+
+func parseMatchOptions(args []string) (matchOptions, error) {
+	opts := matchOptions{projectPath: "."}
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--project":
+			i++
+			if i >= len(args) {
+				return opts, errors.New("--project requires a path")
+			}
+			opts.projectPath = args[i]
+		case "--explain":
+			opts.explain = true
+		case "--suggest":
+			opts.suggest = true
+		default:
+			return opts, fmt.Errorf("unknown match argument: %s", args[i])
+		}
+	}
+	return opts, nil
+}
+
+type scoredCandidate struct {
+	Skill     catalogSkill
+	Score     int
+	Reasons   []string
+	Warnings  []string
+	Harnesses []string
+}
+
+func computeMatchScore(skill catalogSkill, project projectConfig) (int, []string, []string) {
+	always := set(project.AlwaysInclude)
+	never := set(project.NeverInclude)
+	if never[skill.Name] {
+		return 0, nil, nil
+	}
+	var reasons, warnings []string
+	if always[skill.Name] {
+		return 999, []string{"always_include"}, warnings
+	}
+	pCats := set(project.Categories)
+	catO := 0
+	for _, c := range skill.Categories {
+		if pCats[c] {
+			catO++
+		}
+	}
+	pTags := set(project.Tags)
+	tagO := 0
+	for _, t := range skill.Tags {
+		if pTags[t] {
+			tagO++
+		}
+	}
+	score := 1*catO + 2*tagO
+	if catO > 0 {
+		reasons = append(reasons, fmt.Sprintf("category overlap: %d", catO))
+	}
+	if tagO > 0 {
+		reasons = append(reasons, fmt.Sprintf("tag overlap: %d", tagO))
+	}
+	// small stack negative signal
+	stackTags := []string{"nodejs", "python", "go", "rust", "typescript", "java", "php", "csharp"}
+	projStack := ""
+	for _, t := range project.Tags {
+		for _, s := range stackTags {
+			if t == s {
+				projStack = t
+				break
+			}
+		}
+		if projStack != "" {
+			break
+		}
+	}
+	skillStack := ""
+	for _, t := range skill.Tags {
+		for _, s := range stackTags {
+			if t == s {
+				skillStack = t
+				break
+			}
+		}
+		if skillStack != "" {
+			break
+		}
+	}
+	if projStack != "" && skillStack != "" && skillStack != projStack {
+		score -= 3
+		reasons = append(reasons, "stack mismatch penalty")
+	}
+	return score, reasons, warnings
+}
+
+func runMatch(args []string, realStdout io.Writer, stderr io.Writer, gf globalFlags) int {
+	opts, err := parseMatchOptions(args)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return ExitUsageError
+	}
+	stdout := gf.outWriter(realStdout)
+
+	projectPath, err := absoluteProjectPath(opts.projectPath)
+	if err != nil {
+		fmt.Fprintf(stderr, "project path: %v\n", err)
+		return ExitOpError
+	}
+
+	projectConfigPath := filepath.Join(projectPath, ".skills", "project.yaml")
+	if gf.Config != "" {
+		projectConfigPath = gf.Config
+	}
+
+	project, err := readProjectConfig(projectConfigPath)
+	noConfig := false
+	if err != nil {
+		if !os.IsNotExist(err) {
+			fmt.Fprintf(stderr, "read project config: %v\n", err)
+			return ExitOpError
+		}
+		noConfig = true
+		project = projectConfig{}
+	}
+
+	home, err := managerHome()
+	if err != nil {
+		fmt.Fprintf(stderr, "manager home: %v\n", err)
+		return ExitOpError
+	}
+	libraryPath := filepath.Join(home, "library")
+	catalog, err := readCatalog(filepath.Join(libraryPath, "catalog.yaml"))
+	if err != nil {
+		fmt.Fprintf(stderr, "read catalog: %v\n", err)
+		return ExitOpError
+	}
+
+	baseCands := selectInstallCandidates(catalog, project, "")
+
+	if len(project.Categories) == 0 && len(project.Tags) == 0 {
+		if noConfig {
+			fmt.Fprintln(stdout, "no project config; candidates: none (or only always)")
+		} else {
+			fmt.Fprintln(stdout, "no categories/tags in project.yaml; use set or edit to configure")
+		}
+	}
+
+	var scored []scoredCandidate
+	never := set(project.NeverInclude)
+	for _, c := range baseCands {
+		if never[c.Skill.Name] {
+			continue
+		}
+		score, reasons, warnings := computeMatchScore(c.Skill, project)
+		hs := compatibleHarnesses(c.Skill.Compatibility, project.Harnesses)
+		if len(hs) == 0 {
+			warnings = append(warnings, "no compatible harness in project")
+		}
+		if opts.explain {
+			mt := missingRequiredTools(c.Skill.Requirements)
+			mm := missingRequiredMCPServers(c.Skill.Requirements)
+			md := missingModelCapabilities(c.Skill.Requirements)
+			if len(mt)+len(mm)+len(md) > 0 {
+				var parts []string
+				if len(mt) > 0 {
+					parts = append(parts, "tools="+strings.Join(mt, ","))
+				}
+				if len(mm) > 0 {
+					parts = append(parts, "mcp_servers="+strings.Join(mm, ","))
+				}
+				if len(md) > 0 {
+					parts = append(parts, "model="+strings.Join(md, ","))
+				}
+				warnings = append(warnings, "missing required: "+strings.Join(parts, ", "))
+			}
+		}
+		scored = append(scored, scoredCandidate{
+			Skill: c.Skill, Score: score, Reasons: reasons, Warnings: warnings, Harnesses: hs,
+		})
+	}
+
+	if opts.suggest {
+		lock, _ := readInstallLock(filepath.Join(projectPath, ".skills", "installed.lock"))
+		installed := map[string]bool{}
+		for _, e := range lock.Skills {
+			installed[e.Name] = true
+		}
+		var filtered []scoredCandidate
+		for _, sc := range scored {
+			if !installed[sc.Skill.Name] {
+				filtered = append(filtered, sc)
+			}
+		}
+		scored = filtered
+	}
+
+	sort.Slice(scored, func(i, j int) bool {
+		if scored[i].Score != scored[j].Score {
+			return scored[i].Score > scored[j].Score
+		}
+		return scored[i].Skill.Name < scored[j].Skill.Name
+	})
+
+	for _, sc := range scored {
+		reasonStr := strings.Join(sc.Reasons, ", ")
+		fmt.Fprintf(stdout, "%s (score: %d) — %s\n", sc.Skill.Name, sc.Score, reasonStr)
+		if len(sc.Harnesses) > 0 {
+			fmt.Fprintf(stdout, "  harnesses: %s\n", strings.Join(sc.Harnesses, ", "))
+		}
+		if len(sc.Warnings) > 0 {
+			fmt.Fprintf(stdout, "  warnings: %s\n", strings.Join(sc.Warnings, "; "))
+		}
+	}
+
+	if gf.JSON {
+		type jsonCand struct {
+			Name      string   `json:"name"`
+			Score     int      `json:"score"`
+			Reasons   []string `json:"reasons,omitempty"`
+			Harnesses []string `json:"harnesses,omitempty"`
+			Warnings  []string `json:"warnings,omitempty"`
+		}
+		var js []jsonCand
+		for _, sc := range scored {
+			js = append(js, jsonCand{
+				Name: sc.Skill.Name, Score: sc.Score, Reasons: sc.Reasons,
+				Harnesses: sc.Harnesses, Warnings: sc.Warnings,
+			})
+		}
+		result := map[string]interface{}{
+			"project":    projectPath,
+			"candidates": js,
+		}
+		if err := writeJSON(realStdout, result); err != nil {
+			fmt.Fprintln(stderr, err)
+			return ExitOpError
+		}
+	}
+	return ExitSuccess
+}

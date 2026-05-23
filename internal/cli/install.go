@@ -34,12 +34,13 @@ type lockProblem struct {
 }
 
 type projectConfig struct {
-	Name          string
-	Categories    []string
-	Tags          []string
-	Harnesses     []string
-	AlwaysInclude []string
-	NeverInclude  []string
+	Name           string
+	Categories     []string
+	Tags           []string
+	Harnesses      []string
+	AlwaysInclude  []string
+	NeverInclude   []string
+	PinnedVersions map[string]string
 }
 
 type catalog struct {
@@ -1297,6 +1298,7 @@ func readProjectConfig(path string) (projectConfig, error) {
 		return projectConfig{}, err
 	}
 	var project projectConfig
+	project.PinnedVersions = map[string]string{}
 	var section string
 	for i := 0; i < len(lines); i++ {
 		key, value, ok := splitYAMLKey(lines[i])
@@ -1319,6 +1321,25 @@ func readProjectConfig(path string) (projectConfig, error) {
 			items, next := readYAMLStringList(lines, i, value)
 			i = next
 			assignProjectList(&project, key, items)
+		case "pinned_versions":
+			if section != "skills" {
+				continue
+			}
+			baseIndent := indent(lines[i])
+			for next := i + 1; next < len(lines); next++ {
+				line := stripComment(lines[next])
+				if strings.TrimSpace(line) == "" {
+					continue
+				}
+				if indent(line) <= baseIndent {
+					i = next - 1
+					break
+				}
+				k, v, ok2 := splitYAMLKey(line)
+				if ok2 {
+					project.PinnedVersions[unquote(k)] = unquote(v)
+				}
+			}
 		}
 	}
 	if len(project.Harnesses) == 0 {
@@ -1328,6 +1349,9 @@ func readProjectConfig(path string) (projectConfig, error) {
 }
 
 func assignProjectList(project *projectConfig, key string, items []string) {
+	if project.PinnedVersions == nil {
+		project.PinnedVersions = map[string]string{}
+	}
 	switch key {
 	case "categories":
 		project.Categories = items
