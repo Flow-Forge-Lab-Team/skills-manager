@@ -138,6 +138,8 @@ func collectProblems(home, libraryPath string, cat catalog) []string {
 			problems = append(problems, fmt.Sprintf("catalog/state drift (%d vs %d); run `skills-manager doctor --rebuild-state`", len(cat.Skills), stateCnt))
 		}
 		db.Close()
+	} else {
+		problems = append(problems, fmt.Sprintf("cannot open state.db (%v); run `skills-manager doctor --rebuild-state`", err))
 	}
 
 	// manifest integrity + fingerprint drift
@@ -149,6 +151,7 @@ func collectProblems(home, libraryPath string, cat catalog) []string {
 			}
 			m, err := readManifest(filepath.Join(manifestsDir, e.Name()))
 			if err != nil {
+				problems = append(problems, fmt.Sprintf("malformed manifest %s: %v", e.Name(), err))
 				continue
 			}
 			for _, rel := range m.ManagedPaths {
