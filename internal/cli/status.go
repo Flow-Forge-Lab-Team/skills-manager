@@ -41,8 +41,18 @@ func runStatus(args []string, stdout io.Writer, stderr io.Writer, gf globalFlags
 	}
 	defer db.Close()
 
-	var projCount int
-	db.QueryRow("SELECT COUNT(*) FROM projects").Scan(&projCount)
+	// v0.1 ground truth for "registered projects" is the set of manifests we have
+	// written. The `projects` table in state.db is not yet populated on install/sync
+	// (manifests/*.json are the durable record), so we count those for an accurate
+	// number instead of always reporting 0.
+	projCount := 0
+	if entries, err := os.ReadDir(filepath.Join(home, "manifests")); err == nil {
+		for _, e := range entries {
+			if strings.HasSuffix(e.Name(), ".json") {
+				projCount++
+			}
+		}
+	}
 
 	var unregCount int
 	db.QueryRow("SELECT COUNT(*) FROM detected WHERE action IS NULL OR action = '' OR action = 'pending'").Scan(&unregCount)

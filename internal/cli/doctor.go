@@ -8,7 +8,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/Flow-Forge-Lab-Team/skills-manager/internal/state"
 )
@@ -136,6 +135,26 @@ func collectProblems(home, libraryPath string, cat catalog) []string {
 		db.QueryRow("SELECT COUNT(*) FROM skills").Scan(&stateCnt)
 		if stateCnt != len(cat.Skills) {
 			problems = append(problems, fmt.Sprintf("catalog/state drift (%d vs %d); run `skills-manager doctor --rebuild-state`", len(cat.Skills), stateCnt))
+		} else if len(cat.Skills) > 0 {
+			// Cheap structural check: names set (catches add/remove even at same count).
+			// Pure field drift (summary/compat/reqs) on the same set of skills is
+			// exactly what --rebuild-state normalizes; we don't do a full row diff here.
+			rows, _ := db.Query("SELECT name FROM skills")
+			stateNames := map[string]bool{}
+			for rows != nil && rows.Next() {
+				var n string
+				rows.Scan(&n)
+				stateNames[n] = true
+			}
+			if rows != nil {
+				rows.Close()
+			}
+			for _, s := range cat.Skills {
+				if !stateNames[s.Name] {
+					problems = append(problems, "catalog/state skill set drift; run `skills-manager doctor --rebuild-state`")
+					break
+				}
+			}
 		}
 		db.Close()
 	} else {
@@ -197,11 +216,16 @@ func collectProblems(home, libraryPath string, cat catalog) []string {
 		}
 	}
 
-	// stale state.db
-	dbPath := filepath.Join(home, "state.db")
-	if fi, err := os.Stat(dbPath); err == nil {
-		if time.Since(fi.ModTime()) > 48*time.Hour {
-			problems = append(problems, "stale state.db; run `skills-manager doctor --rebuild-state`")
+	// stale state.db — only flag if the derived state is older than the canonical
+	// catalog.yaml (the source of truth). Absolute wall-clock age (48h) would cause
+	// healthy long-stable machines to always report "stale".
+	catPath := filepath.Join(libraryPath, "catalog.yaml")
+	statePath := filepath.Join(home, "state.db")
+	if catFi, err := os.Stat(catPath); err == nil {
+		if stateFi, err := os.Stat(statePath); err == nil {
+			if stateFi.ModTime().Before(catFi.ModTime()) {
+				problems = append(problems, "state.db older than catalog.yaml; run `skills-manager doctor --rebuild-state`")
+			}
 		}
 	}
 
