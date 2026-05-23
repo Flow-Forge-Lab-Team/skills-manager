@@ -435,13 +435,162 @@ origin:
 		t.Fatalf("should not have inserted update on fetch error, got: %+v", pending)
 	}
 
-	// Verify skill_polls WAS updated (last_checked_at advances)
+	// Verify skill_polls WAS updated (last_checked_at advances, but commit/etag empty on first poll)
 	poll, err := stateDB.GetSkillPoll("pdf")
 	if err != nil {
 		t.Fatalf("GetSkillPoll: %v", err)
 	}
-	if poll == nil || poll.LastCommit != "def5678" {
-		t.Fatalf("skill_polls should still be updated: %+v", poll)
+	if poll == nil {
+		t.Fatalf("skill_polls should exist after first check")
+	}
+	// On first poll with fetch failure, last_commit should be empty (not the failed new SHA)
+	if poll.LastCommit != "" {
+		t.Fatalf("skill_polls.last_commit should be empty on first poll failure, got: %s", poll.LastCommit)
+	}
+}
+
+// TestCheckStagingFailureDoesCachePoll is a regression test for FLO-238.
+// Verifies that when Poll returns a new SHA but stageUpdate fails, the poll cache
+// retains the PRIOR commit+etag (not the new ones), so a retry will re-attempt staging.
+func TestCheckStagingFailureDoesCachePoll(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+
+	stateDB, err := state.Open(home)
+	if err != nil {
+		t.Fatalf("Open state: %v", err)
+	}
+	defer stateDB.Close()
+
+	// Pre-populate skill_polls with prior commit and etag
+	const priorCommit = "abc1234"
+	const priorETag = "w/\"prior-etag\""
+	if err := stateDB.UpsertSkillPoll("pdf", priorCommit, priorETag); err != nil {
+		t.Fatalf("UpsertSkillPoll: %v", err)
+	}
+
+	libraryPath := filepath.Join(home, "library")
+	skillDir := filepath.Join(libraryPath, "pdf")
+	if err := os.MkdirAll(skillDir, 0755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte("---\nname: pdf\n---\nBody\n"), 0644); err != nil {
+		t.Fatalf("write SKILL.md: %v", err)
+	}
+
+	metaContent := `version: 1
+origin:
+  type: github
+  url: https://github.com/user/pdf-skill
+  commit: abc1234
+`
+	if err := os.WriteFile(filepath.Join(skillDir, ".skill-meta.yaml"), []byte(metaContent), 0644); err != nil {
+		t.Fatalf("write meta: %v", err)
+	}
+
+	// Poller returns a new commit, but fetcher fails
+	poller := &fakePoller{
+		responses: map[string]fakeResponse{
+			"user/pdf-skill": {
+				commit: "def5678",
+				etag:   "w/\"new-etag\"",
+			},
+		},
+	}
+
+	oldFetcher := fetcher
+	fetcher = &fakeFetcher{
+		err: &MockError{msg: "fetch error"},
+	}
+	defer func() { fetcher = oldFetcher }()
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := runCheckWithPoller([]string{"--force"}, &stdout, &stderr, globalFlags{}, poller)
+	if code != 0 {
+		t.Fatalf("runCheck returned %d, want 0", code)
+	}
+
+	output := stdout.String()
+	if !strings.Contains(output, "error") || !strings.Contains(output, "fetch failed") {
+		t.Fatalf("stdout should indicate fetch error, got:\n%s", output)
+	}
+
+	// Verify .update-pending directory was NOT created
+	pendingRoot := filepath.Join(skillDir, ".update-pending")
+	if _, err := os.Stat(pendingRoot); !os.IsNotExist(err) {
+		t.Fatalf("should NOT create .update-pending on fetch error")
+	}
+
+	// Verify updates table was NOT inserted
+	pending, err := stateDB.GetPendingUpdate("pdf")
+	if err != nil {
+		t.Fatalf("GetPendingUpdate: %v", err)
+	}
+	if pending != nil {
+		t.Fatalf("should not have inserted update on fetch error, got: %+v", pending)
+	}
+
+	// Verify skill_polls retains PRIOR commit and etag (not the failed new ones)
+	// This is the critical assertion: if staging fails, we do NOT cache the new SHA
+	poll, err := stateDB.GetSkillPoll("pdf")
+	if err != nil {
+		t.Fatalf("GetSkillPoll: %v", err)
+	}
+	if poll == nil {
+		t.Fatalf("skill_polls should exist")
+	}
+	if poll.LastCommit != priorCommit {
+		t.Fatalf("skill_polls.last_commit should retain prior value %s, got %s", priorCommit, poll.LastCommit)
+	}
+	if poll.ETag != priorETag {
+		t.Fatalf("skill_polls.etag should retain prior value %s, got %s", priorETag, poll.ETag)
+	}
+
+	// Now simulate a retry: same poller, but this time the fetcher succeeds
+	// This proves the update is NOT hidden forever
+	poller2 := &fakePoller{
+		responses: map[string]fakeResponse{
+			"user/pdf-skill": {
+				commit: "def5678",
+				etag:   "w/\"new-etag\"",
+			},
+		},
+	}
+
+	oldFetcher2 := fetcher
+	fetcher = &fakeFetcher{
+		files: map[string][]byte{
+			"user/pdf-skill:def5678:SKILL.md": []byte("---\nname: pdf\n---\nBody updated\n"),
+		},
+	}
+	defer func() { fetcher = oldFetcher2 }()
+
+	stdout.Reset()
+	stderr.Reset()
+	code = runCheckWithPoller([]string{"--force"}, &stdout, &stderr, globalFlags{}, poller2)
+	if code != 0 {
+		t.Fatalf("runCheck (retry) returned %d, want 0", code)
+	}
+
+	output = stdout.String()
+	if !strings.Contains(output, "updated") {
+		t.Fatalf("on retry with successful fetch, should show 'updated', got:\n%s", output)
+	}
+
+	// Verify .update-pending was created on retry
+	if _, err := os.Stat(pendingRoot); err != nil {
+		t.Fatalf("on retry, pending dir should be created: %v", err)
+	}
+
+	// Verify updates table was inserted on retry
+	pending, err = stateDB.GetPendingUpdate("pdf")
+	if err != nil {
+		t.Fatalf("GetPendingUpdate: %v", err)
+	}
+	if pending == nil || pending.ToVersion != "def5678" {
+		t.Fatalf("on retry, update should be inserted: %+v", pending)
 	}
 }
 

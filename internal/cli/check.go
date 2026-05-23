@@ -175,7 +175,22 @@ func runCheckWithPoller(args []string, stdout io.Writer, stderr io.Writer, gf gl
 
 		// Handle 304 Not Modified: keep cached commit and etag, just refresh last_checked_at
 		if notModified {
-			if err := stateDB.UpsertSkillPoll(skillName, cachedCommit, cachedETag); err != nil {
+			if err := stateDB.RefreshSkillPollCheckedAt(skillName); err != nil {
+				fmt.Fprintf(stderr, "refresh poll for %s: %v\n", skillName, err)
+				return ExitOpError
+			}
+			fmt.Fprintf(outWriter, "%s: checked (no change)\n", skillName)
+			results = append(results, checkResult{
+				Skill:  skillName,
+				Status: "checked",
+			})
+			continue
+		}
+
+		// If no new commit (same SHA), skip staging
+		if newCommit == meta.Origin.Commit {
+			// Upsert skill_polls with latest commit and etag
+			if err := stateDB.UpsertSkillPoll(skillName, newCommit, etag); err != nil {
 				fmt.Fprintf(stderr, "upsert poll for %s: %v\n", skillName, err)
 				return ExitOpError
 			}
@@ -187,23 +202,7 @@ func runCheckWithPoller(args []string, stdout io.Writer, stderr io.Writer, gf gl
 			continue
 		}
 
-		// Upsert skill_polls with latest commit and etag
-		if err := stateDB.UpsertSkillPoll(skillName, newCommit, etag); err != nil {
-			fmt.Fprintf(stderr, "upsert poll for %s: %v\n", skillName, err)
-			return ExitOpError
-		}
-
-		// If no new commit (same SHA), skip staging
-		if newCommit == meta.Origin.Commit {
-			fmt.Fprintf(outWriter, "%s: checked (no change)\n", skillName)
-			results = append(results, checkResult{
-				Skill:  skillName,
-				Status: "checked",
-			})
-			continue
-		}
-
-		// New commit detected: stage the update
+		// New commit detected: stage the update FIRST, before caching the new commit+etag
 		if err := stageUpdate(skillName, libraryPath, meta, newCommit); err != nil {
 			fmt.Fprintf(outWriter, "%s: error (fetch failed)\n", skillName)
 			results = append(results, checkResult{
@@ -211,9 +210,18 @@ func runCheckWithPoller(args []string, stdout io.Writer, stderr io.Writer, gf gl
 				Status: "error",
 				Error:  err.Error(),
 			})
-			// Still upsert to refresh last_checked_at on fetch error
-			_ = stateDB.UpsertSkillPoll(skillName, newCommit, etag)
+			// Refresh last_checked_at only; keep the prior commit+etag so retry will re-attempt staging
+			if err := stateDB.RefreshSkillPollCheckedAt(skillName); err != nil {
+				fmt.Fprintf(stderr, "refresh poll for %s: %v\n", skillName, err)
+				return ExitOpError
+			}
 			continue
+		}
+
+		// Staging succeeded: now upsert skill_polls with latest commit and etag
+		if err := stateDB.UpsertSkillPoll(skillName, newCommit, etag); err != nil {
+			fmt.Fprintf(stderr, "upsert poll for %s: %v\n", skillName, err)
+			return ExitOpError
 		}
 
 		// Record in updates table

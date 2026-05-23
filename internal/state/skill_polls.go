@@ -27,6 +27,20 @@ func (db *DB) UpsertSkillPoll(skillName, commit, etag string) error {
 	return err
 }
 
+// RefreshSkillPollCheckedAt updates only the last_checked_at timestamp for a skill,
+// preserving the existing commit and etag. Used when polling completes but staging fails,
+// or when a 304 Not Modified is received.
+func (db *DB) RefreshSkillPollCheckedAt(skillName string) error {
+	now := time.Now().UTC().Format(time.RFC3339)
+	_, err := db.Exec(`
+		INSERT INTO skill_polls (skill_name, etag, last_checked_at, last_commit)
+		VALUES (?, '', ?, '')
+		ON CONFLICT(skill_name) DO UPDATE SET
+			last_checked_at = excluded.last_checked_at
+	`, skillName, now)
+	return err
+}
+
 // GetSkillPoll retrieves the cached poll record for a skill.
 // Returns nil if the skill has no poll record.
 func (db *DB) GetSkillPoll(skillName string) (*SkillPollRecord, error) {
