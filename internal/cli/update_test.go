@@ -300,6 +300,54 @@ func TestUpdateSafetyFlagsMultilineDescriptionChanges(t *testing.T) {
 	}
 }
 
+func TestUpdateSafetyFlagsExecutableFileOutsideScripts(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+	root := filepath.Join(home, "library", "notes", ".update-pending")
+	writeFile(t, filepath.Join(root, "from", "SKILL.md"), "---\nname: notes\ndescription: Take notes\n---\nBody\n")
+	writeFile(t, filepath.Join(root, "to", "SKILL.md"), "---\nname: notes\ndescription: Take notes\n---\nBody\n")
+	writeFile(t, filepath.Join(root, "to", "bin", "helper"), "#!/bin/sh\necho helper\n")
+	if err := os.Chmod(filepath.Join(root, "to", "bin", "helper"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := Run([]string{"update", "--safety", "notes"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("Run returned %d, want 0\nstderr:\n%s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "script-added") || !strings.Contains(stdout.String(), "executable") {
+		t.Fatalf("stdout missing executable file flag:\n%s", stdout.String())
+	}
+}
+
+func TestUpdateSafetyFlagsExecutableModeChangeOutsideScripts(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+	root := filepath.Join(home, "library", "notes", ".update-pending")
+	writeFile(t, filepath.Join(root, "from", "SKILL.md"), "---\nname: notes\ndescription: Take notes\n---\nBody\n")
+	writeFile(t, filepath.Join(root, "to", "SKILL.md"), "---\nname: notes\ndescription: Take notes\n---\nBody\n")
+	writeFile(t, filepath.Join(root, "from", "bin", "helper"), "#!/bin/sh\necho helper\n")
+	writeFile(t, filepath.Join(root, "to", "bin", "helper"), "#!/bin/sh\necho helper\n")
+	if err := os.Chmod(filepath.Join(root, "from", "bin", "helper"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(filepath.Join(root, "to", "bin", "helper"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := Run([]string{"update", "--safety", "notes"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("Run returned %d, want 0\nstderr:\n%s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "script-added") || !strings.Contains(stdout.String(), "executable bit") {
+		t.Fatalf("stdout missing executable mode flag:\n%s", stdout.String())
+	}
+}
+
 func TestUpdateSafetyFlagsExecutableScriptModeChanges(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("SKILLS_MANAGER_HOME", home)

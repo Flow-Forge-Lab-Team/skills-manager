@@ -370,6 +370,9 @@ func computeSafetyReport(skill, fromPath, toPath string) (safetyReport, error) {
 			if strings.HasPrefix(filepath.ToSlash(rel), "scripts/") {
 				addFlag("script-added", rel, 0, "new script file added", true)
 			}
+			if to.Mode&0o111 != 0 {
+				addFlag("script-added", rel, 0, "executable file added", true)
+			}
 			addedLines += lineCount(to.Content)
 			for lineNo, line := range strings.Split(to.Content, "\n") {
 				checkAddedLine(addFlag, rel, lineNo+1, line)
@@ -383,8 +386,8 @@ func computeSafetyReport(skill, fromPath, toPath string) (safetyReport, error) {
 		if !fromOK || !toOK {
 			continue
 		}
-		if isExecutableAdded(from.Mode, to.Mode) && strings.HasPrefix(filepath.ToSlash(rel), "scripts/") {
-			addFlag("script-added", rel, 0, "script executable bit added", true)
+		if isExecutableAdded(from.Mode, to.Mode) {
+			addFlag("script-added", rel, 0, "executable bit added", true)
 		}
 		if from.Content == to.Content {
 			continue
