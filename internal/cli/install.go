@@ -59,6 +59,20 @@ type compatibility struct {
 	Mode      string   `json:"mode,omitempty"`
 	Harness   string   `json:"harness,omitempty"`
 	Harnesses []string `json:"harnesses,omitempty"`
+	Declared  *compatibilityDeclaration `json:"declared,omitempty"`
+	Detected  map[string]detectionResult `json:"detected,omitempty"`
+}
+
+type compatibilityDeclaration struct {
+	Mode      string   `json:"mode,omitempty"`
+	Harness   string   `json:"harness,omitempty"`
+	Harnesses []string `json:"harnesses,omitempty"`
+	Reason    string   `json:"reason,omitempty"`
+}
+
+type detectionResult struct {
+	Confidence string   `json:"confidence,omitempty"`
+	Reasons    []string `json:"reasons,omitempty"`
 }
 
 type requirements struct {
