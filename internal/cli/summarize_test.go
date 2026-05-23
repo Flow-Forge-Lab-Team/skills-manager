@@ -313,6 +313,27 @@ func TestSummarizeFromRejectsOutputThatOmitsDeterministicFlagName(t *testing.T) 
 	}
 }
 
+func TestSummarizeFromRejectsOutputThatNegatesDeterministicFlagName(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+	root := filepath.Join(home, "library", "notes", ".update-pending")
+	writeFile(t, filepath.Join(root, "from-current", "SKILL.md"), "---\nname: notes\n---\nBody\n")
+	writeFile(t, filepath.Join(root, "to-incoming", "SKILL.md"), "---\nname: notes\n---\nBody\n")
+	writeFile(t, filepath.Join(root, "to-incoming", "scripts", "run.sh"), "#!/bin/sh\ntrue\n")
+	output := filepath.Join(t.TempDir(), "summary.md")
+	writeFile(t, output, validSummary("notes", "none; no script-added", "no", "no", "no"))
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := Run([]string{"summarize", "notes", "--from", output}, &stdout, &stderr)
+	if code != ExitUsageError {
+		t.Fatalf("Run returned %d, want usage error\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "summary missing deterministic safety flag") {
+		t.Fatalf("stderr missing deterministic flag validation:\n%s", stderr.String())
+	}
+}
+
 func TestSummarizeJSONIncludesBadges(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("SKILLS_MANAGER_HOME", home)

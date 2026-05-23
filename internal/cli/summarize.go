@@ -394,13 +394,18 @@ func summaryBadges(sections map[string]string) []string {
 }
 
 func summarySafetyFlagBadges(section string) []string {
-	known := map[string]bool{
-		"script-added":            true,
-		"suspicious-instructions": true,
-		"tool-guidance-changed":   true,
-		"large-rewrite":           true,
-	}
+	flags := parseSummarySafetyFlags(section)
 	var badges []string
+	for _, flag := range []string{"script-added", "suspicious-instructions", "tool-guidance-changed", "large-rewrite"} {
+		if flags[flag] {
+			badges = append(badges, flag)
+		}
+	}
+	return badges
+}
+
+func parseSummarySafetyFlags(section string) map[string]bool {
+	flags := map[string]bool{}
 	for _, line := range strings.Split(section, "\n") {
 		trimmed := strings.TrimSpace(strings.TrimPrefix(line, "-"))
 		field, value, ok := strings.Cut(trimmed, ":")
@@ -409,16 +414,17 @@ func summarySafetyFlagBadges(section string) []string {
 		}
 		value = strings.Trim(strings.ToLower(value), " []")
 		if value == "" || value == "none" || strings.HasPrefix(value, "none;") {
-			continue
+			return flags
 		}
 		for _, token := range strings.Split(value, ",") {
 			flag := strings.Trim(strings.TrimSpace(token), `[] "'`)
-			if known[flag] {
-				badges = append(badges, flag)
+			if flag != "" {
+				flags[flag] = true
 			}
 		}
+		return flags
 	}
-	return badges
+	return flags
 }
 
 func summaryFieldIsAffirmative(section, fieldName string) bool {
@@ -439,9 +445,9 @@ func validateSummaryAgainstReport(parsed parsedSummary, report safetyReport) err
 	if len(report.Flags) == 0 {
 		return nil
 	}
-	text := strings.ToLower(parsed.Sections["safety flags"])
+	flags := parseSummarySafetyFlags(parsed.Sections["safety flags"])
 	for _, flag := range report.Flags {
-		if !strings.Contains(text, strings.ToLower(flag.Name)) {
+		if !flags[strings.ToLower(flag.Name)] {
 			return fmt.Errorf("summary missing deterministic safety flag %q", flag.Name)
 		}
 	}
