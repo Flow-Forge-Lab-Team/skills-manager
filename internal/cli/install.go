@@ -1357,7 +1357,12 @@ func readCatalog(path string) (catalog, error) {
 			continue
 		}
 		trimmed := strings.TrimSpace(raw)
-		if strings.HasPrefix(trimmed, "- name:") {
+		// Only treat a leading "- name:" as the start of a new top-level skill
+		// when we are not currently inside a requirements/tools/mcp_servers block
+		// for the current skill. This prevents bogus skills from being created
+		// when the catalog emits detailed "- name: / required:" entries under
+		// mcp_servers or tools.
+		if strings.HasPrefix(trimmed, "- name:") && section == "" {
 			if current != nil {
 				if tool != nil {
 					current.Requirements.Tools = append(current.Requirements.Tools, *tool)
