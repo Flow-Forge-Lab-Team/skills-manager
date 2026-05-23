@@ -1437,11 +1437,17 @@ detectors:
 			t.Fatalf("loadDetectors failed: %v", err)
 		}
 
-		if len(set.compatibilityDetectors) != 1 {
-			t.Errorf("expected 1 compatibility detector, got %d", len(set.compatibilityDetectors))
+		// We now always include the built-in embedded detectors.
+		// Verify that the user-provided detector from the env dir is also present.
+		foundTest := false
+		for _, d := range set.compatibilityDetectors {
+			if d.ID == "test-detector" {
+				foundTest = true
+				break
+			}
 		}
-		if len(set.compatibilityDetectors) > 0 && set.compatibilityDetectors[0].ID != "test-detector" {
-			t.Errorf("detector ID = %q, want test-detector", set.compatibilityDetectors[0].ID)
+		if !foundTest {
+			t.Errorf("expected to find test-detector when SKILLS_MANAGER_DETECTORS_DIR is set; got %d detectors", len(set.compatibilityDetectors))
 		}
 	})
 
