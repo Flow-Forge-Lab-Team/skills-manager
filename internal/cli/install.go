@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -41,30 +42,31 @@ type projectConfig struct {
 }
 
 type catalog struct {
-	Skills []catalogSkill
+	Skills []catalogSkill `json:"skills"`
 }
 
 type catalogSkill struct {
-	Name          string
-	Categories    []string
-	Tags          []string
-	Compatibility compatibility
-	Requirements  requirements
+	Name          string        `json:"name"`
+	Summary       string        `json:"summary,omitempty"`
+	Categories    []string      `json:"categories,omitempty"`
+	Tags          []string      `json:"tags,omitempty"`
+	Compatibility compatibility `json:"compatibility"`
+	Requirements  requirements  `json:"requirements,omitempty"`
 }
 
 type compatibility struct {
-	Mode      string
-	Harness   string
-	Harnesses []string
+	Mode      string   `json:"mode,omitempty"`
+	Harness   string   `json:"harness,omitempty"`
+	Harnesses []string `json:"harnesses,omitempty"`
 }
 
 type requirements struct {
-	Tools []toolRequirement
+	Tools []toolRequirement `json:"tools,omitempty"`
 }
 
 type toolRequirement struct {
-	Name     string
-	Required bool
+	Name     string `json:"name"`
+	Required bool   `json:"required"`
 }
 
 type installManifest struct {
@@ -1175,6 +1177,8 @@ func readCatalog(path string) (catalog, error) {
 			continue
 		}
 		switch key {
+		case "summary":
+			current.Summary = unquote(value)
 		case "categories", "tags":
 			items, next := readYAMLStringList(lines, i, value)
 			i = next
@@ -1335,8 +1339,26 @@ func toolRequirementsFromNames(names []string) []toolRequirement {
 }
 
 func stripComment(line string) string {
-	if before, _, ok := strings.Cut(line, "#"); ok {
-		return before
+	var quote byte
+	for i := 0; i < len(line); i++ {
+		c := line[i]
+		if quote != 0 {
+			if c == '\\' && quote == '"' && i+1 < len(line) {
+				i++
+				continue
+			}
+			if c == quote {
+				quote = 0
+			}
+			continue
+		}
+		if c == '"' || c == '\'' {
+			quote = c
+			continue
+		}
+		if c == '#' {
+			return line[:i]
+		}
 	}
 	return line
 }
@@ -1346,7 +1368,13 @@ func indent(line string) int {
 }
 
 func unquote(value string) string {
-	return strings.Trim(strings.TrimSpace(value), `"'`)
+	v := strings.TrimSpace(value)
+	if len(v) >= 2 && v[0] == '"' && v[len(v)-1] == '"' {
+		if unquoted, err := strconv.Unquote(v); err == nil {
+			return unquoted
+		}
+	}
+	return strings.Trim(v, `"'`)
 }
 
 func missingLockedSkills(lock installLock, catalog catalog) []string {
