@@ -329,9 +329,11 @@ func runInstall(args []string, stdout io.Writer, stderr io.Writer, syncMode bool
 	}
 
 	partial := false
+	skippedCandidates := map[string]bool{}
 	for _, candidate := range candidates {
 		if len(candidate.Harnesses) == 0 {
 			fmt.Fprintf(stdout, "- %s: skipped, no compatible active harnesses\n", candidate.Skill.Name)
+			skippedCandidates[candidate.Skill.Name] = true
 			continue
 		}
 
@@ -340,6 +342,7 @@ func runInstall(args []string, stdout io.Writer, stderr io.Writer, syncMode bool
 		if len(missing) > 0 && !opts.allowMissingRequirements {
 			blocked++
 			fmt.Fprintf(stdout, "- %s: blocked, missing required tools: %s\n", candidate.Skill.Name, strings.Join(missing, ", "))
+			skippedCandidates[candidate.Skill.Name] = true
 			continue
 		}
 		if len(missing) > 0 {
@@ -434,8 +437,25 @@ func runInstall(args []string, stdout io.Writer, stderr io.Writer, syncMode bool
 		// Build and write installed.lock before saving manifest, so that on
 		// failure, the manifest doesn't claim a lock we didn't write.
 		// On success, we add .skills/installed.lock to managed, then save manifest.
-		if len(lock.Skills) > 0 || len(candidates) > 0 {
-			newLock, err := buildInstallLock(candidates, files, libraryPath, lock, managed, preserveLockEntries)
+		// Filter out candidates skipped this run (blocked by missing tools,
+		// no compatible harnesses) so the lock isn't refreshed for skills
+		// whose installed bytes did not change.
+		lockCandidates := candidates
+		if len(skippedCandidates) > 0 {
+			lockCandidates = make([]installCandidate, 0, len(candidates))
+			for _, c := range candidates {
+				if !skippedCandidates[c.Skill.Name] {
+					lockCandidates = append(lockCandidates, c)
+				}
+			}
+			// Preserve old lock entries for skipped candidates so we don't
+			// silently drop them from a committed lock.
+			for name := range skippedCandidates {
+				preserveLockEntries[name] = true
+			}
+		}
+		if len(lock.Skills) > 0 || len(lockCandidates) > 0 {
+			newLock, err := buildInstallLock(lockCandidates, files, libraryPath, lock, managed, preserveLockEntries)
 			if err != nil {
 				fmt.Fprintf(stderr, "build lock: %v\n", err)
 				return 3

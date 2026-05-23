@@ -1470,6 +1470,72 @@ skills:
 	}
 }
 
+func TestBlockedInstallDoesNotAdvanceLockFingerprint(t *testing.T) {
+	home := t.TempDir()
+	project := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+
+	writeFile(t, filepath.Join(project, ".skills", "project.yaml"), `version: 1
+name: demo
+categories: [Engineering]
+harnesses: [claude]
+`)
+	writeFile(t, filepath.Join(home, "library", "catalog.yaml"), `version: 1
+skills:
+  - name: needs-tool
+    categories: [Engineering]
+    compatibility:
+      mode: portable
+    requirements:
+      tools: []
+`)
+	writeFile(t, filepath.Join(home, "library", "needs-tool", "SKILL.md"), "v1\n")
+
+	var stdout, stderr bytes.Buffer
+	if code := Run([]string{"install", "--project", project}, &stdout, &stderr); code != 0 {
+		t.Fatalf("first install returned %d, want 0\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+	}
+	firstFP, err := fingerprintDir(filepath.Join(home, "library", "needs-tool"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Update the library AND introduce a required-tool gate that fails on this machine.
+	writeFile(t, filepath.Join(home, "library", "needs-tool", "SKILL.md"), "v2\n")
+	writeFile(t, filepath.Join(home, "library", "catalog.yaml"), `version: 1
+skills:
+  - name: needs-tool
+    categories: [Engineering]
+    compatibility:
+      mode: portable
+    requirements:
+      tools:
+        - name: definitely-missing-tool-xyz
+          required: true
+`)
+
+	stdout.Reset()
+	stderr.Reset()
+	code := Run([]string{"install", "--project", project}, &stdout, &stderr)
+	if code != 3 {
+		t.Fatalf("blocked install returned %d, want 3\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+	}
+
+	lock, err := readInstallLock(filepath.Join(project, ".skills", "installed.lock"))
+	if err != nil {
+		t.Fatalf("read lock: %v", err)
+	}
+	var lockedFP string
+	for _, s := range lock.Skills {
+		if s.Name == "needs-tool" {
+			lockedFP = s.Fingerprint
+		}
+	}
+	if lockedFP != firstFP {
+		t.Fatalf("blocked install advanced lock fingerprint:\nfirst-install lib fp: %s\nlock now claims: %s", firstFP, lockedFP)
+	}
+}
+
 func TestIdempotentInstallDoesNotChurnLockTimestamps(t *testing.T) {
 	home := t.TempDir()
 	project := t.TempDir()
