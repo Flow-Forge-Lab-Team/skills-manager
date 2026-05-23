@@ -877,29 +877,18 @@ func writeCatalog(path string, cat catalog) error {
 			}
 
 			if len(skill.Requirements.MCPServers) > 0 {
-				allRequired := true
-				for _, server := range skill.Requirements.MCPServers {
-					if !server.Required {
-						allRequired = false
-						break
+				// Always emit MCP servers as a compact list in the catalog.
+				// The rich per-server "required" information lives in the sidecar.
+				// This avoids emitting "- name:" lines that the current catalog reader
+				// can misinterpret as top-level skills.
+				fmt.Fprint(&buf, "      mcp_servers: [")
+				for i, server := range skill.Requirements.MCPServers {
+					if i > 0 {
+						fmt.Fprint(&buf, ", ")
 					}
+					fmt.Fprintf(&buf, "%q", server.Name)
 				}
-				if allRequired {
-					fmt.Fprint(&buf, "      mcp_servers: [")
-					for i, server := range skill.Requirements.MCPServers {
-						if i > 0 {
-							fmt.Fprint(&buf, ", ")
-						}
-						fmt.Fprintf(&buf, "%q", server.Name)
-					}
-					fmt.Fprint(&buf, "]\n")
-				} else {
-					fmt.Fprint(&buf, "      mcp_servers:\n")
-					for _, server := range skill.Requirements.MCPServers {
-						fmt.Fprintf(&buf, "        - name: %q\n", server.Name)
-						fmt.Fprintf(&buf, "          required: %t\n", server.Required)
-					}
-				}
+				fmt.Fprint(&buf, "]\n")
 			}
 
 			if skill.Requirements.Model.ToolUse != "" {

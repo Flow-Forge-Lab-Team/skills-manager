@@ -2050,19 +2050,17 @@ func TestReadCatalog_RoundTripsMCPAndModel(t *testing.T) {
 		t.Errorf("jq required = true, want false")
 	}
 
-	// Verify mcp_servers round-trip
+	// Verify mcp_servers names are present in the catalog (detailed per-server
+	// "required" flags live in the sidecar, not the catalog).
 	if len(skill.Requirements.MCPServers) != 2 {
 		t.Errorf("mcp_servers count = %d, want 2", len(skill.Requirements.MCPServers))
 	}
-	mcpMap := make(map[string]bool)
+	names := make(map[string]bool)
 	for _, server := range skill.Requirements.MCPServers {
-		mcpMap[server.Name] = server.Required
+		names[server.Name] = true
 	}
-	if !mcpMap["linear"] {
-		t.Errorf("linear required = false, want true")
-	}
-	if mcpMap["github"] {
-		t.Errorf("github required = true, want false")
+	if !names["linear"] || !names["github"] {
+		t.Errorf("expected mcp_servers linear and github in catalog, got %v", names)
 	}
 
 	// Verify model round-trip
