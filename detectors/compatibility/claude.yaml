@@ -15,9 +15,9 @@ detectors:
       - "Plan Mode"
   - id: claude-bash-prefix
     harness: claude
-    confidence: high
+    confidence: medium
     patterns:
-      - "! "
+      - "^! "
   - id: claude-hook-config
     harness: claude
     confidence: high
