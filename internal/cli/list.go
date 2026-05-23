@@ -213,12 +213,18 @@ func runShow(args []string, stdout io.Writer, stderr io.Writer) int {
 		hash, size, _ := fingerprintSkillMd(skillMdPath)
 		fp = hash
 		sz = size
-		if len(fp) > 12 {
-			fp = fp[:12]
-		}
+	}
+	displayFp := fp
+	if len(displayFp) > 12 {
+		displayFp = displayFp[:12]
 	}
 
 	if opts.jsonOut {
+		fingerprintOut := meta.Fingerprint
+		if fingerprintOut.SHA256 == "" && fp != "" {
+			fingerprintOut.SHA256 = fp
+			fingerprintOut.Size = sz
+		}
 		output := map[string]interface{}{
 			"name":          skill.Name,
 			"summary":       skill.Summary,
@@ -227,7 +233,7 @@ func runShow(args []string, stdout io.Writer, stderr io.Writer) int {
 			"compatibility": skill.Compatibility,
 			"requirements":  skill.Requirements,
 			"origin":        meta.Origin,
-			"fingerprint":   meta.Fingerprint,
+			"fingerprint":   fingerprintOut,
 		}
 
 		var installPaths []string
@@ -286,10 +292,10 @@ func runShow(args []string, stdout io.Writer, stderr io.Writer) int {
 			}
 		}
 
-		if fp != "" || sz > 0 {
+		if displayFp != "" || sz > 0 {
 			fmt.Fprint(stdout, "Fingerprint: ")
-			if fp != "" {
-				fmt.Fprint(stdout, fp)
+			if displayFp != "" {
+				fmt.Fprint(stdout, displayFp)
 			}
 			if sz > 0 {
 				fmt.Fprintf(stdout, " (%d bytes)", sz)

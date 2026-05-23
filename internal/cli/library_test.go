@@ -379,6 +379,53 @@ func TestSidecarPreservesCategorizedAt(t *testing.T) {
 	}
 }
 
+func TestParseSkillFrontmatterUnquotesDescription(t *testing.T) {
+	dir := t.TempDir()
+	skillPath := filepath.Join(dir, "SKILL.md")
+	writeFile(t, skillPath, "---\nname: foo\ndescription: \"Use when foo: do X\"\n---\nBody")
+
+	_, desc, err := parseSkillFrontmatter(skillPath)
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	if desc != "Use when foo: do X" {
+		t.Errorf("description = %q, want %q", desc, "Use when foo: do X")
+	}
+}
+
+func TestShowJSONIncludesFingerprintWhenSidecarMissing(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+
+	libraryPath := filepath.Join(home, "library")
+	if err := os.MkdirAll(libraryPath, 0755); err != nil {
+		t.Fatalf("mkdir library failed: %v", err)
+	}
+	writeFile(t, filepath.Join(libraryPath, "bare", "SKILL.md"),
+		"---\nname: bare\ndescription: Bare skill\n---\nBody")
+
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{"show", "bare", "--json"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("show returned %d: %s", code, stderr.String())
+	}
+
+	var got map[string]interface{}
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("json decode failed: %v\noutput: %s", err, stdout.String())
+	}
+	fp, ok := got["fingerprint"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("fingerprint missing or wrong type: %v", got["fingerprint"])
+	}
+	if sha, _ := fp["sha256"].(string); sha == "" {
+		t.Errorf("sha256 missing; got %v", fp)
+	}
+	if size, _ := fp["size"].(float64); size <= 0 {
+		t.Errorf("size missing; got %v", fp)
+	}
+}
+
 func TestRebuildCatalogReadable(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("SKILLS_MANAGER_HOME", home)

@@ -12,26 +12,26 @@ import (
 )
 
 type skillOrigin struct {
-	Type        string
-	Source      string
-	Path        string
-	URL         string
-	Version     string
-	Commit      string
-	InstalledAt string
-	InstalledBy string
+	Type        string `json:"type,omitempty"`
+	Source      string `json:"source,omitempty"`
+	Path        string `json:"path,omitempty"`
+	URL         string `json:"url,omitempty"`
+	Version     string `json:"version,omitempty"`
+	Commit      string `json:"commit,omitempty"`
+	InstalledAt string `json:"installed_at,omitempty"`
+	InstalledBy string `json:"installed_by,omitempty"`
 }
 
 type skillFingerprint struct {
-	SHA256 string
-	Size   int64
+	SHA256 string `json:"sha256,omitempty"`
+	Size   int64  `json:"size,omitempty"`
 }
 
 type skillCategorization struct {
-	Source        string
-	CategorizedAt string
-	ByTool        string
-	Confidence    string
+	Source        string `json:"source,omitempty"`
+	CategorizedAt string `json:"categorized_at,omitempty"`
+	ByTool        string `json:"by_tool,omitempty"`
+	Confidence    string `json:"confidence,omitempty"`
 }
 
 type skillMeta struct {
@@ -115,7 +115,8 @@ func parseSkillFrontmatter(path string) (name, description string, err error) {
 	}
 
 	if len(descLines) > 0 {
-		description = strings.TrimSpace(strings.Join(descLines, " "))
+		joined := strings.TrimSpace(strings.Join(descLines, " "))
+		description = unquote(joined)
 		if len(description) > 200 {
 			description = description[:200]
 		}
