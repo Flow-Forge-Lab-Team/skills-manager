@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 )
 
@@ -242,6 +243,7 @@ func runSet(args []string, realStdout io.Writer, stderr io.Writer, gf globalFlag
 
 	// Update .skill-meta.yaml (create if missing)
 	meta, _ := readSkillMeta(metaPath)
+	oldCompat := meta.Compatibility // snapshot before mutation
 
 	// Handle portable mode differently: set explicit_portable flag and clear Declared
 	if opts.compatibilityMode == "portable" {
@@ -287,7 +289,12 @@ func runSet(args []string, realStdout io.Writer, stderr io.Writer, gf globalFlag
 		}
 	}
 
-	writeSkillMeta(metaPath, meta)
+	// Only write if the modeled compatibility state actually changed.
+	// This is consistent with the safety discipline we applied to the rebuild path
+	// and prevents unnecessary rewrites that drop unmodeled sidecar fields.
+	if !reflect.DeepEqual(oldCompat, meta.Compatibility) {
+		writeSkillMeta(metaPath, meta)
+	}
 
 	// Rebuild catalog to refresh library/catalog.yaml (issue #1)
 	catalogPath := filepath.Join(libraryPath, "catalog.yaml")
