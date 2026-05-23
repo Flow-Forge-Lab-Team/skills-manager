@@ -37,4 +37,5 @@ styles.
 
 ## Out-of-band
 
+- [ACCEPTANCE_FLO_242.md](ACCEPTANCE_FLO_242.md) — v0.1 realistic-project acceptance smoke
 - [/mockup.html](../mockup.html) — clickable UI mockup (open in browser)

@@ -8,7 +8,8 @@ cd "$(dirname "$0")"
 
 # Docs in this directory.
 docs=(VISION ARCHITECTURE ROADMAP DATA_MODEL CLI_REFERENCE TAXONOMY \
-      COMPATIBILITY INGEST_FLOW UPDATE_FLOW BUNDLED_SKILLS SCHEDULING CROSS_MACHINE)
+      COMPATIBILITY INGEST_FLOW UPDATE_FLOW BUNDLED_SKILLS SCHEDULING CROSS_MACHINE \
+      ACCEPTANCE_FLO_242)
 
 # Pretty titles for each doc (used in <title> + nav).
 declare -A titles=(
@@ -24,6 +25,7 @@ declare -A titles=(
   [BUNDLED_SKILLS]="Bundled skills"
   [SCHEDULING]="Scheduling"
   [CROSS_MACHINE]="Cross-machine sync"
+  [ACCEPTANCE_FLO_242]="FLO-242 acceptance smoke"
 )
 
 rewrite_links() {
