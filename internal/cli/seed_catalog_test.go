@@ -163,6 +163,91 @@ compatibility:
 	}
 }
 
+func TestSeedCatalogPreservesRemapCompatibilityWithWeakDetection(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+	libraryPath := filepath.Join(home, "library")
+	writeFile(t, filepath.Join(libraryPath, "weak-signal", "SKILL.md"), `---
+name: weak-signal
+---
+Follow AGENTS.md conventions.
+`)
+	remapPath := filepath.Join(t.TempDir(), "remap.json")
+	writeJSONFile(t, remapPath, []seedCatalogRemapEntry{
+		{Name: "weak-signal", Locs: []string{"claude", "codex"}, Categories: []string{"Engineering"}, Tags: []string{"workflow"}},
+	})
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := Run([]string{"seed-catalog", "--from", remapPath}, &stdout, &stderr)
+	if code != ExitSuccess {
+		t.Fatalf("Run returned %d, want success\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+	}
+	meta, err := readSkillMeta(filepath.Join(libraryPath, "weak-signal", ".skill-meta.yaml"))
+	if err != nil {
+		t.Fatalf("readSkillMeta: %v", err)
+	}
+	if meta.Compatibility.Mode != "compatible" {
+		t.Fatalf("sidecar compatibility mode = %q, want compatible", meta.Compatibility.Mode)
+	}
+	if strings.Join(meta.Compatibility.Harnesses, ",") != "claude,codex" {
+		t.Fatalf("sidecar harnesses = %+v", meta.Compatibility.Harnesses)
+	}
+	cat, err := readCatalog(filepath.Join(libraryPath, "catalog.yaml"))
+	if err != nil {
+		t.Fatalf("readCatalog: %v", err)
+	}
+	if len(cat.Skills) != 1 || cat.Skills[0].Compatibility.Mode != "compatible" {
+		t.Fatalf("catalog compatibility = %+v", cat.Skills)
+	}
+}
+
+func TestSeedCatalogPreservesUnmodeledRequirementFields(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+	libraryPath := filepath.Join(home, "library")
+	writeFile(t, filepath.Join(libraryPath, "runtime-heavy", "SKILL.md"), "---\nname: runtime-heavy\n---\nBody\n")
+	writeFile(t, filepath.Join(libraryPath, "runtime-heavy", ".skill-meta.yaml"), `version: 1
+requirements:
+  tools:
+    - name: "gh"
+      required: true
+      check: "gh auth status"
+  scripts:
+    allow_auto_run: false
+    required_runtimes: ["node"]
+  credentials:
+    - name: "github"
+      source: "gh"
+      required: true
+`)
+	remapPath := filepath.Join(t.TempDir(), "remap.json")
+	writeJSONFile(t, remapPath, []seedCatalogRemapEntry{
+		{Name: "runtime-heavy", Categories: []string{"Engineering"}, Tags: []string{"github"}},
+	})
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := Run([]string{"seed-catalog", "--from", remapPath}, &stdout, &stderr)
+	if code != ExitSuccess {
+		t.Fatalf("Run returned %d, want success\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+	}
+	metaText := readFile(t, filepath.Join(libraryPath, "runtime-heavy", ".skill-meta.yaml"))
+	for _, want := range []string{
+		`check: "gh auth status"`,
+		`scripts:`,
+		`required_runtimes: ["node"]`,
+		`credentials:`,
+		`source: "gh"`,
+		`categories:`,
+		`tags:`,
+	} {
+		if !strings.Contains(metaText, want) {
+			t.Fatalf("meta missing %q:\n%s", want, metaText)
+		}
+	}
+}
+
 func TestSeedCatalogWarnsOnMissingAndOverBroadMetadata(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("SKILLS_MANAGER_HOME", home)

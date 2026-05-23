@@ -893,9 +893,19 @@ func rebuildCatalogFromLibrary(libraryPath string) (catalog, error) {
 				meta.Compatibility.Detected = detected
 				// Apply auto-classification rule to set effective mode/harness/harnesses
 				autoClass := applyAutoClassification(detected)
-				meta.Compatibility.Mode = autoClass.Mode
-				meta.Compatibility.Harness = autoClass.Harness
-				meta.Compatibility.Harnesses = autoClass.Harnesses
+				if autoClass.Mode != "" && autoClass.Mode != "portable" {
+					meta.Compatibility.Mode = autoClass.Mode
+					meta.Compatibility.Harness = autoClass.Harness
+					meta.Compatibility.Harnesses = autoClass.Harnesses
+				} else if meta.Categorization.Source == "seed-remap" &&
+					(meta.Compatibility.Mode == "exclusive" || meta.Compatibility.Mode == "compatible") {
+					// Seed catalog classifications are curated metadata. Preserve them
+					// when weak detector signals do not produce a stronger classification.
+				} else {
+					meta.Compatibility.Mode = autoClass.Mode
+					meta.Compatibility.Harness = autoClass.Harness
+					meta.Compatibility.Harnesses = autoClass.Harnesses
+				}
 				// Do not set needsWrite here — let the final DeepEqual decide
 			} else if meta.Categorization.Source == "seed-remap" &&
 				(meta.Compatibility.Mode == "exclusive" || meta.Compatibility.Mode == "compatible") {

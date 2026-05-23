@@ -168,7 +168,7 @@ func applySeedCatalog(libraryPath string, entries []seedCatalogRemapEntry, dryRu
 		if !reflect.DeepEqual(before, meta) {
 			result.Updated++
 			if !dryRun {
-				if err := writeSkillMeta(metaPath, meta); err != nil {
+				if err := writeSeedSkillMeta(metaPath, meta); err != nil {
 					return result, err
 				}
 			}
@@ -187,6 +187,121 @@ func applySeedCatalog(libraryPath string, entries []seedCatalogRemapEntry, dryRu
 		}
 	}
 	return result, nil
+}
+
+func writeSeedSkillMeta(path string, meta skillMeta) error {
+	if !sidecarHasUnmodeledRequirements(path) {
+		return writeSkillMeta(path, meta)
+	}
+
+	original, err := os.ReadFile(path)
+	if err != nil {
+		return writeSkillMeta(path, meta)
+	}
+	requirementsBlock, ok := topLevelYAMLBlock(string(original), "requirements")
+	if !ok {
+		return writeSkillMeta(path, meta)
+	}
+
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".skill-meta-*")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	if err := tmp.Close(); err != nil {
+		os.Remove(tmpPath)
+		return err
+	}
+	defer os.Remove(tmpPath)
+
+	if err := writeSkillMeta(tmpPath, meta); err != nil {
+		return err
+	}
+	generated, err := os.ReadFile(tmpPath)
+	if err != nil {
+		return err
+	}
+	preserved := replaceTopLevelYAMLBlock(string(generated), "requirements", requirementsBlock)
+	return os.WriteFile(path, []byte(preserved), 0644)
+}
+
+func sidecarHasUnmodeledRequirements(path string) bool {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	block, ok := topLevelYAMLBlock(string(data), "requirements")
+	if !ok {
+		return false
+	}
+	for _, line := range strings.Split(block, "\n") {
+		key, _, ok := splitYAMLKey(line)
+		if !ok {
+			continue
+		}
+		switch key {
+		case "scripts", "credentials", "check", "config_hint", "source", "required_runtimes", "allow_auto_run":
+			return true
+		}
+	}
+	return false
+}
+
+func topLevelYAMLBlock(content string, key string) (string, bool) {
+	lines := strings.Split(content, "\n")
+	start := -1
+	end := len(lines)
+	prefix := key + ":"
+	for i, line := range lines {
+		if strings.HasPrefix(line, prefix) {
+			start = i
+			continue
+		}
+		if start != -1 && strings.TrimSpace(line) != "" && indent(line) == 0 {
+			end = i
+			break
+		}
+	}
+	if start == -1 {
+		return "", false
+	}
+	return strings.Join(lines[start:end], "\n"), true
+}
+
+func replaceTopLevelYAMLBlock(content string, key string, replacement string) string {
+	lines := strings.Split(content, "\n")
+	start := -1
+	end := len(lines)
+	prefix := key + ":"
+	for i, line := range lines {
+		if strings.HasPrefix(line, prefix) {
+			start = i
+			continue
+		}
+		if start != -1 && strings.TrimSpace(line) != "" && indent(line) == 0 {
+			end = i
+			break
+		}
+	}
+	if start == -1 {
+		if strings.HasSuffix(content, "\n") {
+			return content + replacement + "\n"
+		}
+		return content + "\n" + replacement + "\n"
+	}
+	var out strings.Builder
+	out.WriteString(strings.Join(lines[:start], "\n"))
+	if start > 0 {
+		out.WriteString("\n")
+	}
+	out.WriteString(replacement)
+	if !strings.HasSuffix(replacement, "\n") {
+		out.WriteString("\n")
+	}
+	if end < len(lines) {
+		out.WriteString(strings.Join(lines[end:], "\n"))
+	}
+	return out.String()
 }
 
 func applySeedCompatibility(meta *skillMeta, compDecl compatibilityDeclaration, entry seedCatalogRemapEntry, detected map[string]detectionResult) {
