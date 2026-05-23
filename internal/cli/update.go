@@ -980,9 +980,18 @@ func listPendingUpdates(realStdout io.Writer, stdout io.Writer, stderr io.Writer
 		return ExitOpError
 	}
 
+	libraryPath := filepath.Join(home, "library")
+	view := make([]pendingUpdateView, 0, len(updates))
+	for _, u := range updates {
+		view = append(view, pendingUpdateView{
+			PendingUpdate: u,
+			SummaryBadges: readPendingSummaryBadges(filepath.Join(libraryPath, u.SkillName, ".update-pending")),
+		})
+	}
+
 	if gf.JSON {
 		// Always emit JSON, even for empty list, so consuming scripts get valid output
-		if err := writeJSON(realStdout, updates); err != nil {
+		if err := writeJSON(realStdout, view); err != nil {
 			fmt.Fprintln(stderr, err)
 			return ExitOpError
 		}
@@ -992,7 +1001,7 @@ func listPendingUpdates(realStdout io.Writer, stdout io.Writer, stderr io.Writer
 			fmt.Fprintln(stdout, "No pending updates.")
 		} else {
 			fmt.Fprintf(stdout, "Pending updates (%d):\n\n", len(updates))
-			for _, u := range updates {
+			for _, u := range view {
 				fromShort := u.FromVersion
 				toShort := u.ToVersion
 				if len(fromShort) > 7 {
@@ -1001,12 +1010,23 @@ func listPendingUpdates(realStdout io.Writer, stdout io.Writer, stderr io.Writer
 				if len(toShort) > 7 {
 					toShort = toShort[:7]
 				}
-				fmt.Fprintf(stdout, "  %-20s %s → %s   %s\n", u.SkillName, fromShort, toShort, u.Source)
+				summary := ""
+				if len(u.SummaryBadges) > 0 {
+					summary = "   badges: " + strings.Join(u.SummaryBadges, ",")
+				} else if u.SummaryStatus != "" && u.SummaryStatus != "pending" {
+					summary = "   summary: " + u.SummaryStatus
+				}
+				fmt.Fprintf(stdout, "  %-20s %s → %s   %s%s\n", u.SkillName, fromShort, toShort, u.Source, summary)
 			}
 		}
 	}
 
 	return ExitSuccess
+}
+
+type pendingUpdateView struct {
+	state.PendingUpdate
+	SummaryBadges []string `json:"summary_badges,omitempty"`
 }
 
 // runDiff prints a unified diff between from.md and to.md for a pending update.

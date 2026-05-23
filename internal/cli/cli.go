@@ -67,6 +67,8 @@ func Run(args []string, stdout io.Writer, stderr io.Writer) int {
 		code = runShow(cmdArgs, stdout, stderr, gf)
 	case "update":
 		code = runUpdate(cmdArgs, stdout, stderr, gf)
+	case "summarize":
+		code = runSummarize(cmdArgs, stdout, stderr, gf)
 	case "status":
 		code = runStatus(cmdArgs, stdout, stderr, gf)
 	case "doctor":

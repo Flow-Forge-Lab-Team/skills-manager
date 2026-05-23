@@ -62,18 +62,20 @@ func (db *DB) GetSkillPoll(skillName string) (*SkillPollRecord, error) {
 
 // PendingUpdate holds info about a staged update waiting for review.
 type PendingUpdate struct {
-	SkillName   string
-	FromVersion string
-	ToVersion   string
-	Source      string
-	DetectedAt  string // RFC3339 timestamp
-	Status      string
+	SkillName     string
+	FromVersion   string
+	ToVersion     string
+	Source        string
+	DetectedAt    string // RFC3339 timestamp
+	SummaryStatus string
+	SummaryPath   string
+	Status        string
 }
 
 // ListPendingUpdates returns all updates with status='pending'.
 func (db *DB) ListPendingUpdates() ([]PendingUpdate, error) {
 	rows, err := db.Query(`
-		SELECT skill_name, from_version, to_version, source, detected_at, status
+		SELECT skill_name, from_version, to_version, source, detected_at, COALESCE(summary_status, ''), COALESCE(summary_path, ''), status
 		FROM updates
 		WHERE status = 'pending'
 		ORDER BY skill_name
@@ -86,7 +88,7 @@ func (db *DB) ListPendingUpdates() ([]PendingUpdate, error) {
 	var updates []PendingUpdate
 	for rows.Next() {
 		var u PendingUpdate
-		if err := rows.Scan(&u.SkillName, &u.FromVersion, &u.ToVersion, &u.Source, &u.DetectedAt, &u.Status); err != nil {
+		if err := rows.Scan(&u.SkillName, &u.FromVersion, &u.ToVersion, &u.Source, &u.DetectedAt, &u.SummaryStatus, &u.SummaryPath, &u.Status); err != nil {
 			return nil, err
 		}
 		updates = append(updates, u)
@@ -98,10 +100,10 @@ func (db *DB) ListPendingUpdates() ([]PendingUpdate, error) {
 func (db *DB) GetPendingUpdate(skillName string) (*PendingUpdate, error) {
 	var u PendingUpdate
 	err := db.QueryRow(`
-		SELECT skill_name, from_version, to_version, source, detected_at, status
+		SELECT skill_name, from_version, to_version, source, detected_at, COALESCE(summary_status, ''), COALESCE(summary_path, ''), status
 		FROM updates
 		WHERE skill_name = ? AND status = 'pending'
-	`, skillName).Scan(&u.SkillName, &u.FromVersion, &u.ToVersion, &u.Source, &u.DetectedAt, &u.Status)
+	`, skillName).Scan(&u.SkillName, &u.FromVersion, &u.ToVersion, &u.Source, &u.DetectedAt, &u.SummaryStatus, &u.SummaryPath, &u.Status)
 
 	if err != nil {
 		if err.Error() == "sql: no rows in result set" {
@@ -131,5 +133,15 @@ func (db *DB) MarkUpdateAccepted(skillName string) error {
 	_, err := db.Exec(`
 		UPDATE updates SET status='accepted' WHERE skill_name=?
 	`, skillName)
+	return err
+}
+
+// MarkUpdateSummarized records the advisory summary cache path for a pending update.
+func (db *DB) MarkUpdateSummarized(skillName, summaryStatus, summaryPath string) error {
+	_, err := db.Exec(`
+		UPDATE updates
+		SET summary_status = ?, summary_path = ?
+		WHERE skill_name = ? AND status = 'pending'
+	`, summaryStatus, summaryPath, skillName)
 	return err
 }
