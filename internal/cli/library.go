@@ -57,41 +57,57 @@ func ensureLibrary(home string) (string, error) {
 }
 
 func parseSkillFrontmatter(path string) (name, description string, err error) {
+	decl, _, _ := parseSkillFrontmatterFull(path)
+	return decl.name, decl.description, nil
+}
+
+type skillFrontmatterDeclaration struct {
+	name        string
+	description string
+	compatible  []string
+	exclusive   string
+	reason      string
+}
+
+func parseSkillFrontmatterFull(path string) (skillFrontmatterDeclaration, compatibilityDeclaration, error) {
 	file, err := os.Open(path)
 	if err != nil {
-		return "", "", err
+		return skillFrontmatterDeclaration{}, compatibilityDeclaration{}, err
 	}
 	defer file.Close()
 
 	content, err := io.ReadAll(file)
 	if err != nil {
-		return "", "", err
+		return skillFrontmatterDeclaration{}, compatibilityDeclaration{}, err
 	}
 
 	text := string(content)
 	if !strings.HasPrefix(text, "---") {
-		return "", "", nil
+		return skillFrontmatterDeclaration{}, compatibilityDeclaration{}, nil
 	}
 
 	endIdx := strings.Index(text[3:], "---")
 	if endIdx == -1 {
-		return "", "", nil
+		return skillFrontmatterDeclaration{}, compatibilityDeclaration{}, nil
 	}
 
 	frontmatter := text[3 : endIdx+3]
 	lines := strings.Split(frontmatter, "\n")
 
+	decl := skillFrontmatterDeclaration{}
 	var inDescription bool
 	var descLines []string
 
-	for _, line := range lines {
+	for i := 0; i < len(lines); i++ {
+		line := lines[i]
 		trimmed := strings.TrimSpace(line)
 		if trimmed == "" {
 			continue
 		}
 
 		if strings.HasPrefix(trimmed, "name:") {
-			name = unquote(strings.TrimSpace(strings.TrimPrefix(trimmed, "name:")))
+			decl.name = unquote(strings.TrimSpace(strings.TrimPrefix(trimmed, "name:")))
+			inDescription = false
 			continue
 		}
 
@@ -106,23 +122,61 @@ func parseSkillFrontmatter(path string) (name, description string, err error) {
 
 		if inDescription {
 			if strings.Contains(trimmed, ":") && !strings.HasPrefix(trimmed, "-") {
-				break
+				inDescription = false
+			} else {
+				if !strings.HasPrefix(trimmed, "-") {
+					descLines = append(descLines, trimmed)
+				}
+				continue
 			}
-			if !strings.HasPrefix(trimmed, "-") {
-				descLines = append(descLines, trimmed)
+		}
+
+		if strings.HasPrefix(trimmed, "compatible:") {
+			inDescription = false
+			rest := strings.TrimSpace(strings.TrimPrefix(trimmed, "compatible:"))
+			if strings.HasPrefix(rest, "[") && strings.HasSuffix(rest, "]") {
+				decl.compatible = parseInlineList(rest)
+			} else {
+				items, next := readYAMLStringList(lines, i, rest)
+				i = next
+				decl.compatible = items
 			}
+			continue
+		}
+
+		if strings.HasPrefix(trimmed, "exclusive:") {
+			inDescription = false
+			decl.exclusive = unquote(strings.TrimSpace(strings.TrimPrefix(trimmed, "exclusive:")))
+			continue
+		}
+
+		if strings.HasPrefix(trimmed, "reason:") {
+			inDescription = false
+			decl.reason = unquote(strings.TrimSpace(strings.TrimPrefix(trimmed, "reason:")))
+			continue
 		}
 	}
 
 	if len(descLines) > 0 {
 		joined := strings.TrimSpace(strings.Join(descLines, " "))
-		description = unquote(joined)
-		if len(description) > 200 {
-			description = description[:200]
+		decl.description = unquote(joined)
+		if len(decl.description) > 200 {
+			decl.description = decl.description[:200]
 		}
 	}
 
-	return name, description, nil
+	// Convert to compatibilityDeclaration if there are declarations
+	var compDecl compatibilityDeclaration
+	if decl.exclusive != "" {
+		compDecl.Mode = "exclusive"
+		compDecl.Harness = decl.exclusive
+		compDecl.Reason = decl.reason
+	} else if len(decl.compatible) > 0 {
+		compDecl.Mode = "compatible"
+		compDecl.Harnesses = decl.compatible
+	}
+
+	return decl, compDecl, nil
 }
 
 func fingerprintSkillMd(path string) (string, int64, error) {
@@ -250,16 +304,51 @@ func readSkillMeta(path string) (skillMeta, error) {
 		case "mode":
 			if section == "compatibility" {
 				meta.Compatibility.Mode = unquote(value)
+			} else if section == "compatibility:declared" {
+				if meta.Compatibility.Declared == nil {
+					meta.Compatibility.Declared = &compatibilityDeclaration{}
+				}
+				meta.Compatibility.Declared.Mode = unquote(value)
 			}
 		case "harness":
 			if section == "compatibility" {
 				meta.Compatibility.Harness = unquote(value)
+			} else if section == "compatibility:declared" {
+				if meta.Compatibility.Declared == nil {
+					meta.Compatibility.Declared = &compatibilityDeclaration{}
+				}
+				meta.Compatibility.Declared.Harness = unquote(value)
 			}
 		case "harnesses":
 			if section == "compatibility" {
 				items, next := readYAMLStringList(lines, i, value)
 				i = next
 				meta.Compatibility.Harnesses = items
+			} else if section == "compatibility:declared" {
+				if meta.Compatibility.Declared == nil {
+					meta.Compatibility.Declared = &compatibilityDeclaration{}
+				}
+				items, next := readYAMLStringList(lines, i, value)
+				i = next
+				meta.Compatibility.Declared.Harnesses = items
+			}
+		case "reason":
+			if section == "compatibility:declared" {
+				if meta.Compatibility.Declared == nil {
+					meta.Compatibility.Declared = &compatibilityDeclaration{}
+				}
+				meta.Compatibility.Declared.Reason = unquote(value)
+			}
+		case "declared":
+			if section == "compatibility" {
+				section = "compatibility:declared"
+			}
+		case "detected":
+			if section == "compatibility" {
+				section = "compatibility:detected"
+				if meta.Compatibility.Detected == nil {
+					meta.Compatibility.Detected = make(map[string]detectionResult)
+				}
 			}
 		case "tools":
 			if section == "requirements" {
@@ -350,7 +439,7 @@ func writeSkillMeta(path string, meta skillMeta) error {
 		}
 	}
 
-	if meta.Compatibility.Mode != "" {
+	if meta.Compatibility.Mode != "" || meta.Compatibility.Declared != nil || len(meta.Compatibility.Detected) > 0 {
 		fmt.Fprint(&buf, "compatibility:\n")
 		fmt.Fprintf(&buf, "  mode: %s\n", meta.Compatibility.Mode)
 		if meta.Compatibility.Harness != "" {
@@ -365,6 +454,43 @@ func writeSkillMeta(path string, meta skillMeta) error {
 				fmt.Fprintf(&buf, "%q", h)
 			}
 			fmt.Fprint(&buf, "]\n")
+		}
+
+		if meta.Compatibility.Declared != nil {
+			fmt.Fprint(&buf, "  declared:\n")
+			if meta.Compatibility.Declared.Mode != "" {
+				fmt.Fprintf(&buf, "    mode: %s\n", meta.Compatibility.Declared.Mode)
+			}
+			if meta.Compatibility.Declared.Harness != "" {
+				fmt.Fprintf(&buf, "    harness: %s\n", meta.Compatibility.Declared.Harness)
+			}
+			if len(meta.Compatibility.Declared.Harnesses) > 0 {
+				fmt.Fprint(&buf, "    harnesses: [")
+				for i, h := range meta.Compatibility.Declared.Harnesses {
+					if i > 0 {
+						fmt.Fprint(&buf, ", ")
+					}
+					fmt.Fprintf(&buf, "%q", h)
+				}
+				fmt.Fprint(&buf, "]\n")
+			}
+			if meta.Compatibility.Declared.Reason != "" {
+				fmt.Fprintf(&buf, "    reason: %q\n", meta.Compatibility.Declared.Reason)
+			}
+		}
+
+		if len(meta.Compatibility.Detected) > 0 {
+			fmt.Fprint(&buf, "  detected:\n")
+			for harness, result := range meta.Compatibility.Detected {
+				fmt.Fprintf(&buf, "    %s:\n", harness)
+				fmt.Fprintf(&buf, "      confidence: %s\n", result.Confidence)
+				if len(result.Reasons) > 0 {
+					fmt.Fprint(&buf, "      reasons:\n")
+					for _, reason := range result.Reasons {
+						fmt.Fprintf(&buf, "        - %q\n", reason)
+					}
+				}
+			}
 		}
 	}
 
@@ -416,6 +542,8 @@ func rebuildCatalogFromLibrary(libraryPath string) (catalog, error) {
 		return catalog{}, err
 	}
 
+	detectors, _ := loadDetectors()
+
 	var skills []catalogSkill
 
 	for _, entry := range entries {
@@ -430,11 +558,9 @@ func rebuildCatalogFromLibrary(libraryPath string) (catalog, error) {
 			continue
 		}
 
-		name, description, err := parseSkillFrontmatter(skillMdPath)
-		if err != nil {
-			continue
-		}
-
+		// Parse the skill declaration from SKILL.md
+		decl, compDecl, _ := parseSkillFrontmatterFull(skillMdPath)
+		name := decl.name
 		if name == "" {
 			name = entry.Name()
 		}
@@ -445,13 +571,28 @@ func rebuildCatalogFromLibrary(libraryPath string) (catalog, error) {
 			meta, _ = readSkillMeta(metaPath)
 		}
 
+		// If there's a declaration in SKILL.md frontmatter, use it and update meta
+		if compDecl.Mode != "" {
+			meta.Compatibility.Declared = &compDecl
+			meta.Compatibility.Mode = compDecl.Mode
+			meta.Compatibility.Harness = compDecl.Harness
+			meta.Compatibility.Harnesses = compDecl.Harnesses
+		} else {
+			// No declaration: run detection and populate detected block
+			skillBody, _ := readSkillBody(skillMdPath)
+			detected := detectCompatibility(detectors, skillBody)
+			if len(detected) > 0 {
+				meta.Compatibility.Detected = detected
+			}
+		}
+
 		if meta.Compatibility.Mode == "" {
 			meta.Compatibility.Mode = "portable"
 		}
 
 		summary := meta.Summary
 		if summary == "" {
-			summary = description
+			summary = decl.description
 		}
 
 		skill := catalogSkill{
