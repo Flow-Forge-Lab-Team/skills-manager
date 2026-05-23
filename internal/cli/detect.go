@@ -319,9 +319,10 @@ func inferRequirements(detectors detectorSet, skillBody string) []toolRequiremen
 }
 
 func matchPattern(pattern, text string) bool {
-	// For mcp UUID patterns like "mcp__[hex]__*", use a simple regex
-	if strings.HasPrefix(pattern, "mcp__") {
-		// Build a simple regex for mcp UUID pattern
+	// Use regex for the sentinel pattern "mcp__[hex]__" (generic MCP UUID format).
+	// All other patterns use substring matching, including literal patterns like "mcp__linear__".
+	if pattern == "mcp__[hex]__" {
+		// Build a simple regex for generic mcp UUID pattern
 		re := regexp.MustCompile(`mcp__[a-f0-9]+__`)
 		return re.MatchString(text)
 	}
