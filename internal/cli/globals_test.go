@@ -206,6 +206,39 @@ func TestUnknownArgsExitUsage(t *testing.T) {
 	}
 }
 
+func TestConfigOverridesProjectYAML(t *testing.T) {
+	home := t.TempDir()
+	project := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+
+	// Seed library, but write the project's default project.yaml with a
+	// non-matching category (would install nothing). The --config override
+	// points at an alternate file that DOES match, so install should succeed.
+	writeFile(t, filepath.Join(home, "library", "catalog.yaml"),
+		"version: 1\nskills:\n  - name: alpha\n    categories: [Engineering]\n    compatibility:\n      mode: portable\n    requirements:\n      tools: []\n")
+	writeFile(t, filepath.Join(home, "library", "alpha", "SKILL.md"),
+		"---\nname: alpha\n---\nbody\n")
+	writeFile(t, filepath.Join(project, ".skills", "project.yaml"),
+		"version: 1\nname: demo\ncategories: [Unrelated]\nharnesses: [claude]\n")
+	altConfig := filepath.Join(project, "alt-project.yaml")
+	writeFile(t, altConfig,
+		"version: 1\nname: demo\ncategories: [Engineering]\nharnesses: [claude]\n")
+
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{"--json", "--config", altConfig, "install", "--project", project}, &stdout, &stderr)
+	if code != ExitSuccess {
+		t.Fatalf("install exit = %d: %s\n%s", code, stderr.String(), stdout.String())
+	}
+	var result map[string]interface{}
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("decode: %v\noutput: %s", err, stdout.String())
+	}
+	installed, _ := result["installed"].([]interface{})
+	if len(installed) != 1 || installed[0] != "alpha" {
+		t.Fatalf("expected alpha to be installed via --config override, got %v", result["installed"])
+	}
+}
+
 // seedInstallFixture writes a minimal catalog + library skill + project.yaml
 // for use in install/uninstall tests.
 func seedInstallFixture(t *testing.T, home, project, skill string) {

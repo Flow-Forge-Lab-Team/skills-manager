@@ -129,10 +129,14 @@ func runInstall(args []string, realStdout io.Writer, stderr io.Writer, syncMode 
 	}
 	opts.projectPath = projectPath
 
-	project, err := readProjectConfig(filepath.Join(projectPath, ".skills", "project.yaml"))
+	projectConfigPath := filepath.Join(projectPath, ".skills", "project.yaml")
+	if gf.Config != "" {
+		projectConfigPath = gf.Config
+	}
+	project, err := readProjectConfig(projectConfigPath)
 	if err != nil {
 		fmt.Fprintf(stderr, "read project config: %v\n", err)
-		return 3
+		return ExitOpError
 	}
 
 	home, err := managerHome()
