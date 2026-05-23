@@ -79,6 +79,8 @@ func Run(args []string, stdout io.Writer, stderr io.Writer) int {
 		code = runScan(cmdArgs, stdout, stderr, gf)
 	case "new":
 		code = runNew(cmdArgs, stdout, stderr, gf)
+	case "init":
+		code = runInit(cmdArgs, stdout, stderr, gf)
 	default:
 		fmt.Fprintf(stderr, "unknown argument: %s\n", cmd)
 		fmt.Fprintln(stderr, "Usage: skills-manager <command>")

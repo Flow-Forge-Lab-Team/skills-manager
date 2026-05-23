@@ -307,12 +307,24 @@ Flags:
 Create a new skill and open it in $EDITOR. Name must be 3-64 alphanumeric chars + dashes.
 
 ` + globalFlagHelp()
+	case "init":
+		return `skills-manager init [path]
+
+Set up a project by detecting stack signals, proposing categories/tags/harnesses,
+and writing .skills/project.yaml plus an empty .skills/installed.lock.
+
+Flags:
+  --no-detect             skip filesystem auto-detection
+  --force                 overwrite an existing project.yaml and installed.lock
+
+` + globalFlagHelp()
 	}
 	return `skills-manager: AI skill library manager
 
 Usage: skills-manager <command> [flags]
 
 Commands:
+  init        set up project config from filesystem detection
   add         bring a skill into the library
   scan        discover skills in harness directories
   new         create a new skill
