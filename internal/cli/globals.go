@@ -246,6 +246,19 @@ Flags:
   --reason "<text>"          optional human note (exclusive mode)
 
 ` + globalFlagHelp()
+	case "status":
+		return `skills-manager status
+
+Show library counts, pending updates, unregistered skills, stale scheduled check state.
+
+` + globalFlagHelp()
+	case "doctor":
+		return `skills-manager doctor [--rebuild-state] [--rebuild-catalog]
+
+Check manifests, fingerprints, catalog/state drift, required tools/MCP/credentials/runtimes.
+Rebuild derived state or catalog if requested. Non-zero exit on problems.
+
+` + globalFlagHelp()
 	}
 	return `skills-manager: AI skill library manager
 
@@ -259,6 +272,8 @@ Commands:
   list        list skills in the canonical library
   show        show details for a single skill
   update      review and accept pending library updates
+  status      show library counts, pending, unregistered, scheduled state
+  doctor      diagnose problems; --rebuild-state --rebuild-catalog
   set         update a skill's compatibility declaration
   help        show help for a command
 

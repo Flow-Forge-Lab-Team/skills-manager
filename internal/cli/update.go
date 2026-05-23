@@ -294,6 +294,20 @@ func applyPendingUpdate(pending pendingUpdatePaths) error {
 	if !pathExists(filepath.Join(pending.To, "SKILL.md")) {
 		return fmt.Errorf("incoming snapshot missing SKILL.md")
 	}
+
+	// Last-moment divergence guard (defense-in-depth for TOCTOU and any direct
+	// callers of applyPendingUpdate). The directory wipe below would otherwise
+	// silently destroy local edits or local-only files that appeared after the
+	// update was staged / after the --accept-all-safe pre-flight check.
+	// Treat any verification *error* as "cannot safely proceed" (fail closed).
+	diverged, reason, err := liveDivergesFromBase(skillDir, pending.From, pending.To)
+	if err != nil {
+		return fmt.Errorf("last-moment base verification failed (%v) — aborting destructive update for safety", err)
+	}
+	if diverged {
+		return fmt.Errorf("live skill diverged from staged base since check: %s (resolve manually and re-stage)", reason)
+	}
+
 	tmp, err := os.MkdirTemp("", "skills-manager-update-*")
 	if err != nil {
 		return err

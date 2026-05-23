@@ -65,6 +65,10 @@ func Run(args []string, stdout io.Writer, stderr io.Writer) int {
 		code = runShow(cmdArgs, stdout, stderr, gf)
 	case "update":
 		code = runUpdate(cmdArgs, stdout, stderr, gf)
+	case "status":
+		code = runStatus(cmdArgs, stdout, stderr, gf)
+	case "doctor":
+		code = runDoctor(cmdArgs, stdout, stderr, gf)
 	case "set":
 		code = runSet(cmdArgs, stdout, stderr, gf)
 	default:
