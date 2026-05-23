@@ -12,8 +12,10 @@ import (
 
 // fakePoller is a mock GitHubPoller for testing.
 type fakePoller struct {
-	responses map[string]fakeResponse
-	notFound  bool
+	responses         map[string]fakeResponse
+	notFound          bool
+	lastReceivedETag  string // Track etag passed to Poll for test verification
+	returnNotModified bool   // If true, return notModified=true on next Poll call
 }
 
 type fakeResponse struct {
@@ -22,16 +24,25 @@ type fakeResponse struct {
 	err    string
 }
 
-func (f *fakePoller) Poll(owner, repo, ref string) (commit, etag string, err error) {
+func (f *fakePoller) Poll(owner, repo, ref, etag string) (commit, newETag string, notModified bool, err error) {
+	f.lastReceivedETag = etag // Track for test assertions
+
 	key := owner + "/" + repo
 	resp, ok := f.responses[key]
 	if !ok || f.notFound {
-		return "", "", ErrGHNotFound
+		return "", "", false, ErrGHNotFound
 	}
 	if resp.err != "" {
-		return "", "", &MockError{msg: resp.err}
+		return "", "", false, &MockError{msg: resp.err}
 	}
-	return resp.commit, resp.etag, nil
+
+	// Return notModified if configured
+	// On 304: return empty commit/etag with notModified=true; caller uses cached values
+	if f.returnNotModified {
+		return "", "", true, nil
+	}
+
+	return resp.commit, resp.etag, false, nil
 }
 
 type MockError struct {
@@ -1023,5 +1034,205 @@ origin:
 	pendingPath := filepath.Join(skillDir, ".update-pending")
 	if _, err := os.Stat(pendingPath); err == nil {
 		t.Fatalf(".update-pending directory should be removed after accept")
+	}
+}
+
+// TestCheckPassesCachedETag regression test for FLO-238:
+// Verify that the cached ETag is passed to Poll() so that If-None-Match header is sent.
+func TestCheckPassesCachedETag(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+
+	stateDB, err := state.Open(home)
+	if err != nil {
+		t.Fatalf("Open state: %v", err)
+	}
+	defer stateDB.Close()
+
+	// Pre-populate skill_polls with a cached ETag
+	if err := stateDB.UpsertSkillPoll("pdf", "abc1234", "w/\"cached-etag\""); err != nil {
+		t.Fatalf("UpsertSkillPoll: %v", err)
+	}
+
+	libraryPath := filepath.Join(home, "library")
+	skillDir := filepath.Join(libraryPath, "pdf")
+	if err := os.MkdirAll(skillDir, 0755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte("---\nname: pdf\n---\nBody\n"), 0644); err != nil {
+		t.Fatalf("write SKILL.md: %v", err)
+	}
+
+	metaContent := `version: 1
+origin:
+  type: github
+  url: https://github.com/user/pdf-skill
+  commit: abc1234
+`
+	if err := os.WriteFile(filepath.Join(skillDir, ".skill-meta.yaml"), []byte(metaContent), 0644); err != nil {
+		t.Fatalf("write meta: %v", err)
+	}
+
+	poller := &fakePoller{
+		responses: map[string]fakeResponse{
+			"user/pdf-skill": {
+				commit: "def5678",
+				etag:   "w/\"new-etag\"",
+			},
+		},
+	}
+
+	oldFetcher := fetcher
+	fetcher = &fakeFetcher{
+		files: map[string][]byte{
+			"user/pdf-skill:def5678:SKILL.md": []byte("---\nname: pdf\n---\nBody updated\n"),
+		},
+	}
+	defer func() { fetcher = oldFetcher }()
+
+	// Run check with --force to bypass the 24h lazy rule
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := runCheckWithPoller([]string{"--force"}, &stdout, &stderr, globalFlags{}, poller)
+	if code != 0 {
+		t.Fatalf("runCheck returned %d, want 0", code)
+	}
+
+	// Verify the fake poller received the cached ETag
+	if poller.lastReceivedETag != "w/\"cached-etag\"" {
+		t.Errorf("Poll() should receive cached ETag w/\"cached-etag\", got: %q", poller.lastReceivedETag)
+	}
+}
+
+// TestCheckHandlesNotModified regression test for FLO-238:
+// Verify that when Poll returns notModified=true, no staging occurs, no update is inserted,
+// but last_checked_at is still refreshed in skill_polls.
+func TestCheckHandlesNotModified(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+
+	stateDB, err := state.Open(home)
+	if err != nil {
+		t.Fatalf("Open state: %v", err)
+	}
+	defer stateDB.Close()
+
+	// Pre-populate skill_polls with cached commit and etag
+	const cachedCommit = "abc1234"
+	const cachedETag = "w/\"etag-abc\""
+	if err := stateDB.UpsertSkillPoll("pdf", cachedCommit, cachedETag); err != nil {
+		t.Fatalf("UpsertSkillPoll: %v", err)
+	}
+
+	libraryPath := filepath.Join(home, "library")
+	skillDir := filepath.Join(libraryPath, "pdf")
+	if err := os.MkdirAll(skillDir, 0755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte("---\nname: pdf\n---\nBody\n"), 0644); err != nil {
+		t.Fatalf("write SKILL.md: %v", err)
+	}
+
+	metaContent := `version: 1
+origin:
+  type: github
+  url: https://github.com/user/pdf-skill
+  commit: abc1234
+`
+	if err := os.WriteFile(filepath.Join(skillDir, ".skill-meta.yaml"), []byte(metaContent), 0644); err != nil {
+		t.Fatalf("write meta: %v", err)
+	}
+
+	// Configure fake poller to return notModified=true
+	// On 304, poller returns ("", "", true, nil) - check.go will use the cached commit it already has
+	// We need a response configured for the skill, but returnNotModified will override it
+	poller := &fakePoller{
+		returnNotModified: true,
+		responses: map[string]fakeResponse{
+			"user/pdf-skill": {
+				commit: "ignored",
+				etag:   "ignored",
+			},
+		},
+	}
+
+	oldFetcher := fetcher
+	fetcher = &fakeFetcher{} // Won't be called since we return notModified
+	defer func() { fetcher = oldFetcher }()
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := runCheckWithPoller([]string{"--force"}, &stdout, &stderr, globalFlags{}, poller)
+	if code != 0 {
+		t.Fatalf("runCheck returned %d, want 0", code)
+	}
+
+	// Verify output says "checked (no change)"
+	output := stdout.String()
+	if !strings.Contains(output, "checked") {
+		t.Fatalf("stdout should say 'checked', got: %s", output)
+	}
+
+	// Verify .update-pending was NOT created
+	pendingRoot := filepath.Join(skillDir, ".update-pending")
+	if _, err := os.Stat(pendingRoot); !os.IsNotExist(err) {
+		t.Fatalf("should NOT create .update-pending on 304 Not Modified")
+	}
+
+	// Verify updates table was NOT inserted
+	pending, err := stateDB.GetPendingUpdate("pdf")
+	if err != nil {
+		t.Fatalf("GetPendingUpdate: %v", err)
+	}
+	if pending != nil {
+		t.Fatalf("should not insert update on 304, got: %+v", pending)
+	}
+
+	// Verify skill_polls was still updated (last_checked_at refreshed, but cached values retained)
+	poll, err := stateDB.GetSkillPoll("pdf")
+	if err != nil {
+		t.Fatalf("GetSkillPoll: %v", err)
+	}
+	if poll == nil {
+		t.Fatalf("skill_polls should exist")
+	}
+	if poll.LastCommit != cachedCommit {
+		t.Errorf("skill_polls.last_commit should be %s, got %s", cachedCommit, poll.LastCommit)
+	}
+	if poll.ETag != cachedETag {
+		t.Errorf("skill_polls.etag should be %s, got %s", cachedETag, poll.ETag)
+	}
+}
+
+// TestGitHubContentsPath tests that githubContentsPath produces forward slashes
+// regardless of the host OS path separator (Windows vs Unix).
+func TestGitHubContentsPath(t *testing.T) {
+	tests := []struct {
+		name       string
+		originPath string
+		want       string
+	}{
+		{"empty path", "", "SKILL.md"},
+		{"single level", "skills", "skills/SKILL.md"},
+		{"nested", "skills/pdf", "skills/pdf/SKILL.md"},
+		{"trailing slash", "skills/pdf/", "skills/pdf/SKILL.md"},
+		{"leading slash", "/skills/pdf", "skills/pdf/SKILL.md"},
+		{"both slashes", "/skills/pdf/", "skills/pdf/SKILL.md"},
+		{"deep nesting", "a/b/c/d", "a/b/c/d/SKILL.md"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := githubContentsPath(tt.originPath)
+			if got != tt.want {
+				t.Errorf("githubContentsPath(%q) = %q, want %q", tt.originPath, got, tt.want)
+			}
+			// Verify result uses only forward slashes (for Windows compatibility)
+			if strings.Contains(got, string(filepath.Separator)) && filepath.Separator != '/' {
+				t.Errorf("githubContentsPath result should not contain %q: %q", string(filepath.Separator), got)
+			}
+		})
 	}
 }

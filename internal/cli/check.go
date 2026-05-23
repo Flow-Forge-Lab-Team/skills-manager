@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -147,6 +148,7 @@ func runCheckWithPoller(args []string, stdout io.Writer, stderr io.Writer, gf gl
 
 		// Get cached poll info (for ETag)
 		var cachedETag string
+		var cachedCommit string
 		poll, err := stateDB.GetSkillPoll(skillName)
 		if err != nil {
 			fmt.Fprintf(stderr, "read poll cache for %s: %v\n", skillName, err)
@@ -154,10 +156,11 @@ func runCheckWithPoller(args []string, stdout io.Writer, stderr io.Writer, gf gl
 		}
 		if poll != nil {
 			cachedETag = poll.ETag
+			cachedCommit = poll.LastCommit
 		}
 
-		// Poll GitHub
-		newCommit, etag, err := poller.Poll(owner, repo, "HEAD")
+		// Poll GitHub, passing cached ETag for If-None-Match header
+		newCommit, etag, notModified, err := poller.Poll(owner, repo, "HEAD", cachedETag)
 		if err != nil {
 			fmt.Fprintf(outWriter, "%s: error (poll failed)\n", skillName)
 			results = append(results, checkResult{
@@ -166,18 +169,32 @@ func runCheckWithPoller(args []string, stdout io.Writer, stderr io.Writer, gf gl
 				Error:  err.Error(),
 			})
 			// Still upsert to refresh last_checked_at on error
-			_ = stateDB.UpsertSkillPoll(skillName, meta.Origin.Commit, cachedETag)
+			_ = stateDB.UpsertSkillPoll(skillName, cachedCommit, cachedETag)
 			continue
 		}
 
-		// Upsert skill_polls with latest etag and timestamp
+		// Handle 304 Not Modified: keep cached commit and etag, just refresh last_checked_at
+		if notModified {
+			if err := stateDB.UpsertSkillPoll(skillName, cachedCommit, cachedETag); err != nil {
+				fmt.Fprintf(stderr, "upsert poll for %s: %v\n", skillName, err)
+				return ExitOpError
+			}
+			fmt.Fprintf(outWriter, "%s: checked (no change)\n", skillName)
+			results = append(results, checkResult{
+				Skill:  skillName,
+				Status: "checked",
+			})
+			continue
+		}
+
+		// Upsert skill_polls with latest commit and etag
 		if err := stateDB.UpsertSkillPoll(skillName, newCommit, etag); err != nil {
 			fmt.Fprintf(stderr, "upsert poll for %s: %v\n", skillName, err)
 			return ExitOpError
 		}
 
-		// If no new commit (304 or same SHA), skip staging
-		if newCommit == "" || newCommit == meta.Origin.Commit {
+		// If no new commit (same SHA), skip staging
+		if newCommit == meta.Origin.Commit {
 			fmt.Fprintf(outWriter, "%s: checked (no change)\n", skillName)
 			results = append(results, checkResult{
 				Skill:  skillName,
@@ -319,18 +336,12 @@ func stageUpdate(skillName string, libraryPath string, meta skillMeta, newCommit
 	}
 
 	// Build fetch path: prepend origin.path if non-empty
-	fetchPath := "SKILL.md"
-	if meta.Origin.Path != "" {
-		// Validate origin.path for safety
-		if !isSafeGitHubPath(meta.Origin.Path) {
-			return fmt.Errorf("unsafe origin.path: %s (contains invalid characters or directory traversal)", meta.Origin.Path)
-		}
-		// Trim slashes and join with SKILL.md
-		trimmedPath := strings.Trim(meta.Origin.Path, "/")
-		if trimmedPath != "" {
-			fetchPath = filepath.Join(trimmedPath, "SKILL.md")
-		}
+	// Validate origin.path for safety
+	if meta.Origin.Path != "" && !isSafeGitHubPath(meta.Origin.Path) {
+		return fmt.Errorf("unsafe origin.path: %s (contains invalid characters or directory traversal)", meta.Origin.Path)
 	}
+	// Use githubContentsPath to ensure forward slashes for GitHub API
+	fetchPath := githubContentsPath(meta.Origin.Path)
 
 	incomingContent, err := fetcher.FetchFile(owner, repo, newCommit, fetchPath)
 	if err != nil {
@@ -534,23 +545,37 @@ func rewriteOriginCommit(metaPath string, newCommit string) error {
 	return fmt.Errorf("origin section not found in .skill-meta.yaml")
 }
 
+// githubContentsPath constructs a GitHub API contents path using forward slashes
+// (required by GitHub API), regardless of the host OS path separator.
+func githubContentsPath(originPath string) string {
+	if originPath == "" {
+		return "SKILL.md"
+	}
+	// Use path.Join (not filepath.Join) to ensure / separators for GitHub API
+	trimmed := strings.Trim(originPath, "/")
+	if trimmed == "" {
+		return "SKILL.md"
+	}
+	return path.Join(trimmed, "SKILL.md")
+}
+
 // fetchFileFromGitHub fetches a single file from a GitHub repo at a given ref.
 // Uses argv-style invocation (no shell) to prevent command injection attacks.
-func fetchFileFromGitHub(owner, repo, ref, path string) ([]byte, error) {
+func fetchFileFromGitHub(owner, repo, ref, filePath string) ([]byte, error) {
 	var out strings.Builder
 	var errOut strings.Builder
 
 	// Call gh api with argv-style arguments (no shell to prevent injection)
 	// Use query string for ref to ensure GET (not POST with -f flag)
 	cmd := exec.Command("gh", "api",
-		"repos/"+owner+"/"+repo+"/contents/"+path+"?ref="+ref,
+		"repos/"+owner+"/"+repo+"/contents/"+filePath+"?ref="+ref,
 		"--jq", ".content",
 	)
 	cmd.Stdout = &out
 	cmd.Stderr = &errOut
 
 	if err := cmd.Run(); err != nil {
-		return nil, fmt.Errorf("fetch %s from %s:%s: %v (stderr: %s)", path, owner+"/"+repo, ref, err, errOut.String())
+		return nil, fmt.Errorf("fetch %s from %s:%s: %v (stderr: %s)", filePath, owner+"/"+repo, ref, err, errOut.String())
 	}
 
 	// Decode base64 content
