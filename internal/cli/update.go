@@ -599,13 +599,16 @@ func parseMetaText(text string) map[string][]string {
 			continue
 		}
 		if indent(line) == 0 {
-			key, _, ok := splitYAMLKey(line)
+			key, value, ok := splitYAMLKey(line)
 			if !ok {
 				section = ""
 				continue
 			}
 			if key == "compatibility" || key == "requirements" {
 				section = key
+				if value != "" {
+					out[section] = append(out[section], value)
+				}
 			} else {
 				section = ""
 			}

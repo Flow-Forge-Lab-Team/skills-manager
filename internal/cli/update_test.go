@@ -194,6 +194,33 @@ func TestUpdateAcceptAllSafeRefusesMalformedPendingUpdates(t *testing.T) {
 	}
 }
 
+func TestUpdateSafetyFlagsInlineMetadataChanges(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+	root := filepath.Join(home, "library", "notes", ".update-pending")
+	writeFile(t, filepath.Join(root, "from", "SKILL.md"), "---\nname: notes\ndescription: Take notes\n---\nBody\n")
+	writeFile(t, filepath.Join(root, "to", "SKILL.md"), "---\nname: notes\ndescription: Take notes\n---\nBody\n")
+	writeFile(t, filepath.Join(root, "from", ".skill-meta.yaml"), `version: 1
+compatibility: {mode: portable}
+requirements: {tools: ["git"]}
+`)
+	writeFile(t, filepath.Join(root, "to", ".skill-meta.yaml"), `version: 1
+compatibility: {mode: compatible, harnesses: ["claude", "codex"]}
+requirements: {tools: ["git", "gh"]}
+`)
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := Run([]string{"update", "--safety", "notes"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("Run returned %d, want 0\nstderr:\n%s", code, stderr.String())
+	}
+	out := stdout.String()
+	if !strings.Contains(out, "compatibility-changed") || !strings.Contains(out, "requirements-changed") {
+		t.Fatalf("stdout missing inline metadata flags:\n%s", out)
+	}
+}
+
 func TestUpdateAcceptAllSafeRefusesIncomingSnapshotsWithoutSkillMD(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("SKILLS_MANAGER_HOME", home)
