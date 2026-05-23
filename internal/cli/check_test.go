@@ -2250,3 +2250,74 @@ func (f *treeErrorOnOldCommitFetcher) FetchTree(owner, repo, ref, subPath string
 	}
 	return []TreeEntry{}, nil
 }
+
+// TestCheckPollFailureDoesNotSuppressRetry regression test for codex pass-13:
+// when Poll returns an error (gh missing, auth expired, network down, etc.),
+// skill_polls.last_checked_at must NOT be updated, so the next `check` will
+// retry instead of getting suppressed by the 24h lazy-skip gate.
+func TestCheckPollFailureDoesNotSuppressRetry(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+
+	stateDB, err := state.Open(home)
+	if err != nil {
+		t.Fatalf("Open state: %v", err)
+	}
+	defer stateDB.Close()
+
+	libraryPath := filepath.Join(home, "library")
+	skillDir := filepath.Join(libraryPath, "pdf")
+	if err := os.MkdirAll(skillDir, 0755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte("---\nname: pdf\n---\nBody\n"), 0644); err != nil {
+		t.Fatalf("write SKILL.md: %v", err)
+	}
+	metaContent := `version: 1
+origin:
+  type: github
+  url: https://github.com/user/pdf-skill
+  commit: abc1234
+`
+	if err := os.WriteFile(filepath.Join(skillDir, ".skill-meta.yaml"), []byte(metaContent), 0644); err != nil {
+		t.Fatalf("write meta: %v", err)
+	}
+
+	// First check: poll fails (network down, gh missing, etc.)
+	poller := &fakePoller{
+		responses: map[string]fakeResponse{
+			"user/pdf-skill": {err: "network unreachable"},
+		},
+	}
+
+	var stdout, stderr bytes.Buffer
+	if code := runCheckWithPoller(nil, &stdout, &stderr, globalFlags{}, poller); code != 0 {
+		t.Fatalf("runCheck returned %d, want 0\nstderr: %s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "error") {
+		t.Fatalf("expected error in output, got: %s", stdout.String())
+	}
+
+	// Verify skill_polls row was NOT created — leaving last_checked_at unset
+	// means the next check won't be suppressed by the 24h lazy gate.
+	poll, err := stateDB.GetSkillPoll("pdf")
+	if err != nil {
+		t.Fatalf("GetSkillPoll: %v", err)
+	}
+	if poll != nil && poll.LastCheckedAt != "" {
+		t.Fatalf("skill_polls.last_checked_at must remain unset after poll failure, got %q", poll.LastCheckedAt)
+	}
+
+	// Second check: a normal rerun (no --force). Must retry, not skip.
+	stdout.Reset()
+	stderr.Reset()
+	if code := runCheckWithPoller(nil, &stdout, &stderr, globalFlags{}, poller); code != 0 {
+		t.Fatalf("second runCheck returned %d, want 0", code)
+	}
+	if strings.Contains(stdout.String(), "skipped") {
+		t.Fatalf("second check must retry, not skip via 24h gate; got: %s", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "error") {
+		t.Fatalf("second check should re-attempt and re-report the error, got: %s", stdout.String())
+	}
+}

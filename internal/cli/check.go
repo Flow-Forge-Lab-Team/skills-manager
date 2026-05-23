@@ -162,7 +162,6 @@ func runCheckWithPoller(args []string, stdout io.Writer, stderr io.Writer, gf gl
 
 		// Get cached poll info (for ETag)
 		var cachedETag string
-		var cachedCommit string
 		poll, err := stateDB.GetSkillPoll(skillName)
 		if err != nil {
 			fmt.Fprintf(stderr, "read poll cache for %s: %v\n", skillName, err)
@@ -170,7 +169,6 @@ func runCheckWithPoller(args []string, stdout io.Writer, stderr io.Writer, gf gl
 		}
 		if poll != nil {
 			cachedETag = poll.ETag
-			cachedCommit = poll.LastCommit
 		}
 
 		// Poll GitHub, passing cached ETag for If-None-Match header
@@ -182,8 +180,8 @@ func runCheckWithPoller(args []string, stdout io.Writer, stderr io.Writer, gf gl
 				Status: "error",
 				Error:  err.Error(),
 			})
-			// Still upsert to refresh last_checked_at on error
-			_ = stateDB.UpsertSkillPoll(skillName, cachedCommit, cachedETag)
+			// Don't touch skill_polls on failure — leaving last_checked_at stale lets
+			// the next `check` retry instead of suppressing it via the 24h lazy gate.
 			continue
 		}
 
