@@ -175,6 +175,9 @@ func applyPendingUpdate(pending pendingUpdatePaths) error {
 		if err := copyFile(pending.To, filepath.Join(skillDir, "SKILL.md"), toInfo.Mode()); err != nil {
 			return err
 		}
+		if err := refreshSkillMeta(skillDir); err != nil {
+			return err
+		}
 		return os.RemoveAll(pending.Root)
 	}
 	if !pathExists(filepath.Join(pending.To, "SKILL.md")) {
@@ -206,7 +209,24 @@ func applyPendingUpdate(pending pendingUpdatePaths) error {
 	if err := copyDir(tmp, skillDir); err != nil {
 		return err
 	}
+	if err := refreshSkillMeta(skillDir); err != nil {
+		return err
+	}
 	return os.RemoveAll(pending.Root)
+}
+
+func refreshSkillMeta(skillDir string) error {
+	metaPath := filepath.Join(skillDir, ".skill-meta.yaml")
+	meta, _ := readSkillMeta(metaPath)
+	if meta.Version == 0 {
+		meta.Version = 1
+	}
+	sha, size, err := fingerprintSkillMd(filepath.Join(skillDir, "SKILL.md"))
+	if err != nil {
+		return err
+	}
+	meta.Fingerprint = skillFingerprint{SHA256: sha, Size: size}
+	return writeSkillMeta(metaPath, meta)
 }
 
 func printSafetyReport(report safetyReport, stdout io.Writer) {

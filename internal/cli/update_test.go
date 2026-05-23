@@ -116,7 +116,13 @@ func TestUpdateAcceptAllSafeAppliesSafeUpdates(t *testing.T) {
 		t.Fatalf("Run returned %d, want 0\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
 	}
 	assertFileContent(t, filepath.Join(skillDir, "SKILL.md"), "---\nname: notes\ndescription: Take notes\n---\nNew body\n")
-	assertFileContent(t, filepath.Join(skillDir, ".skill-meta.yaml"), "version: 1\norigin:\n  type: github\n")
+	meta, err := os.ReadFile(filepath.Join(skillDir, ".skill-meta.yaml"))
+	if err != nil {
+		t.Fatalf("expected refreshed metadata: %v", err)
+	}
+	if !strings.Contains(string(meta), "type: github") || !strings.Contains(string(meta), "fingerprint:") {
+		t.Fatalf("metadata should preserve origin and refresh fingerprint:\n%s", string(meta))
+	}
 	assertFileContent(t, filepath.Join(skillDir, "references", "example.md"), "example\n")
 	if _, err := os.Stat(filepath.Join(skillDir, "stale.md")); !os.IsNotExist(err) {
 		t.Fatalf("expected stale file removed, got err %v", err)
@@ -236,6 +242,13 @@ func TestUpdateAcceptAllSafeAppliesFileSnapshots(t *testing.T) {
 	}
 	assertFileContent(t, filepath.Join(skillDir, "SKILL.md"), "---\nname: notes\ndescription: Take notes\n---\nNew body\n")
 	assertFileContent(t, filepath.Join(skillDir, "references", "keep.md"), "keep\n")
+	meta, err := os.ReadFile(filepath.Join(skillDir, ".skill-meta.yaml"))
+	if err != nil {
+		t.Fatalf("expected refreshed metadata: %v", err)
+	}
+	if !strings.Contains(string(meta), "fingerprint:") {
+		t.Fatalf("metadata missing refreshed fingerprint:\n%s", string(meta))
+	}
 	if _, err := os.Stat(root); !os.IsNotExist(err) {
 		t.Fatalf("expected pending update removed, got err %v", err)
 	}
