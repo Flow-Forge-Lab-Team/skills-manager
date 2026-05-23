@@ -359,7 +359,10 @@ func readSkillMeta(path string) (skillMeta, error) {
 				}
 			}
 		case "tools":
-			if section == "requirements" {
+			if section == "requirements" || section == "requirements:model" {
+				if section == "requirements:model" {
+					section = "requirements" // Reset to parent section
+				}
 				if strings.HasPrefix(value, "[") && strings.HasSuffix(value, "]") {
 					meta.Requirements.Tools = toolRequirementsFromNames(parseInlineList(value))
 				} else {
@@ -369,7 +372,10 @@ func readSkillMeta(path string) (skillMeta, error) {
 				}
 			}
 		case "mcp_servers":
-			if section == "requirements" {
+			if section == "requirements" || section == "requirements:model" {
+				if section == "requirements:model" {
+					section = "requirements" // Reset to parent section
+				}
 				if strings.HasPrefix(value, "[") && strings.HasSuffix(value, "]") {
 					meta.Requirements.MCPServers = mcpRequirementsFromNames(parseInlineList(value))
 				} else {

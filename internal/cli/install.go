@@ -422,26 +422,40 @@ func runInstall(args []string, realStdout io.Writer, stderr io.Writer, syncMode 
 		}
 
 		missing := missingRequiredTools(candidate.Skill.Requirements)
+		missingMCP := missingRequiredMCPServers(candidate.Skill.Requirements)
+		missingModel := missingModelCapabilities(candidate.Skill.Requirements)
 		candidate.Missing = missing
-		if len(missing) > 0 && !opts.allowMissingRequirements {
+
+		allMissing := append(append(missing, missingMCP...), missingModel...)
+		if len(allMissing) > 0 && !opts.allowMissingRequirements {
 			blocked++
-			fmt.Fprintf(stdout, "- %s: blocked, missing required tools: %s\n", candidate.Skill.Name, strings.Join(missing, ", "))
+			var parts []string
+			if len(missing) > 0 {
+				parts = append(parts, "tools="+strings.Join(missing, ","))
+			}
+			if len(missingMCP) > 0 {
+				parts = append(parts, "mcp_servers="+strings.Join(missingMCP, ","))
+			}
+			if len(missingModel) > 0 {
+				parts = append(parts, "model="+strings.Join(missingModel, ","))
+			}
+			fmt.Fprintf(stdout, "- %s: blocked, missing required: %s\n", candidate.Skill.Name, strings.Join(parts, ", "))
 			skippedCandidates[candidate.Skill.Name] = true
 			blockedSkills = append(blockedSkills, candidate.Skill.Name)
 			continue
 		}
-		if len(missing) > 0 {
-			fmt.Fprintf(stdout, "- %s: warning, installing despite missing required tools: %s\n", candidate.Skill.Name, strings.Join(missing, ", "))
-		}
-
-		missingMCP := missingRequiredMCPServers(candidate.Skill.Requirements)
-		if len(missingMCP) > 0 {
-			fmt.Fprintf(stdout, "- %s: warning, missing required MCP servers: %s\n", candidate.Skill.Name, strings.Join(missingMCP, ", "))
-		}
-
-		missingModel := missingModelCapabilities(candidate.Skill.Requirements)
-		if len(missingModel) > 0 {
-			fmt.Fprintf(stdout, "- %s: warning, missing required model capabilities: %s\n", candidate.Skill.Name, strings.Join(missingModel, ", "))
+		if len(allMissing) > 0 {
+			var parts []string
+			if len(missing) > 0 {
+				parts = append(parts, "tools="+strings.Join(missing, ","))
+			}
+			if len(missingMCP) > 0 {
+				parts = append(parts, "mcp_servers="+strings.Join(missingMCP, ","))
+			}
+			if len(missingModel) > 0 {
+				parts = append(parts, "model="+strings.Join(missingModel, ","))
+			}
+			fmt.Fprintf(stdout, "- %s: warning, installing despite missing required: %s\n", candidate.Skill.Name, strings.Join(parts, ", "))
 		}
 
 		fmt.Fprintf(stdout, "- %s: %s; harnesses: %s\n", candidate.Skill.Name, candidate.Reason, strings.Join(candidate.Harnesses, ", "))
@@ -1389,7 +1403,8 @@ func readCatalog(path string) (catalog, error) {
 				current.Compatibility.Harnesses = items
 			}
 		case "tools":
-			if section == "requirements" {
+			if section == "requirements" || section == "requirements:model" {
+				section = "requirements"
 				if strings.HasPrefix(value, "[") && strings.HasSuffix(value, "]") {
 					current.Requirements.Tools = toolRequirementsFromNames(parseInlineList(value))
 				} else {
@@ -1399,7 +1414,8 @@ func readCatalog(path string) (catalog, error) {
 				}
 			}
 		case "mcp_servers":
-			if section == "requirements" {
+			if section == "requirements" || section == "requirements:model" {
+				section = "requirements"
 				if strings.HasPrefix(value, "[") && strings.HasSuffix(value, "]") {
 					current.Requirements.MCPServers = mcpRequirementsFromNames(parseInlineList(value))
 				} else {
@@ -1813,8 +1829,14 @@ func missingRequiredMCPServers(req requirements) []string {
 		if !server.Required {
 			continue
 		}
-		// TODO: Implement actual MCP server presence check.
-		// For now, we stub this as best-effort and always emit warnings.
+		// Stub MCP server presence check:
+		// - Env var SKILLS_MANAGER_MCP_<NAME_UPPERCASE>=available opts in (for testing/dev)
+		// - Config file ~/.skills-manager/mcp/<name>.yaml presence check (future)
+		// - Default: missing (blocks install unless --allow-missing-requirements)
+		envVar := "SKILLS_MANAGER_MCP_" + strings.ToUpper(strings.ReplaceAll(server.Name, "-", "_"))
+		if os.Getenv(envVar) == "available" {
+			continue
+		}
 		missing = append(missing, server.Name)
 	}
 	sort.Strings(missing)
@@ -1824,9 +1846,12 @@ func missingRequiredMCPServers(req requirements) []string {
 func missingModelCapabilities(req requirements) []string {
 	var missing []string
 	if req.Model.ToolUse == "required" {
-		// TODO: Check if current model supports tool use.
-		// For now, stub as best-effort.
-		missing = append(missing, "tool_use")
+		// Stub model capability check:
+		// - Env var SKILLS_MANAGER_MODEL_TOOL_USE=available opts in (for testing/dev)
+		// - Default: missing (blocks install unless --allow-missing-requirements)
+		if os.Getenv("SKILLS_MANAGER_MODEL_TOOL_USE") != "available" {
+			missing = append(missing, "tool_use")
+		}
 	}
 	return missing
 }

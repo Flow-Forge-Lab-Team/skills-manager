@@ -2077,6 +2077,108 @@ func TestReadCatalog_RoundTripsMCPAndModel(t *testing.T) {
 	}
 }
 
+func TestReadCatalog_ModelBeforeTools(t *testing.T) {
+	home := t.TempDir()
+	libraryPath := filepath.Join(home, "library")
+	if err := os.MkdirAll(libraryPath, 0755); err != nil {
+		t.Fatalf("mkdir failed: %v", err)
+	}
+
+	// Write catalog with model listed BEFORE tools and mcp_servers
+	catalogContent := `version: 1
+skills:
+  - name: test-skill
+    categories: [Engineering]
+    compatibility:
+      mode: portable
+    requirements:
+      model:
+        tool_use: required
+      tools:
+        - name: gh
+          required: true
+      mcp_servers:
+        - name: linear
+          required: true
+`
+	catalogPath := filepath.Join(libraryPath, "catalog.yaml")
+	if err := os.WriteFile(catalogPath, []byte(catalogContent), 0644); err != nil {
+		t.Fatalf("write catalog failed: %v", err)
+	}
+
+	parsed, err := readCatalog(catalogPath)
+	if err != nil {
+		t.Fatalf("read catalog failed: %v", err)
+	}
+	if len(parsed.Skills) != 1 {
+		t.Fatalf("got %d skills, want 1", len(parsed.Skills))
+	}
+
+	skill := parsed.Skills[0]
+	if len(skill.Requirements.Tools) != 1 {
+		t.Errorf("tools count = %d, want 1", len(skill.Requirements.Tools))
+	}
+	if skill.Requirements.Tools[0].Name != "gh" {
+		t.Errorf("tool name = %q, want %q", skill.Requirements.Tools[0].Name, "gh")
+	}
+	if len(skill.Requirements.MCPServers) != 1 {
+		t.Errorf("mcp_servers count = %d, want 1", len(skill.Requirements.MCPServers))
+	}
+	if skill.Requirements.MCPServers[0].Name != "linear" {
+		t.Errorf("mcp server name = %q, want %q", skill.Requirements.MCPServers[0].Name, "linear")
+	}
+	if skill.Requirements.Model.ToolUse != "required" {
+		t.Errorf("model.tool_use = %q, want %q", skill.Requirements.Model.ToolUse, "required")
+	}
+}
+
+func TestReadSkillMeta_ModelBeforeTools(t *testing.T) {
+	home := t.TempDir()
+	libraryPath := filepath.Join(home, "library")
+	skillDir := filepath.Join(libraryPath, "test-skill")
+	if err := os.MkdirAll(skillDir, 0755); err != nil {
+		t.Fatalf("mkdir failed: %v", err)
+	}
+
+	// Write skill meta with model listed BEFORE tools and mcp_servers
+	metaContent := `version: 1
+requirements:
+  model:
+    tool_use: required
+  tools:
+    - name: gh
+      required: true
+  mcp_servers:
+    - name: linear
+      required: true
+`
+	metaPath := filepath.Join(skillDir, ".skill-meta.yaml")
+	if err := os.WriteFile(metaPath, []byte(metaContent), 0644); err != nil {
+		t.Fatalf("write .skill-meta.yaml failed: %v", err)
+	}
+
+	parsed, err := readSkillMeta(metaPath)
+	if err != nil {
+		t.Fatalf("read skill meta failed: %v", err)
+	}
+
+	if len(parsed.Requirements.Tools) != 1 {
+		t.Errorf("tools count = %d, want 1", len(parsed.Requirements.Tools))
+	}
+	if parsed.Requirements.Tools[0].Name != "gh" {
+		t.Errorf("tool name = %q, want %q", parsed.Requirements.Tools[0].Name, "gh")
+	}
+	if len(parsed.Requirements.MCPServers) != 1 {
+		t.Errorf("mcp_servers count = %d, want 1", len(parsed.Requirements.MCPServers))
+	}
+	if parsed.Requirements.MCPServers[0].Name != "linear" {
+		t.Errorf("mcp server name = %q, want %q", parsed.Requirements.MCPServers[0].Name, "linear")
+	}
+	if parsed.Requirements.Model.ToolUse != "required" {
+		t.Errorf("model.tool_use = %q, want %q", parsed.Requirements.Model.ToolUse, "required")
+	}
+}
+
 func TestRebuildCatalog_PreservesExplicitMCPOnlyRequirements(t *testing.T) {
 	home := t.TempDir()
 	libraryPath := filepath.Join(home, "library")

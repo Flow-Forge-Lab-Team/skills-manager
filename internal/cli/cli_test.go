@@ -536,11 +536,147 @@ skills:
 	if code != 0 {
 		t.Fatalf("Run returned %d, want 0\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
 	}
-	if !strings.Contains(stdout.String(), "warning, installing despite missing required tools") {
+	if !strings.Contains(stdout.String(), "warning, installing despite missing required") {
 		t.Fatalf("stdout = %q, want missing requirement override warning", stdout.String())
 	}
 	if _, err := os.Stat(filepath.Join(project, ".codex", "skills", "deploy", "SKILL.md")); err != nil {
 		t.Fatalf("expected override to install copy: %v", err)
+	}
+}
+
+func TestInstallBlocksOnMissingRequiredMCPServer(t *testing.T) {
+	home := t.TempDir()
+	project := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+
+	writeFile(t, filepath.Join(project, ".skills", "project.yaml"), `version: 1
+name: demo
+categories: [Engineering]
+harnesses: [codex]
+`)
+	writeFile(t, filepath.Join(home, "library", "catalog.yaml"), `version: 1
+skills:
+  - name: linear-skill
+    categories: [Engineering]
+    compatibility:
+      mode: portable
+    requirements:
+      mcp_servers:
+        - name: linear
+          required: true
+`)
+	writeFile(t, filepath.Join(home, "library", "linear-skill", "SKILL.md"), "linear skill\n")
+
+	// Without env var, should block
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := Run([]string{"install", "--project", project}, &stdout, &stderr)
+	if code != 3 {
+		t.Fatalf("Run returned %d, want 3\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "blocked") || !strings.Contains(stdout.String(), "mcp_servers=linear") {
+		t.Fatalf("stdout = %q, want 'blocked' and 'mcp_servers=linear'", stdout.String())
+	}
+	if _, err := os.Stat(filepath.Join(project, ".codex", "skills", "linear-skill")); !os.IsNotExist(err) {
+		t.Fatalf("expected missing MCP requirement to block copy, got err %v", err)
+	}
+
+	// With env var set, should install
+	t.Setenv("SKILLS_MANAGER_MCP_LINEAR", "available")
+	stdout.Reset()
+	stderr.Reset()
+	code = Run([]string{"install", "--project", project}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("Run returned %d, want 0\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+	}
+	if _, err := os.Stat(filepath.Join(project, ".codex", "skills", "linear-skill", "SKILL.md")); err != nil {
+		t.Fatalf("expected env var to allow install: %v", err)
+	}
+}
+
+func TestInstallBlocksOnMissingRequiredModelCapability(t *testing.T) {
+	home := t.TempDir()
+	project := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+
+	writeFile(t, filepath.Join(project, ".skills", "project.yaml"), `version: 1
+name: demo
+categories: [Engineering]
+harnesses: [codex]
+`)
+	writeFile(t, filepath.Join(home, "library", "catalog.yaml"), `version: 1
+skills:
+  - name: agent-skill
+    categories: [Engineering]
+    compatibility:
+      mode: portable
+    requirements:
+      model:
+        tool_use: required
+`)
+	writeFile(t, filepath.Join(home, "library", "agent-skill", "SKILL.md"), "agent skill\n")
+
+	// Without env var, should block
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := Run([]string{"install", "--project", project}, &stdout, &stderr)
+	if code != 3 {
+		t.Fatalf("Run returned %d, want 3\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "blocked") || !strings.Contains(stdout.String(), "model=tool_use") {
+		t.Fatalf("stdout = %q, want 'blocked' and 'model=tool_use'", stdout.String())
+	}
+	if _, err := os.Stat(filepath.Join(project, ".codex", "skills", "agent-skill")); !os.IsNotExist(err) {
+		t.Fatalf("expected missing model requirement to block copy, got err %v", err)
+	}
+
+	// With env var set, should install
+	t.Setenv("SKILLS_MANAGER_MODEL_TOOL_USE", "available")
+	stdout.Reset()
+	stderr.Reset()
+	code = Run([]string{"install", "--project", project}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("Run returned %d, want 0\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+	}
+	if _, err := os.Stat(filepath.Join(project, ".codex", "skills", "agent-skill", "SKILL.md")); err != nil {
+		t.Fatalf("expected env var to allow install: %v", err)
+	}
+}
+
+func TestInstallAllowMissingRequirementsBypassesMCP(t *testing.T) {
+	home := t.TempDir()
+	project := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+
+	writeFile(t, filepath.Join(project, ".skills", "project.yaml"), `version: 1
+name: demo
+categories: [Engineering]
+harnesses: [codex]
+`)
+	writeFile(t, filepath.Join(home, "library", "catalog.yaml"), `version: 1
+skills:
+  - name: linear-skill
+    categories: [Engineering]
+    compatibility:
+      mode: portable
+    requirements:
+      mcp_servers:
+        - name: linear
+          required: true
+`)
+	writeFile(t, filepath.Join(home, "library", "linear-skill", "SKILL.md"), "linear skill\n")
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := Run([]string{"install", "--project", project, "--allow-missing-requirements"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("Run returned %d, want 0\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "warning") || !strings.Contains(stdout.String(), "mcp_servers=linear") {
+		t.Fatalf("stdout = %q, want 'warning' and 'mcp_servers=linear'", stdout.String())
+	}
+	if _, err := os.Stat(filepath.Join(project, ".codex", "skills", "linear-skill", "SKILL.md")); err != nil {
+		t.Fatalf("expected --allow-missing-requirements to bypass MCP block: %v", err)
 	}
 }
 
@@ -1673,7 +1809,7 @@ skills:
 	if code != 3 {
 		t.Fatalf("Run returned %d, want 3 (blocked)\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
 	}
-	if !strings.Contains(stdout.String(), "blocked, missing required tools: definitely-missing-tool-xyz") {
+	if !strings.Contains(stdout.String(), "blocked, missing required: tools=definitely-missing-tool-xyz") {
 		t.Fatalf("expected blocked message; stdout:\n%s", stdout.String())
 	}
 	if _, err := os.Stat(filepath.Join(project, ".claude", "skills", "tool-needer")); !os.IsNotExist(err) {
