@@ -649,6 +649,248 @@ skills:
 	}
 }
 
+func TestInstallWritesLockFile(t *testing.T) {
+	home := t.TempDir()
+	project := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+
+	writeFile(t, filepath.Join(project, ".skills", "project.yaml"), `version: 1
+name: demo
+categories: [Engineering]
+harnesses: [claude, codex]
+`)
+	writeFile(t, filepath.Join(home, "library", "catalog.yaml"), `version: 1
+skills:
+  - name: alpha
+    categories: [Engineering]
+    compatibility:
+      mode: portable
+    requirements:
+      tools: []
+  - name: beta
+    categories: [Engineering]
+    compatibility:
+      mode: portable
+    requirements:
+      tools: []
+`)
+	writeFile(t, filepath.Join(home, "library", "alpha", "SKILL.md"), "alpha\n")
+	writeFile(t, filepath.Join(home, "library", "beta", "SKILL.md"), "beta\n")
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := Run([]string{"install", "--project", project}, &stdout, &stderr)
+
+	if code != 0 {
+		t.Fatalf("Run returned %d, want 0\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+	}
+
+	lockPath := filepath.Join(project, ".skills", "installed.lock")
+	data, err := os.ReadFile(lockPath)
+	if err != nil {
+		t.Fatalf("read lock: %v", err)
+	}
+
+	lockContent := string(data)
+	if !strings.Contains(lockContent, "version: 1") {
+		t.Fatalf("lock missing version: %s", lockContent)
+	}
+	if !strings.Contains(lockContent, "- name: alpha") {
+		t.Fatalf("lock missing alpha skill: %s", lockContent)
+	}
+	if !strings.Contains(lockContent, "- name: beta") {
+		t.Fatalf("lock missing beta skill: %s", lockContent)
+	}
+	if !strings.Contains(lockContent, "fingerprint:") {
+		t.Fatalf("lock missing fingerprint field: %s", lockContent)
+	}
+	if !strings.Contains(lockContent, "harnesses:") {
+		t.Fatalf("lock missing harnesses field: %s", lockContent)
+	}
+	if !strings.Contains(lockContent, "installed_at:") {
+		t.Fatalf("lock missing installed_at field: %s", lockContent)
+	}
+}
+
+func TestInstallReproducesFromLock(t *testing.T) {
+	home := t.TempDir()
+	project := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+
+	// Create project that would NOT match review skill via categories
+	writeFile(t, filepath.Join(project, ".skills", "project.yaml"), `version: 1
+name: demo
+categories: [Security]
+harnesses: [claude]
+`)
+	writeFile(t, filepath.Join(home, "library", "catalog.yaml"), `version: 1
+skills:
+  - name: review
+    categories: [Engineering]
+    compatibility:
+      mode: portable
+    requirements:
+      tools: []
+`)
+	writeFile(t, filepath.Join(home, "library", "review", "SKILL.md"), "review\n")
+
+	// Pre-write a lock file that includes the review skill
+	lockContent := `version: 1
+generated_at: "2026-01-01T00:00:00Z"
+generated_by: "skills-manager 0.1.0-dev"
+skills:
+  - name: review
+    version: ~
+    commit: ~
+    fingerprint: "abc123"
+    installed_at: "2026-01-01T00:00:00Z"
+    harnesses:
+      - claude
+`
+	writeFile(t, filepath.Join(project, ".skills", "installed.lock"), lockContent)
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := Run([]string{"install", "--project", project}, &stdout, &stderr)
+
+	if code != 0 {
+		t.Fatalf("Run returned %d, want 0\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+	}
+
+	// Should have installed review despite category mismatch (due to lock)
+	if _, err := os.Stat(filepath.Join(project, ".claude", "skills", "review", "SKILL.md")); err != nil {
+		t.Fatalf("expected locked skill review to be installed: %v", err)
+	}
+	if !strings.Contains(stdout.String(), "review: locked skill") {
+		t.Fatalf("stdout = %q, want locked skill reason", stdout.String())
+	}
+}
+
+func TestInstallFailsOnMissingLockedSkill(t *testing.T) {
+	home := t.TempDir()
+	project := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+
+	writeFile(t, filepath.Join(project, ".skills", "project.yaml"), `version: 1
+name: demo
+categories: [Engineering]
+harnesses: [claude]
+`)
+	writeFile(t, filepath.Join(home, "library", "catalog.yaml"), `version: 1
+skills:
+  - name: available
+    categories: [Engineering]
+    compatibility:
+      mode: portable
+    requirements:
+      tools: []
+`)
+	writeFile(t, filepath.Join(home, "library", "available", "SKILL.md"), "available\n")
+
+	// Pre-write a lock file that references a missing skill
+	lockContent := `version: 1
+generated_at: "2026-01-01T00:00:00Z"
+generated_by: "skills-manager 0.1.0-dev"
+skills:
+  - name: missing-skill
+    version: ~
+    commit: ~
+    fingerprint: "abc123"
+    installed_at: "2026-01-01T00:00:00Z"
+    harnesses:
+      - claude
+`
+	writeFile(t, filepath.Join(project, ".skills", "installed.lock"), lockContent)
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := Run([]string{"install", "--project", project}, &stdout, &stderr)
+
+	if code != 3 {
+		t.Fatalf("Run returned %d, want 3\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "missing from the library") {
+		t.Fatalf("stderr = %q, want missing skill message", stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "sync-library") {
+		t.Fatalf("stderr = %q, want sync-library suggestion", stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "skip-missing-locked") {
+		t.Fatalf("stderr = %q, want skip-missing-locked suggestion", stderr.String())
+	}
+	if _, err := os.Stat(filepath.Join(project, ".claude", "skills", "available")); !os.IsNotExist(err) {
+		t.Fatalf("expected no skills installed on missing locked skill error")
+	}
+}
+
+func TestInstallSkipMissingLockedExits4(t *testing.T) {
+	home := t.TempDir()
+	project := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+
+	writeFile(t, filepath.Join(project, ".skills", "project.yaml"), `version: 1
+name: demo
+categories: [Engineering]
+harnesses: [claude]
+`)
+	writeFile(t, filepath.Join(home, "library", "catalog.yaml"), `version: 1
+skills:
+  - name: available
+    categories: [Engineering]
+    compatibility:
+      mode: portable
+    requirements:
+      tools: []
+`)
+	writeFile(t, filepath.Join(home, "library", "available", "SKILL.md"), "available\n")
+
+	// Pre-write a lock file that references a missing skill
+	lockContent := `version: 1
+generated_at: "2026-01-01T00:00:00Z"
+generated_by: "skills-manager 0.1.0-dev"
+skills:
+  - name: missing-skill
+    version: ~
+    commit: ~
+    fingerprint: "abc123"
+    installed_at: "2026-01-01T00:00:00Z"
+    harnesses:
+      - claude
+  - name: available
+    version: ~
+    commit: ~
+    fingerprint: "def456"
+    installed_at: "2026-01-01T00:00:00Z"
+    harnesses:
+      - claude
+`
+	writeFile(t, filepath.Join(project, ".skills", "installed.lock"), lockContent)
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := Run([]string{"install", "--project", project, "--skip-missing-locked"}, &stdout, &stderr)
+
+	if code != 4 {
+		t.Fatalf("Run returned %d, want 4 (partial)\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+	}
+
+	// available skill should be installed
+	if _, err := os.Stat(filepath.Join(project, ".claude", "skills", "available", "SKILL.md")); err != nil {
+		t.Fatalf("expected available skill to be installed: %v", err)
+	}
+
+	// lock file should still contain the missing skill entry
+	lockPath := filepath.Join(project, ".skills", "installed.lock")
+	data, err := os.ReadFile(lockPath)
+	if err != nil {
+		t.Fatalf("read lock: %v", err)
+	}
+	lockContent = string(data)
+	if !strings.Contains(lockContent, "missing-skill") {
+		t.Fatalf("missing-skill should remain in lock even when skipped: %s", lockContent)
+	}
+}
+
 func writeFile(t *testing.T, path string, content string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
