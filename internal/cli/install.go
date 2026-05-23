@@ -382,6 +382,10 @@ func runInstall(args []string, stdout io.Writer, stderr io.Writer, syncMode bool
 			if err != nil {
 				if errors.Is(err, errUnmanagedTarget) || errors.Is(err, errLocallyEditedTarget) {
 					preserved[relTarget] = true
+					// Drop from managed so the lock writer doesn't record
+					// the library fingerprint for a preserved local-edited copy.
+					delete(managed, relTarget)
+					delete(files, relTarget)
 					fmt.Fprintf(stdout, "  preserve %s (%v)\n", relTarget, err)
 					continue
 				}
@@ -440,8 +444,13 @@ func runInstall(args []string, stdout io.Writer, stderr io.Writer, syncMode bool
 				fmt.Fprintf(stderr, "write lock: %v\n", err)
 				return 3
 			}
-			// Lock was written successfully; add to managed paths
 			managed[".skills/installed.lock"] = true
+			lockFP, err := fingerprintDir(lockPath)
+			if err != nil {
+				fmt.Fprintf(stderr, "fingerprint lock: %v\n", err)
+				return 3
+			}
+			files[".skills/installed.lock"] = lockFP
 		}
 
 		// Save manifest with the lock file (if any) now recorded as managed

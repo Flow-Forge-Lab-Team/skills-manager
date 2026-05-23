@@ -1369,6 +1369,107 @@ skills:
 	}
 }
 
+func TestLockOmitsLibraryFingerprintForLocallyEditedManagedCopy(t *testing.T) {
+	home := t.TempDir()
+	project := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+
+	writeFile(t, filepath.Join(project, ".skills", "project.yaml"), `version: 1
+name: demo
+categories: [Engineering]
+harnesses: [claude]
+`)
+	writeFile(t, filepath.Join(home, "library", "catalog.yaml"), `version: 1
+skills:
+  - name: review
+    categories: [Engineering]
+    compatibility:
+      mode: portable
+    requirements:
+      tools: []
+`)
+	writeFile(t, filepath.Join(home, "library", "review", "SKILL.md"), "first\n")
+
+	var stdout, stderr bytes.Buffer
+	if code := Run([]string{"install", "--project", project}, &stdout, &stderr); code != 0 {
+		t.Fatalf("first install returned %d, want 0\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+	}
+
+	// Locally edit the managed copy.
+	writeFile(t, filepath.Join(project, ".claude", "skills", "review", "local.md"), "local edit\n")
+	// Update the library so its fingerprint diverges from both old and current target.
+	writeFile(t, filepath.Join(home, "library", "review", "SKILL.md"), "second\n")
+	// Sync should preserve the local-edited copy and NOT claim library content for it.
+	stdout.Reset()
+	stderr.Reset()
+	if code := Run([]string{"sync", "--project", project}, &stdout, &stderr); code != 0 {
+		t.Fatalf("sync returned %d, want 0\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "local edits") {
+		t.Fatalf("expected local-edits preserve message; stdout:\n%s", stdout.String())
+	}
+
+	// Get the current library fingerprint — the lock must NOT claim this for review,
+	// because review's only target has local edits.
+	libFP, err := fingerprintDir(filepath.Join(home, "library", "review"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lock, err := readInstallLock(filepath.Join(project, ".skills", "installed.lock"))
+	if err != nil {
+		t.Fatalf("read lock: %v", err)
+	}
+	var reviewFP string
+	for _, s := range lock.Skills {
+		if s.Name == "review" {
+			reviewFP = s.Fingerprint
+		}
+	}
+	if reviewFP == libFP {
+		t.Fatalf("lock falsely claims current library fingerprint for locally-edited review:\nlock=%s\nlibrary=%s", reviewFP, libFP)
+	}
+}
+
+func TestUninstallPreservesLocallyEditedLockFile(t *testing.T) {
+	home := t.TempDir()
+	project := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+
+	writeFile(t, filepath.Join(project, ".skills", "project.yaml"), `version: 1
+name: demo
+categories: [Engineering]
+harnesses: [claude]
+`)
+	writeFile(t, filepath.Join(home, "library", "catalog.yaml"), `version: 1
+skills:
+  - name: review
+    categories: [Engineering]
+    compatibility:
+      mode: portable
+    requirements:
+      tools: []
+`)
+	writeFile(t, filepath.Join(home, "library", "review", "SKILL.md"), "first\n")
+
+	var stdout, stderr bytes.Buffer
+	if code := Run([]string{"install", "--project", project}, &stdout, &stderr); code != 0 {
+		t.Fatalf("install returned %d, want 0\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+	}
+
+	lockPath := filepath.Join(project, ".skills", "installed.lock")
+	writeFile(t, lockPath, "# manually edited by user\nversion: 1\nskills:\n  - name: review\n    fingerprint: \"deadbeef\"\n    installed_at: \"2026-01-01T00:00:00Z\"\n    harnesses:\n      - claude\n")
+
+	stdout.Reset()
+	stderr.Reset()
+	code := Run([]string{"uninstall", "--project", project, "--confirm"}, &stdout, &stderr)
+	if code != 4 {
+		t.Fatalf("uninstall returned %d, want 4 (partial — preserved edited lock)\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+	}
+	if _, err := os.Stat(lockPath); err != nil {
+		t.Fatalf("expected uninstall to preserve the locally-edited lock file: %v", err)
+	}
+}
+
 func TestIdempotentInstallDoesNotChurnLockTimestamps(t *testing.T) {
 	home := t.TempDir()
 	project := t.TempDir()
