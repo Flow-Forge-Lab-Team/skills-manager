@@ -1428,6 +1428,16 @@ func readCatalog(path string) (catalog, error) {
 		case "model":
 			if section == "requirements" {
 				section = "requirements:model"
+				// Support the documented inline form used in catalog entries:
+				//   model: {tool_use: required}
+				// Previously this dropped the value on the same line.
+				if strings.Contains(value, "tool_use") {
+					parts := strings.SplitN(value, "tool_use:", 2)
+					if len(parts) == 2 {
+						v := strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(parts[1]), "}"))
+						current.Requirements.Model.ToolUse = unquote(v)
+					}
+				}
 			}
 		case "tool_use":
 			if section == "requirements:model" {
