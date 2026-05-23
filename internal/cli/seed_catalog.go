@@ -230,6 +230,7 @@ func writeSeedSkillMeta(path string, meta skillMeta) error {
 type seedRequirementExtras struct {
 	Tools       map[string][]string
 	MCPServers  map[string][]string
+	Model       []string
 	RawSections []string
 }
 
@@ -250,7 +251,17 @@ func parseRequirementExtras(block string) seedRequirementExtras {
 			i = collectRequirementItemExtras(lines, i, extras.Tools)
 		case "mcp_servers":
 			i = collectRequirementItemExtras(lines, i, extras.MCPServers)
-		case "model", "inferred":
+		case "model":
+			section, next := collectIndentedBlock(lines, i, 2)
+			for _, modelLine := range strings.Split(section, "\n") {
+				modelKey, _, ok := splitYAMLKey(modelLine)
+				if !ok || modelKey == "model" || modelKey == "tool_use" {
+					continue
+				}
+				extras.Model = append(extras.Model, modelLine)
+			}
+			i = next
+		case "inferred":
 			continue
 		default:
 			section, next := collectIndentedBlock(lines, i, 2)
@@ -305,6 +316,14 @@ func renderSeedRequirements(req requirements, extras seedRequirementExtras) stri
 	if req.Model.ToolUse != "" {
 		fmt.Fprint(&buf, "  model:\n")
 		fmt.Fprintf(&buf, "    tool_use: %q\n", req.Model.ToolUse)
+		for _, extra := range extras.Model {
+			fmt.Fprintf(&buf, "%s\n", extra)
+		}
+	} else if len(extras.Model) > 0 {
+		fmt.Fprint(&buf, "  model:\n")
+		for _, extra := range extras.Model {
+			fmt.Fprintf(&buf, "%s\n", extra)
+		}
 	}
 	if len(req.Tools) > 0 {
 		fmt.Fprint(&buf, "  tools:\n")
@@ -350,7 +369,7 @@ func sidecarHasUnmodeledRequirements(path string) bool {
 			continue
 		}
 		switch key {
-		case "scripts", "credentials", "check", "config_hint", "source", "required_runtimes", "allow_auto_run":
+		case "scripts", "credentials", "check", "config_hint", "source", "required_runtimes", "allow_auto_run", "min_context_tokens", "reasoning", "notes":
 			return true
 		}
 	}

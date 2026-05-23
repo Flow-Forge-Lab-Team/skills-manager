@@ -209,6 +209,11 @@ func TestSeedCatalogPreservesUnmodeledRequirementFields(t *testing.T) {
 	writeFile(t, filepath.Join(libraryPath, "runtime-heavy", "SKILL.md"), "---\nname: runtime-heavy\n---\nUse rg to search.\n")
 	writeFile(t, filepath.Join(libraryPath, "runtime-heavy", ".skill-meta.yaml"), `version: 1
 requirements:
+  model:
+    tool_use: required
+    min_context_tokens: 32000
+    reasoning: medium
+    notes: "Needs reliable tool-call planning"
   tools:
     - name: "gh"
       required: true
@@ -244,6 +249,10 @@ requirements:
 	}
 	metaText := readFile(t, filepath.Join(libraryPath, "runtime-heavy", ".skill-meta.yaml"))
 	for _, want := range []string{
+		`tool_use: "required"`,
+		`min_context_tokens: 32000`,
+		`reasoning: medium`,
+		`notes: "Needs reliable tool-call planning"`,
 		`name: "rg"`,
 		`check: "gh auth status"`,
 		`scripts:`,
