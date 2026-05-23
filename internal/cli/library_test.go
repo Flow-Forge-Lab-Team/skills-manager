@@ -297,6 +297,88 @@ func TestCatalogRoundTripPreservesHashInScalars(t *testing.T) {
 	}
 }
 
+func TestCatalogPreservesOptionalTools(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+
+	libraryPath := filepath.Join(home, "library")
+	if err := os.MkdirAll(libraryPath, 0755); err != nil {
+		t.Fatalf("mkdir library failed: %v", err)
+	}
+
+	writeFile(t, filepath.Join(libraryPath, "mixed", "SKILL.md"),
+		"---\nname: mixed\ndescription: Mixed reqs\n---\nBody")
+	if err := writeSkillMeta(filepath.Join(libraryPath, "mixed", ".skill-meta.yaml"), skillMeta{
+		Version: 1,
+		Requirements: requirements{Tools: []toolRequirement{
+			{Name: "gh", Required: true},
+			{Name: "jq", Required: false},
+		}},
+	}); err != nil {
+		t.Fatalf("write sidecar failed: %v", err)
+	}
+
+	cat, err := rebuildCatalogFromLibrary(libraryPath)
+	if err != nil {
+		t.Fatalf("rebuild failed: %v", err)
+	}
+	catalogPath := filepath.Join(libraryPath, "catalog.yaml")
+	if err := writeCatalog(catalogPath, cat); err != nil {
+		t.Fatalf("write catalog failed: %v", err)
+	}
+
+	parsed, err := readCatalog(catalogPath)
+	if err != nil {
+		t.Fatalf("read catalog failed: %v", err)
+	}
+	if len(parsed.Skills) != 1 {
+		raw, _ := os.ReadFile(catalogPath)
+		t.Fatalf("got %d skills, want 1; catalog:\n%s", len(parsed.Skills), string(raw))
+	}
+	tools := parsed.Skills[0].Requirements.Tools
+	if len(tools) != 2 {
+		raw, _ := os.ReadFile(catalogPath)
+		t.Fatalf("got %d tools, want 2; catalog:\n%s", len(tools), string(raw))
+	}
+	got := map[string]bool{}
+	for _, tool := range tools {
+		got[tool.Name] = tool.Required
+	}
+	if !got["gh"] {
+		t.Errorf("gh required = false, want true")
+	}
+	if got["jq"] {
+		t.Errorf("jq required = true, want false")
+	}
+}
+
+func TestSidecarPreservesCategorizedAt(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".skill-meta.yaml")
+	in := skillMeta{
+		Version: 1,
+		Categorization: skillCategorization{
+			Source:        "llm",
+			CategorizedAt: "2026-05-22T10:30:05Z",
+			ByTool:        "skills-ingest",
+			Confidence:    "high",
+		},
+	}
+	if err := writeSkillMeta(path, in); err != nil {
+		t.Fatalf("write failed: %v", err)
+	}
+	out, err := readSkillMeta(path)
+	if err != nil {
+		t.Fatalf("read failed: %v", err)
+	}
+	if out.Categorization.CategorizedAt != in.Categorization.CategorizedAt {
+		t.Errorf("CategorizedAt = %q, want %q", out.Categorization.CategorizedAt, in.Categorization.CategorizedAt)
+	}
+	if out.Categorization.ByTool != in.Categorization.ByTool {
+		t.Errorf("ByTool = %q, want %q", out.Categorization.ByTool, in.Categorization.ByTool)
+	}
+}
+
 func TestRebuildCatalogReadable(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("SKILLS_MANAGER_HOME", home)

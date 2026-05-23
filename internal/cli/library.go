@@ -219,7 +219,9 @@ func readSkillMeta(path string) (skillMeta, error) {
 		case "installed_at":
 			if section == "origin" {
 				meta.Origin.InstalledAt = unquote(value)
-			} else if section == "categorization" {
+			}
+		case "categorized_at":
+			if section == "categorization" {
 				meta.Categorization.CategorizedAt = unquote(value)
 			}
 		case "installed_by":
@@ -367,14 +369,29 @@ func writeSkillMeta(path string, meta skillMeta) error {
 
 	if len(meta.Requirements.Tools) > 0 {
 		fmt.Fprint(&buf, "requirements:\n")
-		fmt.Fprint(&buf, "  tools: [")
-		for i, tool := range meta.Requirements.Tools {
-			if i > 0 {
-				fmt.Fprint(&buf, ", ")
+		allRequired := true
+		for _, tool := range meta.Requirements.Tools {
+			if !tool.Required {
+				allRequired = false
+				break
 			}
-			fmt.Fprintf(&buf, "%q", tool.Name)
 		}
-		fmt.Fprint(&buf, "]\n")
+		if allRequired {
+			fmt.Fprint(&buf, "  tools: [")
+			for i, tool := range meta.Requirements.Tools {
+				if i > 0 {
+					fmt.Fprint(&buf, ", ")
+				}
+				fmt.Fprintf(&buf, "%q", tool.Name)
+			}
+			fmt.Fprint(&buf, "]\n")
+		} else {
+			fmt.Fprint(&buf, "  tools:\n")
+			for _, tool := range meta.Requirements.Tools {
+				fmt.Fprintf(&buf, "    - name: %q\n", tool.Name)
+				fmt.Fprintf(&buf, "      required: %t\n", tool.Required)
+			}
+		}
 	}
 
 	if meta.Summary != "" {
@@ -512,14 +529,29 @@ func writeCatalog(path string, cat catalog) error {
 
 		if len(skill.Requirements.Tools) > 0 {
 			fmt.Fprint(&buf, "    requirements:\n")
-			fmt.Fprint(&buf, "      tools: [")
-			for i, tool := range skill.Requirements.Tools {
-				if i > 0 {
-					fmt.Fprint(&buf, ", ")
+			allRequired := true
+			for _, tool := range skill.Requirements.Tools {
+				if !tool.Required {
+					allRequired = false
+					break
 				}
-				fmt.Fprintf(&buf, "%q", tool.Name)
 			}
-			fmt.Fprint(&buf, "]\n")
+			if allRequired {
+				fmt.Fprint(&buf, "      tools: [")
+				for i, tool := range skill.Requirements.Tools {
+					if i > 0 {
+						fmt.Fprint(&buf, ", ")
+					}
+					fmt.Fprintf(&buf, "%q", tool.Name)
+				}
+				fmt.Fprint(&buf, "]\n")
+			} else {
+				fmt.Fprint(&buf, "      tools:\n")
+				for _, tool := range skill.Requirements.Tools {
+					fmt.Fprintf(&buf, "        - name: %q\n", tool.Name)
+					fmt.Fprintf(&buf, "          required: %t\n", tool.Required)
+				}
+			}
 		}
 	}
 
