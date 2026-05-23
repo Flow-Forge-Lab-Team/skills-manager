@@ -1840,3 +1840,150 @@ This mentions "gh pr create" but has explicit requirements.
 		t.Errorf("third rebuild: meta.requirements.inferred should be false for explicit")
 	}
 }
+
+func TestSetCommand_PortableSticksWithDetectorPatterns(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+
+	// Create library and skill with a detector pattern (AskUserQuestion)
+	libraryPath := filepath.Join(home, "library")
+	skillDir := filepath.Join(libraryPath, "test-skill")
+	if err := os.MkdirAll(skillDir, 0755); err != nil {
+		t.Fatalf("mkdir failed: %v", err)
+	}
+
+	skillMdPath := filepath.Join(skillDir, "SKILL.md")
+	skillMdContent := `---
+name: test-skill
+description: A test skill with Claude pattern
+---
+# Test Skill
+This skill uses AskUserQuestion which is a high-confidence Claude pattern.
+`
+	if err := os.WriteFile(skillMdPath, []byte(skillMdContent), 0644); err != nil {
+		t.Fatalf("write SKILL.md failed: %v", err)
+	}
+
+	// First rebuild: auto-classify as exclusive/claude due to detector pattern
+	cat, err := rebuildCatalogFromLibrary(libraryPath)
+	if err != nil {
+		t.Fatalf("first rebuild failed: %v", err)
+	}
+	if len(cat.Skills) != 1 {
+		t.Fatalf("expected 1 skill after first rebuild, got %d", len(cat.Skills))
+	}
+	if cat.Skills[0].Compatibility.Mode != "exclusive" {
+		t.Errorf("after first rebuild: mode = %q, want exclusive (auto-classified)", cat.Skills[0].Compatibility.Mode)
+	}
+
+	// Now set to portable explicitly
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := runSet([]string{"test-skill", "--compatibility", "portable"}, &stdout, &stderr, globalFlags{})
+	if code != 0 {
+		t.Fatalf("runSet returned %d, want 0\nstderr: %s", code, stderr.String())
+	}
+
+	// Verify meta has declared.mode = portable
+	metaPath := filepath.Join(skillDir, ".skill-meta.yaml")
+	meta, err := readSkillMeta(metaPath)
+	if err != nil {
+		t.Fatalf("readSkillMeta failed: %v", err)
+	}
+	if meta.Compatibility.Declared == nil {
+		t.Fatalf("expected declared block after set --compatibility portable")
+	}
+	if meta.Compatibility.Declared.Mode != "portable" {
+		t.Errorf("declared.mode = %q, want portable", meta.Compatibility.Declared.Mode)
+	}
+
+	// Rebuild again: despite detector pattern still present, should respect explicit portable declaration
+	cat, err = rebuildCatalogFromLibrary(libraryPath)
+	if err != nil {
+		t.Fatalf("second rebuild failed: %v", err)
+	}
+	if len(cat.Skills) != 1 {
+		t.Fatalf("expected 1 skill after second rebuild, got %d", len(cat.Skills))
+	}
+	skill := cat.Skills[0]
+	if skill.Compatibility.Mode != "portable" {
+		t.Errorf("after second rebuild: mode = %q, want portable (should stick despite detector)", skill.Compatibility.Mode)
+	}
+	if skill.Compatibility.Harness != "" {
+		t.Errorf("after second rebuild: harness = %q, want empty for portable", skill.Compatibility.Harness)
+	}
+	if len(skill.Compatibility.Harnesses) != 0 {
+		t.Errorf("after second rebuild: harnesses = %v, want empty for portable", skill.Compatibility.Harnesses)
+	}
+}
+
+func TestRebuildCatalog_ClearsHarnessWhenFallingBackToPortable(t *testing.T) {
+	libraryPath := t.TempDir()
+
+	// Create a skill directory
+	skillDir := filepath.Join(libraryPath, "test-skill")
+	if err := os.MkdirAll(skillDir, 0755); err != nil {
+		t.Fatalf("mkdir failed: %v", err)
+	}
+
+	// Write initial SKILL.md with NO detector patterns
+	skillMdPath := filepath.Join(skillDir, "SKILL.md")
+	skillMdContent := `---
+name: test-skill
+description: A portable skill
+---
+# Test Skill
+This is a simple portable skill with no patterns.
+`
+	if err := os.WriteFile(skillMdPath, []byte(skillMdContent), 0644); err != nil {
+		t.Fatalf("write SKILL.md failed: %v", err)
+	}
+
+	// Create a .skill-meta.yaml that simulates a prior detection: exclusive/claude
+	metaPath := filepath.Join(skillDir, ".skill-meta.yaml")
+	metaContent := `compatibility:
+  mode: exclusive
+  harness: claude
+  detected:
+    claude:
+      confidence: high
+      reasons:
+        - AskUserQuestion pattern found
+`
+	if err := os.WriteFile(metaPath, []byte(metaContent), 0644); err != nil {
+		t.Fatalf("write .skill-meta.yaml failed: %v", err)
+	}
+
+	// Rebuild: body has NO detector patterns, so should fall back to portable and clear harness fields
+	cat, err := rebuildCatalogFromLibrary(libraryPath)
+	if err != nil {
+		t.Fatalf("rebuildCatalogFromLibrary failed: %v", err)
+	}
+
+	if len(cat.Skills) != 1 {
+		t.Fatalf("expected 1 skill, got %d", len(cat.Skills))
+	}
+
+	skill := cat.Skills[0]
+	if skill.Compatibility.Mode != "portable" {
+		t.Errorf("mode = %q, want portable", skill.Compatibility.Mode)
+	}
+	if skill.Compatibility.Harness != "" {
+		t.Errorf("harness = %q, want empty string", skill.Compatibility.Harness)
+	}
+	if len(skill.Compatibility.Harnesses) != 0 {
+		t.Errorf("harnesses = %v, want empty slice", skill.Compatibility.Harnesses)
+	}
+
+	// Verify the persisted meta also has cleared harness fields
+	meta, err := readSkillMeta(metaPath)
+	if err != nil {
+		t.Fatalf("readSkillMeta failed: %v", err)
+	}
+	if meta.Compatibility.Harness != "" {
+		t.Errorf("persisted meta: harness = %q, want empty string", meta.Compatibility.Harness)
+	}
+	if len(meta.Compatibility.Harnesses) != 0 {
+		t.Errorf("persisted meta: harnesses = %v, want empty slice", meta.Compatibility.Harnesses)
+	}
+}

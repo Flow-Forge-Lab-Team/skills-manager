@@ -583,14 +583,21 @@ func rebuildCatalogFromLibrary(libraryPath string) (catalog, error) {
 		// Read skill body once for detection and inference
 		skillBody, _ := readSkillBody(skillMdPath)
 
-		// If there's a declaration in SKILL.md frontmatter, use it and update meta
-		if compDecl.Mode != "" {
-			meta.Compatibility.Declared = &compDecl
-			meta.Compatibility.Mode = compDecl.Mode
-			meta.Compatibility.Harness = compDecl.Harness
-			meta.Compatibility.Harnesses = compDecl.Harnesses
+		// Check for explicit declaration: either in SKILL.md frontmatter OR in .skill-meta.yaml
+		hasExplicitDecl := compDecl.Mode != "" || (meta.Compatibility.Declared != nil && meta.Compatibility.Declared.Mode != "")
+		effectiveDecl := compDecl
+		if compDecl.Mode == "" && meta.Compatibility.Declared != nil && meta.Compatibility.Declared.Mode != "" {
+			effectiveDecl = *meta.Compatibility.Declared
+		}
+
+		if hasExplicitDecl {
+			// Use the effective declaration
+			meta.Compatibility.Declared = &effectiveDecl
+			meta.Compatibility.Mode = effectiveDecl.Mode
+			meta.Compatibility.Harness = effectiveDecl.Harness
+			meta.Compatibility.Harnesses = effectiveDecl.Harnesses
 		} else {
-			// No declaration: run detection and apply auto-classification
+			// No explicit declaration: run detection and apply auto-classification
 			detected := detectCompatibility(detectors, skillBody)
 			if len(detected) > 0 {
 				meta.Compatibility.Detected = detected
@@ -600,8 +607,10 @@ func rebuildCatalogFromLibrary(libraryPath string) (catalog, error) {
 				meta.Compatibility.Harness = autoClass.Harness
 				meta.Compatibility.Harnesses = autoClass.Harnesses
 			} else {
-				// No detection signals: default to portable
+				// No detection signals: default to portable, clear any stale harness data
 				meta.Compatibility.Mode = "portable"
+				meta.Compatibility.Harness = ""
+				meta.Compatibility.Harnesses = nil
 			}
 		}
 
