@@ -16,10 +16,10 @@ type compatibilityDetector struct {
 }
 
 type requirementDetector struct {
-	ID         string   `json:"id,omitempty"`
+	ID          string              `json:"id,omitempty"`
 	Requirement detectorRequirement `json:"requirement,omitempty"`
-	Confidence string   `json:"confidence,omitempty"`
-	Patterns   []string `json:"patterns,omitempty"`
+	Confidence  string              `json:"confidence,omitempty"`
+	Patterns    []string            `json:"patterns,omitempty"`
 }
 
 type detectorRequirement struct {
@@ -43,8 +43,8 @@ func loadDetectors() (detectorSet, error) {
 	if detectorsDir == "" {
 		// Try multiple paths to find detectors
 		candidates := []string{
-			"detectors",                                    // cwd (for tests)
-			filepath.Join("..", "..", "detectors"),       // relative to binary location
+			"detectors",                            // cwd (for tests)
+			filepath.Join("..", "..", "detectors"), // relative to binary location
 		}
 		// Add user home path if available
 		if userHome, err := os.UserHomeDir(); err == nil {

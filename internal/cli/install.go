@@ -56,10 +56,10 @@ type catalogSkill struct {
 }
 
 type compatibility struct {
-	Mode      string   `json:"mode,omitempty"`
-	Harness   string   `json:"harness,omitempty"`
-	Harnesses []string `json:"harnesses,omitempty"`
-	Declared  *compatibilityDeclaration `json:"declared,omitempty"`
+	Mode      string                     `json:"mode,omitempty"`
+	Harness   string                     `json:"harness,omitempty"`
+	Harnesses []string                   `json:"harnesses,omitempty"`
+	Declared  *compatibilityDeclaration  `json:"declared,omitempty"`
 	Detected  map[string]detectionResult `json:"detected,omitempty"`
 }
 

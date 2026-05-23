@@ -1034,4 +1034,3 @@ description: A test skill
 		t.Fatalf("error should mention --harness, got: %s", stderr.String())
 	}
 }
-

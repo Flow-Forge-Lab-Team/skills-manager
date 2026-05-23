@@ -9,12 +9,12 @@ import (
 )
 
 type setOptions struct {
-	skillName        string
+	skillName         string
 	compatibilityMode string
-	harness          string
-	harnesses        string
-	reason           string
-	json             bool
+	harness           string
+	harnesses         string
+	reason            string
+	json              bool
 }
 
 func runSet(args []string, stdout io.Writer, stderr io.Writer, gf globalFlags) int {
