@@ -165,6 +165,7 @@ func runInstall(args []string, stdout io.Writer, stderr io.Writer, syncMode bool
 
 	var candidates []installCandidate
 	var skippedLockedSkills bool
+	preserveLockEntries := map[string]bool{}
 	if len(lock.Skills) > 0 && !syncMode {
 		// Lock exists and we're not syncing: use it to determine candidates.
 		// (Sync mode recomputes from catalog to adapt to library changes.)
@@ -174,10 +175,12 @@ func runInstall(args []string, stdout io.Writer, stderr io.Writer, syncMode bool
 		never := set(project.NeverInclude)
 		for _, lockSkill := range lock.Skills {
 			if opts.onlySkill != "" && lockSkill.Name != opts.onlySkill {
+				preserveLockEntries[lockSkill.Name] = true
 				continue
 			}
 			if never[lockSkill.Name] {
 				fmt.Fprintf(stdout, "- %s: skipped, in never_include list\n", lockSkill.Name)
+				preserveLockEntries[lockSkill.Name] = true
 				continue
 			}
 			// Find skill in catalog to get the definition
@@ -196,6 +199,7 @@ func runInstall(args []string, stdout io.Writer, stderr io.Writer, syncMode bool
 				})
 				if opts.skipMissingLocked {
 					skippedLockedSkills = true
+					preserveLockEntries[lockSkill.Name] = true
 				}
 				continue
 			}
@@ -223,6 +227,7 @@ func runInstall(args []string, stdout io.Writer, stderr io.Writer, syncMode bool
 					})
 					if opts.skipMissingLocked {
 						skippedLockedSkills = true
+						preserveLockEntries[lockSkill.Name] = true
 					}
 					continue
 				}
@@ -246,6 +251,7 @@ func runInstall(args []string, stdout io.Writer, stderr io.Writer, syncMode bool
 				if len(harnesses) == 0 {
 					fmt.Fprintf(stdout, "- %s: skipped, no locked harnesses are active in project.yaml\n", lockSkill.Name)
 					skippedLockedSkills = true
+					preserveLockEntries[lockSkill.Name] = true
 					continue
 				}
 			} else {
@@ -425,7 +431,7 @@ func runInstall(args []string, stdout io.Writer, stderr io.Writer, syncMode bool
 		// failure, the manifest doesn't claim a lock we didn't write.
 		// On success, we add .skills/installed.lock to managed, then save manifest.
 		if len(lock.Skills) > 0 || len(candidates) > 0 {
-			newLock, err := buildInstallLock(candidates, files, libraryPath, lock, managed)
+			newLock, err := buildInstallLock(candidates, files, libraryPath, lock, managed, preserveLockEntries)
 			if err != nil {
 				fmt.Fprintf(stderr, "build lock: %v\n", err)
 				return 3
@@ -801,7 +807,7 @@ func writeInstallLock(path string, lock installLock) error {
 	return os.WriteFile(path, []byte(buf.String()), 0o644)
 }
 
-func buildInstallLock(candidates []installCandidate, files map[string]string, libraryPath string, oldLock installLock, managed map[string]bool) (installLock, error) {
+func buildInstallLock(candidates []installCandidate, files map[string]string, libraryPath string, oldLock installLock, managed map[string]bool, preserveOld map[string]bool) (installLock, error) {
 	newLock := installLock{
 		Version:     1,
 		GeneratedAt: time.Now().UTC().Format(time.RFC3339),
@@ -848,9 +854,14 @@ func buildInstallLock(candidates []installCandidate, files map[string]string, li
 		}
 	}
 
-	// Preserve entries from the old lock that were skipped (not in new candidates)
+	// Preserve old lock entries only for skills the caller explicitly flagged
+	// (lock problems with --skip-missing-locked, never_include, inactive harnesses, --only filter).
+	// Sync recomputes from catalog, so its preserveOld is empty and stale entries are dropped.
 	for _, oldEntry := range oldLock.Skills {
-		if !newSkillNames[oldEntry.Name] {
+		if newSkillNames[oldEntry.Name] {
+			continue
+		}
+		if preserveOld[oldEntry.Name] {
 			newLock.Skills = append(newLock.Skills, oldEntry)
 		}
 	}

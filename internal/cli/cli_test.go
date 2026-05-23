@@ -1295,3 +1295,75 @@ skills:
 		t.Fatalf("lock fingerprint changed after reinstall: %s -> %s", lockFP, newLockFP)
 	}
 }
+
+func TestSyncDropsStaleLockEntries(t *testing.T) {
+	home := t.TempDir()
+	project := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+
+	writeFile(t, filepath.Join(project, ".skills", "project.yaml"), `version: 1
+name: demo
+categories: [Engineering]
+harnesses: [claude]
+`)
+	writeFile(t, filepath.Join(home, "library", "catalog.yaml"), `version: 1
+skills:
+  - name: alpha
+    categories: [Engineering]
+    compatibility:
+      mode: portable
+    requirements:
+      tools: []
+  - name: beta
+    categories: [Engineering]
+    compatibility:
+      mode: portable
+    requirements:
+      tools: []
+`)
+	writeFile(t, filepath.Join(home, "library", "alpha", "SKILL.md"), "alpha\n")
+	writeFile(t, filepath.Join(home, "library", "beta", "SKILL.md"), "beta\n")
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	if code := Run([]string{"install", "--project", project}, &stdout, &stderr); code != 0 {
+		t.Fatalf("install returned %d, want 0\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+	}
+
+	// Drop beta from the project's selection by removing it from the catalog match
+	// (simulate the user editing project.yaml to drop the Engineering category for beta).
+	writeFile(t, filepath.Join(home, "library", "catalog.yaml"), `version: 1
+skills:
+  - name: alpha
+    categories: [Engineering]
+    compatibility:
+      mode: portable
+    requirements:
+      tools: []
+  - name: beta
+    categories: [Quality]
+    compatibility:
+      mode: portable
+    requirements:
+      tools: []
+`)
+
+	stdout.Reset()
+	stderr.Reset()
+	if code := Run([]string{"sync", "--project", project}, &stdout, &stderr); code != 0 {
+		t.Fatalf("sync returned %d, want 0\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+	}
+
+	lock, err := readInstallLock(filepath.Join(project, ".skills", "installed.lock"))
+	if err != nil {
+		t.Fatalf("read lock: %v", err)
+	}
+	for _, s := range lock.Skills {
+		if s.Name == "beta" {
+			t.Fatalf("sync left stale beta in lock: %+v", lock.Skills)
+		}
+	}
+	if len(lock.Skills) != 1 || lock.Skills[0].Name != "alpha" {
+		t.Fatalf("expected only alpha in lock after sync, got %+v", lock.Skills)
+	}
+}
