@@ -30,6 +30,8 @@ func Run(args []string, stdout io.Writer, stderr io.Writer) int {
 		return runList(args[1:], stdout, stderr)
 	case "show":
 		return runShow(args[1:], stdout, stderr)
+	case "update":
+		return runUpdate(args[1:], stdout, stderr)
 	}
 
 	fmt.Fprintf(stderr, "unknown argument: %s\n", args[0])
