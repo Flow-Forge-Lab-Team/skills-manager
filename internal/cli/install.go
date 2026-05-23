@@ -24,6 +24,7 @@ type installOptions struct {
 	allowMissingRequirements bool
 	skipMissingLocked        bool
 	confirm                  bool
+	noBackup                 bool
 }
 
 type lockProblem struct {
@@ -585,29 +586,101 @@ func runUninstall(args []string, stdout io.Writer, stderr io.Writer) int {
 		return 3
 	}
 
-	fmt.Fprintln(stdout, "Uninstall preview:")
+	type uninstallPlanEntry struct {
+		rel      string
+		preserve bool
+		reason   string
+	}
+	var plan []uninstallPlanEntry
 	for _, rel := range manifest.ManagedPaths {
-		fmt.Fprintf(stdout, "- remove %s\n", rel)
+		target := filepath.Join(projectPath, filepath.FromSlash(rel))
+		expected := manifest.Files[rel]
+		entry := uninstallPlanEntry{rel: rel}
+		if expected != "" {
+			actual, ferr := fingerprintDir(target)
+			if ferr == nil && actual != expected {
+				entry.preserve = true
+				entry.reason = "manager-owned copy has local edits"
+			} else if ferr != nil && !errors.Is(ferr, os.ErrNotExist) {
+				fmt.Fprintf(stderr, "fingerprint %s: %v\n", rel, ferr)
+				return 3
+			}
+		}
+		plan = append(plan, entry)
+	}
+
+	if opts.dryRun {
+		fmt.Fprintln(stdout, "Uninstall preview (dry-run):")
+	} else {
+		fmt.Fprintln(stdout, "Uninstall preview:")
+	}
+	for _, e := range plan {
+		if e.preserve {
+			fmt.Fprintf(stdout, "- preserve %s (%s)\n", e.rel, e.reason)
+		} else {
+			fmt.Fprintf(stdout, "- remove %s\n", e.rel)
+		}
+	}
+	for _, rel := range manifest.PreservedPaths {
+		fmt.Fprintf(stdout, "- preserve %s (already preserved)\n", rel)
+	}
+	if opts.dryRun {
+		return 0
 	}
 	if !opts.confirm {
 		fmt.Fprintln(stderr, "refusing to uninstall without --confirm")
 		return 2
 	}
 
-	remaining := map[string]bool{}
-	for i := len(manifest.ManagedPaths) - 1; i >= 0; i-- {
-		rel := manifest.ManagedPaths[i]
-		target := filepath.Join(projectPath, filepath.FromSlash(rel))
-		expected := manifest.Files[rel]
-		if expected != "" {
-			actual, err := fingerprintDir(target)
-			if err == nil && actual != expected {
-				fmt.Fprintf(stdout, "- preserve %s (manager-owned copy has local edits)\n", rel)
-				remaining[rel] = true
-				continue
+	var backupDir string
+	if !opts.noBackup {
+		needBackup := false
+		for _, e := range plan {
+			if !e.preserve {
+				needBackup = true
+				break
 			}
-			if err != nil && !errors.Is(err, os.ErrNotExist) {
-				fmt.Fprintf(stderr, "fingerprint %s: %v\n", rel, err)
+		}
+		if needBackup {
+			backupDir = filepath.Join(home, "backups", projectSlug(projectPath), time.Now().UTC().Format("20060102T150405Z"))
+			if err := os.MkdirAll(backupDir, 0o755); err != nil {
+				fmt.Fprintf(stderr, "create backup dir: %v\n", err)
+				return 3
+			}
+			fmt.Fprintf(stdout, "Backing up removed paths to %s\n", backupDir)
+		}
+	}
+
+	remaining := map[string]bool{}
+	for _, e := range plan {
+		rel := e.rel
+		target := filepath.Join(projectPath, filepath.FromSlash(rel))
+		if e.preserve {
+			fmt.Fprintf(stdout, "- preserved %s (%s)\n", rel, e.reason)
+			remaining[rel] = true
+			continue
+		}
+		if backupDir != "" {
+			info, statErr := os.Stat(target)
+			if statErr == nil {
+				dst := filepath.Join(backupDir, filepath.FromSlash(rel))
+				if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+					fmt.Fprintf(stderr, "backup %s: %v\n", rel, err)
+					return 3
+				}
+				if info.IsDir() {
+					if err := copyDir(target, dst); err != nil {
+						fmt.Fprintf(stderr, "backup %s: %v\n", rel, err)
+						return 3
+					}
+				} else {
+					if err := copyFile(target, dst, info.Mode()); err != nil {
+						fmt.Fprintf(stderr, "backup %s: %v\n", rel, err)
+						return 3
+					}
+				}
+			} else if !errors.Is(statErr, os.ErrNotExist) {
+				fmt.Fprintf(stderr, "stat %s: %v\n", rel, statErr)
 				return 3
 			}
 		}
@@ -617,6 +690,7 @@ func runUninstall(args []string, stdout io.Writer, stderr io.Writer) int {
 		}
 		pruneEmptyParents(projectPath, filepath.Dir(target))
 		delete(manifest.Files, rel)
+		fmt.Fprintf(stdout, "- removed %s\n", rel)
 	}
 	if len(remaining) > 0 {
 		manifest.ManagedPaths = sortedKeys(remaining)
@@ -675,6 +749,10 @@ func parseUninstallOptions(args []string) (installOptions, error) {
 			opts.projectPath = args[i]
 		case "--confirm":
 			opts.confirm = true
+		case "--dry-run":
+			opts.dryRun = true
+		case "--no-backup":
+			opts.noBackup = true
 		default:
 			return opts, fmt.Errorf("unknown uninstall argument: %s", args[i])
 		}
