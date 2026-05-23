@@ -76,13 +76,24 @@ type detectionResult struct {
 }
 
 type requirements struct {
-	Tools    []toolRequirement `json:"tools,omitempty"`
-	Inferred bool              `json:"inferred,omitempty"`
+	Tools      []toolRequirement `json:"tools,omitempty"`
+	MCPServers []mcpRequirement  `json:"mcp_servers,omitempty"`
+	Model      modelRequirement  `json:"model,omitempty"`
+	Inferred   bool              `json:"inferred,omitempty"`
 }
 
 type toolRequirement struct {
 	Name     string `json:"name"`
 	Required bool   `json:"required"`
+}
+
+type mcpRequirement struct {
+	Name     string `json:"name"`
+	Required bool   `json:"required"`
+}
+
+type modelRequirement struct {
+	ToolUse string `json:"tool_use,omitempty"`
 }
 
 type installManifest struct {
@@ -421,6 +432,16 @@ func runInstall(args []string, realStdout io.Writer, stderr io.Writer, syncMode 
 		}
 		if len(missing) > 0 {
 			fmt.Fprintf(stdout, "- %s: warning, installing despite missing required tools: %s\n", candidate.Skill.Name, strings.Join(missing, ", "))
+		}
+
+		missingMCP := missingRequiredMCPServers(candidate.Skill.Requirements)
+		if len(missingMCP) > 0 {
+			fmt.Fprintf(stdout, "- %s: warning, missing required MCP servers: %s\n", candidate.Skill.Name, strings.Join(missingMCP, ", "))
+		}
+
+		missingModel := missingModelCapabilities(candidate.Skill.Requirements)
+		if len(missingModel) > 0 {
+			fmt.Fprintf(stdout, "- %s: warning, missing required model capabilities: %s\n", candidate.Skill.Name, strings.Join(missingModel, ", "))
 		}
 
 		fmt.Fprintf(stdout, "- %s: %s; harnesses: %s\n", candidate.Skill.Name, candidate.Reason, strings.Join(candidate.Harnesses, ", "))
@@ -1502,6 +1523,62 @@ func toolRequirementsFromNames(names []string) []toolRequirement {
 	return requirements
 }
 
+func readMCPServerRequirements(lines []string, index int) ([]mcpRequirement, int) {
+	var servers []mcpRequirement
+	baseIndent := indent(lines[index])
+	var current *mcpRequirement
+	for next := index + 1; next < len(lines); next++ {
+		line := stripComment(lines[next])
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		if indent(line) <= baseIndent {
+			if current != nil {
+				servers = append(servers, *current)
+			}
+			return servers, next - 1
+		}
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "- name:") {
+			if current != nil {
+				servers = append(servers, *current)
+			}
+			current = &mcpRequirement{Name: unquote(strings.TrimSpace(strings.TrimPrefix(trimmed, "- name:")))}
+			continue
+		}
+		if strings.HasPrefix(trimmed, "- ") {
+			if current != nil {
+				servers = append(servers, *current)
+				current = nil
+			}
+			servers = append(servers, mcpRequirement{
+				Name:     unquote(strings.TrimSpace(strings.TrimPrefix(trimmed, "- "))),
+				Required: true,
+			})
+			continue
+		}
+		if current == nil {
+			continue
+		}
+		key, value, ok := splitYAMLKey(line)
+		if ok && key == "required" {
+			current.Required = value == "true"
+		}
+	}
+	if current != nil {
+		servers = append(servers, *current)
+	}
+	return servers, len(lines) - 1
+}
+
+func mcpRequirementsFromNames(names []string) []mcpRequirement {
+	requirements := make([]mcpRequirement, 0, len(names))
+	for _, name := range names {
+		requirements = append(requirements, mcpRequirement{Name: name, Required: true})
+	}
+	return requirements
+}
+
 func stripComment(line string) string {
 	var quote byte
 	for i := 0; i < len(line); i++ {
@@ -1709,6 +1786,30 @@ func missingRequiredTools(req requirements) []string {
 		}
 	}
 	sort.Strings(missing)
+	return missing
+}
+
+func missingRequiredMCPServers(req requirements) []string {
+	var missing []string
+	for _, server := range req.MCPServers {
+		if !server.Required {
+			continue
+		}
+		// TODO: Implement actual MCP server presence check.
+		// For now, we stub this as best-effort and always emit warnings.
+		missing = append(missing, server.Name)
+	}
+	sort.Strings(missing)
+	return missing
+}
+
+func missingModelCapabilities(req requirements) []string {
+	var missing []string
+	if req.Model.ToolUse == "required" {
+		// TODO: Check if current model supports tool use.
+		// For now, stub as best-effort.
+		missing = append(missing, "tool_use")
+	}
 	return missing
 }
 

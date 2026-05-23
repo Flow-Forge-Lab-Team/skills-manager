@@ -204,6 +204,7 @@ func readSkillMeta(path string) (skillMeta, error) {
 
 	meta := skillMeta{Version: 1}
 	var section string
+	var sectionIndent int
 
 	for i := 0; i < len(lines); i++ {
 		raw := stripComment(lines[i])
@@ -215,6 +216,8 @@ func readSkillMeta(path string) (skillMeta, error) {
 		if !ok {
 			continue
 		}
+
+		currentIndent := indent(raw)
 
 		switch key {
 		case "version":
@@ -241,14 +244,19 @@ func readSkillMeta(path string) (skillMeta, error) {
 			meta.LastChangedAt = unquote(value)
 		case "origin":
 			section = "origin"
+			sectionIndent = currentIndent
 		case "fingerprint":
 			section = "fingerprint"
+			sectionIndent = currentIndent
 		case "categorization":
 			section = "categorization"
+			sectionIndent = currentIndent
 		case "compatibility":
 			section = "compatibility"
+			sectionIndent = currentIndent
 		case "requirements":
 			section = "requirements"
+			sectionIndent = currentIndent
 		case "type":
 			if section == "origin" {
 				meta.Origin.Type = unquote(value)
@@ -360,7 +368,30 @@ func readSkillMeta(path string) (skillMeta, error) {
 					meta.Requirements.Tools = items
 				}
 			}
+		case "mcp_servers":
+			if section == "requirements" {
+				if strings.HasPrefix(value, "[") && strings.HasSuffix(value, "]") {
+					meta.Requirements.MCPServers = mcpRequirementsFromNames(parseInlineList(value))
+				} else {
+					items, next := readMCPServerRequirements(lines, i)
+					i = next
+					meta.Requirements.MCPServers = items
+				}
+			}
+		case "model":
+			if section == "requirements" {
+				section = "requirements:model"
+				sectionIndent = currentIndent // Track the indent of "model:" itself
+			}
+		case "tool_use":
+			if section == "requirements:model" {
+				meta.Requirements.Model.ToolUse = unquote(value)
+			}
 		case "inferred":
+			// "inferred" is at the requirements level, so if we're in a nested section, reset
+			if strings.Contains(section, ":") && currentIndent == sectionIndent {
+				section = strings.Split(section, ":")[0] // Get parent section
+			}
 			if section == "requirements" {
 				meta.Requirements.Inferred = value == "true"
 			}
@@ -525,6 +556,35 @@ func writeSkillMeta(path string, meta skillMeta) error {
 				}
 			}
 		}
+		if len(meta.Requirements.MCPServers) > 0 {
+			allRequired := true
+			for _, server := range meta.Requirements.MCPServers {
+				if !server.Required {
+					allRequired = false
+					break
+				}
+			}
+			if allRequired {
+				fmt.Fprint(&buf, "  mcp_servers: [")
+				for i, server := range meta.Requirements.MCPServers {
+					if i > 0 {
+						fmt.Fprint(&buf, ", ")
+					}
+					fmt.Fprintf(&buf, "%q", server.Name)
+				}
+				fmt.Fprint(&buf, "]\n")
+			} else {
+				fmt.Fprint(&buf, "  mcp_servers:\n")
+				for _, server := range meta.Requirements.MCPServers {
+					fmt.Fprintf(&buf, "    - name: %q\n", server.Name)
+					fmt.Fprintf(&buf, "      required: %t\n", server.Required)
+				}
+			}
+		}
+		if meta.Requirements.Model.ToolUse != "" {
+			fmt.Fprint(&buf, "  model:\n")
+			fmt.Fprintf(&buf, "    tool_use: %q\n", meta.Requirements.Model.ToolUse)
+		}
 		if meta.Requirements.Inferred {
 			fmt.Fprintf(&buf, "  inferred: true\n")
 		}
@@ -622,7 +682,7 @@ func rebuildCatalogFromLibrary(libraryPath string) (catalog, error) {
 		// Infer requirements if not explicitly provided or if previously inferred
 		if meta.Requirements.Inferred || len(meta.Requirements.Tools) == 0 {
 			inferred := inferRequirements(detectors, skillBody)
-			meta.Requirements.Tools = inferred
+			meta.Requirements = inferred
 			meta.Requirements.Inferred = true
 		}
 
@@ -712,30 +772,64 @@ func writeCatalog(path string, cat catalog) error {
 			fmt.Fprint(&buf, "]\n")
 		}
 
-		if len(skill.Requirements.Tools) > 0 {
+		if len(skill.Requirements.Tools) > 0 || len(skill.Requirements.MCPServers) > 0 || skill.Requirements.Model.ToolUse != "" {
 			fmt.Fprint(&buf, "    requirements:\n")
-			allRequired := true
-			for _, tool := range skill.Requirements.Tools {
-				if !tool.Required {
-					allRequired = false
-					break
+
+			if len(skill.Requirements.Tools) > 0 {
+				allRequired := true
+				for _, tool := range skill.Requirements.Tools {
+					if !tool.Required {
+						allRequired = false
+						break
+					}
+				}
+				if allRequired {
+					fmt.Fprint(&buf, "      tools: [")
+					for i, tool := range skill.Requirements.Tools {
+						if i > 0 {
+							fmt.Fprint(&buf, ", ")
+						}
+						fmt.Fprintf(&buf, "%q", tool.Name)
+					}
+					fmt.Fprint(&buf, "]\n")
+				} else {
+					fmt.Fprint(&buf, "      tools:\n")
+					for _, tool := range skill.Requirements.Tools {
+						fmt.Fprintf(&buf, "        - name: %q\n", tool.Name)
+						fmt.Fprintf(&buf, "          required: %t\n", tool.Required)
+					}
 				}
 			}
-			if allRequired {
-				fmt.Fprint(&buf, "      tools: [")
-				for i, tool := range skill.Requirements.Tools {
-					if i > 0 {
-						fmt.Fprint(&buf, ", ")
+
+			if len(skill.Requirements.MCPServers) > 0 {
+				allRequired := true
+				for _, server := range skill.Requirements.MCPServers {
+					if !server.Required {
+						allRequired = false
+						break
 					}
-					fmt.Fprintf(&buf, "%q", tool.Name)
 				}
-				fmt.Fprint(&buf, "]\n")
-			} else {
-				fmt.Fprint(&buf, "      tools:\n")
-				for _, tool := range skill.Requirements.Tools {
-					fmt.Fprintf(&buf, "        - name: %q\n", tool.Name)
-					fmt.Fprintf(&buf, "          required: %t\n", tool.Required)
+				if allRequired {
+					fmt.Fprint(&buf, "      mcp_servers: [")
+					for i, server := range skill.Requirements.MCPServers {
+						if i > 0 {
+							fmt.Fprint(&buf, ", ")
+						}
+						fmt.Fprintf(&buf, "%q", server.Name)
+					}
+					fmt.Fprint(&buf, "]\n")
+				} else {
+					fmt.Fprint(&buf, "      mcp_servers:\n")
+					for _, server := range skill.Requirements.MCPServers {
+						fmt.Fprintf(&buf, "        - name: %q\n", server.Name)
+						fmt.Fprintf(&buf, "          required: %t\n", server.Required)
+					}
 				}
+			}
+
+			if skill.Requirements.Model.ToolUse != "" {
+				fmt.Fprint(&buf, "      model:\n")
+				fmt.Fprintf(&buf, "        tool_use: %q\n", skill.Requirements.Model.ToolUse)
 			}
 		}
 	}

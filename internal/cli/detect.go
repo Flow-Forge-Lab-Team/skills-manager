@@ -295,27 +295,51 @@ func detectCompatibility(detectors detectorSet, skillBody string) map[string]det
 	return results
 }
 
-func inferRequirements(detectors detectorSet, skillBody string) []toolRequirement {
+func inferRequirements(detectors detectorSet, skillBody string) requirements {
 	seenTools := make(map[string]bool)
+	seenMCP := make(map[string]bool)
 	var tools []toolRequirement
+	var mcpServers []mcpRequirement
+	var model modelRequirement
 
 	for _, det := range detectors.requirementDetectors {
-		if det.Requirement.Kind == "tool" {
-			for _, pattern := range det.Patterns {
-				if matchPattern(pattern, skillBody) {
-					if !seenTools[det.Requirement.Name] {
-						tools = append(tools, toolRequirement{
-							Name:     det.Requirement.Name,
-							Required: det.Requirement.Required,
-						})
-						seenTools[det.Requirement.Name] = true
-					}
+		for _, pattern := range det.Patterns {
+			if !matchPattern(pattern, skillBody) {
+				continue
+			}
+
+			switch det.Requirement.Kind {
+			case "tool":
+				if !seenTools[det.Requirement.Name] {
+					tools = append(tools, toolRequirement{
+						Name:     det.Requirement.Name,
+						Required: det.Requirement.Required,
+					})
+					seenTools[det.Requirement.Name] = true
+				}
+			case "mcp_server":
+				if !seenMCP[det.Requirement.Name] {
+					mcpServers = append(mcpServers, mcpRequirement{
+						Name:     det.Requirement.Name,
+						Required: det.Requirement.Required,
+					})
+					seenMCP[det.Requirement.Name] = true
+				}
+			case "model":
+				// For model requirements, use the name as the capability key.
+				// e.g., "tool_use" is the capability with status from Required.
+				if det.Requirement.Required {
+					model.ToolUse = "required"
 				}
 			}
 		}
 	}
 
-	return tools
+	return requirements{
+		Tools:      tools,
+		MCPServers: mcpServers,
+		Model:      model,
+	}
 }
 
 func matchPattern(pattern, text string) bool {
