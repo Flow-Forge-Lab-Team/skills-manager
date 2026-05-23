@@ -935,8 +935,13 @@ func rebuildCatalogFromLibrary(libraryPath string) (catalog, error) {
 		if meta.Requirements.Inferred || (!hasExplicitRequirements && !sidecarExisted) {
 			inferred := inferRequirements(detectors, skillBody)
 			inferred.Inferred = true // normalize so DeepEqual only cares about modeled data
-			if !reflect.DeepEqual(meta.Requirements, inferred) {
+			oldRequirements := meta.Requirements
+			if sidecarHasUnmodeledRequirements(metaPath) {
+				mergeSeedRequirements(&meta.Requirements, inferred)
+			} else {
 				meta.Requirements = inferred
+			}
+			if !reflect.DeepEqual(oldRequirements, meta.Requirements) {
 				requirementsChanged = true
 			}
 		}
@@ -950,7 +955,11 @@ func rebuildCatalogFromLibrary(libraryPath string) (catalog, error) {
 		// - If only compatibility changed → surgically update only the compatibility
 		//   section in the raw file so we don't clobber unmodeled requirement fields.
 		if requirementsChanged {
-			_ = writeSkillMeta(metaPath, meta)
+			if sidecarHasUnmodeledRequirements(metaPath) {
+				_ = writeSeedSkillMeta(metaPath, meta)
+			} else {
+				_ = writeSkillMeta(metaPath, meta)
+			}
 		} else if compatibilityChanged {
 			updateCompatibilitySection(metaPath, meta)
 		}

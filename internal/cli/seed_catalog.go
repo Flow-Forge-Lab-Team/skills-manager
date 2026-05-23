@@ -202,6 +202,7 @@ func writeSeedSkillMeta(path string, meta skillMeta) error {
 	if !ok {
 		return writeSkillMeta(path, meta)
 	}
+	extras := parseRequirementExtras(requirementsBlock)
 
 	tmp, err := os.CreateTemp(filepath.Dir(path), ".skill-meta-*")
 	if err != nil {
@@ -221,8 +222,117 @@ func writeSeedSkillMeta(path string, meta skillMeta) error {
 	if err != nil {
 		return err
 	}
-	preserved := replaceTopLevelYAMLBlock(string(generated), "requirements", requirementsBlock)
+	preservedRequirements := renderSeedRequirements(meta.Requirements, extras)
+	preserved := replaceTopLevelYAMLBlock(string(generated), "requirements", preservedRequirements)
 	return os.WriteFile(path, []byte(preserved), 0644)
+}
+
+type seedRequirementExtras struct {
+	Tools       map[string][]string
+	MCPServers  map[string][]string
+	RawSections []string
+}
+
+func parseRequirementExtras(block string) seedRequirementExtras {
+	lines := strings.Split(block, "\n")
+	extras := seedRequirementExtras{
+		Tools:      map[string][]string{},
+		MCPServers: map[string][]string{},
+	}
+	for i := 1; i < len(lines); i++ {
+		line := lines[i]
+		key, _, ok := splitYAMLKey(line)
+		if !ok || indent(line) != 2 {
+			continue
+		}
+		switch key {
+		case "tools":
+			i = collectRequirementItemExtras(lines, i, extras.Tools)
+		case "mcp_servers":
+			i = collectRequirementItemExtras(lines, i, extras.MCPServers)
+		case "model", "inferred":
+			continue
+		default:
+			section, next := collectIndentedBlock(lines, i, 2)
+			extras.RawSections = append(extras.RawSections, section)
+			i = next
+		}
+	}
+	return extras
+}
+
+func collectRequirementItemExtras(lines []string, index int, out map[string][]string) int {
+	for i := index + 1; i < len(lines); i++ {
+		line := lines[i]
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		if indent(line) <= 2 {
+			return i - 1
+		}
+		trimmed := strings.TrimSpace(line)
+		if !strings.HasPrefix(trimmed, "- name:") {
+			continue
+		}
+		name := unquote(strings.TrimSpace(strings.TrimPrefix(trimmed, "- name:")))
+		item, next := collectIndentedBlock(lines, i, 4)
+		for _, itemLine := range strings.Split(item, "\n") {
+			key, _, ok := splitYAMLKey(itemLine)
+			if !ok || key == "name" || key == "required" {
+				continue
+			}
+			out[name] = append(out[name], itemLine)
+		}
+		i = next
+	}
+	return len(lines) - 1
+}
+
+func collectIndentedBlock(lines []string, index int, baseIndent int) (string, int) {
+	end := len(lines)
+	for i := index + 1; i < len(lines); i++ {
+		if strings.TrimSpace(lines[i]) != "" && indent(lines[i]) <= baseIndent {
+			end = i
+			break
+		}
+	}
+	return strings.Join(lines[index:end], "\n"), end - 1
+}
+
+func renderSeedRequirements(req requirements, extras seedRequirementExtras) string {
+	var buf strings.Builder
+	fmt.Fprint(&buf, "requirements:\n")
+	if req.Model.ToolUse != "" {
+		fmt.Fprint(&buf, "  model:\n")
+		fmt.Fprintf(&buf, "    tool_use: %q\n", req.Model.ToolUse)
+	}
+	if len(req.Tools) > 0 {
+		fmt.Fprint(&buf, "  tools:\n")
+		for _, tool := range req.Tools {
+			fmt.Fprintf(&buf, "    - name: %q\n", tool.Name)
+			fmt.Fprintf(&buf, "      required: %t\n", tool.Required)
+			for _, extra := range extras.Tools[tool.Name] {
+				fmt.Fprintf(&buf, "%s\n", extra)
+			}
+		}
+	}
+	if len(req.MCPServers) > 0 {
+		fmt.Fprint(&buf, "  mcp_servers:\n")
+		for _, server := range req.MCPServers {
+			fmt.Fprintf(&buf, "    - name: %q\n", server.Name)
+			fmt.Fprintf(&buf, "      required: %t\n", server.Required)
+			for _, extra := range extras.MCPServers[server.Name] {
+				fmt.Fprintf(&buf, "%s\n", extra)
+			}
+		}
+	}
+	for _, section := range extras.RawSections {
+		fmt.Fprintf(&buf, "%s\n", section)
+	}
+	if req.Inferred {
+		fmt.Fprint(&buf, "  inferred: true\n")
+	}
+	return strings.TrimRight(buf.String(), "\n")
 }
 
 func sidecarHasUnmodeledRequirements(path string) bool {

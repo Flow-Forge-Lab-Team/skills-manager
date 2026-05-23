@@ -206,7 +206,7 @@ func TestSeedCatalogPreservesUnmodeledRequirementFields(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("SKILLS_MANAGER_HOME", home)
 	libraryPath := filepath.Join(home, "library")
-	writeFile(t, filepath.Join(libraryPath, "runtime-heavy", "SKILL.md"), "---\nname: runtime-heavy\n---\nBody\n")
+	writeFile(t, filepath.Join(libraryPath, "runtime-heavy", "SKILL.md"), "---\nname: runtime-heavy\n---\nUse rg to search.\n")
 	writeFile(t, filepath.Join(libraryPath, "runtime-heavy", ".skill-meta.yaml"), `version: 1
 requirements:
   tools:
@@ -221,6 +221,16 @@ requirements:
       source: "gh"
       required: true
 `)
+	beforeMeta, err := readSkillMeta(filepath.Join(libraryPath, "runtime-heavy", ".skill-meta.yaml"))
+	if err != nil {
+		t.Fatalf("readSkillMeta before seed: %v", err)
+	}
+	if !hasToolRequirement(beforeMeta.Requirements.Tools, "gh") {
+		t.Fatalf("precondition: gh requirement was not parsed: %+v", beforeMeta.Requirements.Tools)
+	}
+	if !sidecarHasUnmodeledRequirements(filepath.Join(libraryPath, "runtime-heavy", ".skill-meta.yaml")) {
+		t.Fatalf("precondition: unmodeled requirements were not detected")
+	}
 	remapPath := filepath.Join(t.TempDir(), "remap.json")
 	writeJSONFile(t, remapPath, []seedCatalogRemapEntry{
 		{Name: "runtime-heavy", Categories: []string{"Engineering"}, Tags: []string{"github"}},
@@ -234,6 +244,7 @@ requirements:
 	}
 	metaText := readFile(t, filepath.Join(libraryPath, "runtime-heavy", ".skill-meta.yaml"))
 	for _, want := range []string{
+		`name: "rg"`,
 		`check: "gh auth status"`,
 		`scripts:`,
 		`required_runtimes: ["node"]`,
@@ -246,6 +257,13 @@ requirements:
 			t.Fatalf("meta missing %q:\n%s", want, metaText)
 		}
 	}
+	stdout.Reset()
+	stderr.Reset()
+	code = Run([]string{"seed-catalog", "--from", remapPath}, &stdout, &stderr)
+	if code != ExitSuccess {
+		t.Fatalf("second Run returned %d, want success\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+	}
+	assertFileContent(t, filepath.Join(libraryPath, "runtime-heavy", ".skill-meta.yaml"), metaText)
 }
 
 func TestSeedCatalogWarnsOnMissingAndOverBroadMetadata(t *testing.T) {
