@@ -55,6 +55,8 @@ func (p *ghPoller) Poll(owner, repo, ref string) (commit, etag string, err error
 
 	// Parse response: headers come first, then blank line, then JSON body
 	respText := stdout.String()
+	// Normalize CRLF to LF so the split works with real HTTP responses
+	respText = strings.ReplaceAll(respText, "\r\n", "\n")
 	parts := strings.SplitN(respText, "\n\n", 2)
 	if len(parts) < 2 {
 		return "", "", fmt.Errorf("unexpected gh response format: no body")

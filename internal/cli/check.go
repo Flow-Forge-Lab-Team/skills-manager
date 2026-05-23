@@ -337,7 +337,11 @@ func stageUpdate(skillName string, libraryPath string, meta skillMeta, newCommit
 		return fmt.Errorf("fetch incoming SKILL.md from %s: %w", fetchPath, err)
 	}
 
-	// Now create the pending directory and write files
+	// Now create the pending directory and write files.
+	// First, wipe any stale snapshots from previous runs (old layout: from, to, etc).
+	if err := os.RemoveAll(pendingRoot); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("remove stale pending dir: %w", err)
+	}
 	if err := os.MkdirAll(pendingRoot, 0755); err != nil {
 		return fmt.Errorf("create pending dir: %w", err)
 	}
