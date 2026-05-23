@@ -103,6 +103,7 @@ func TestUpdateAcceptAllSafeAppliesSafeUpdates(t *testing.T) {
 	skillDir := filepath.Join(home, "library", "notes")
 	root := filepath.Join(skillDir, ".update-pending")
 	writeFile(t, filepath.Join(skillDir, "SKILL.md"), "---\nname: notes\ndescription: Take notes\n---\nOld body\n")
+	writeFile(t, filepath.Join(skillDir, ".skill-meta.yaml"), "version: 1\norigin:\n  type: github\n")
 	writeFile(t, filepath.Join(skillDir, "stale.md"), "stale\n")
 	writeFile(t, filepath.Join(root, "from", "SKILL.md"), "---\nname: notes\ndescription: Take notes\n---\nOld body\n")
 	writeFile(t, filepath.Join(root, "to", "SKILL.md"), "---\nname: notes\ndescription: Take notes\n---\nNew body\n")
@@ -115,6 +116,7 @@ func TestUpdateAcceptAllSafeAppliesSafeUpdates(t *testing.T) {
 		t.Fatalf("Run returned %d, want 0\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
 	}
 	assertFileContent(t, filepath.Join(skillDir, "SKILL.md"), "---\nname: notes\ndescription: Take notes\n---\nNew body\n")
+	assertFileContent(t, filepath.Join(skillDir, ".skill-meta.yaml"), "version: 1\norigin:\n  type: github\n")
 	assertFileContent(t, filepath.Join(skillDir, "references", "example.md"), "example\n")
 	if _, err := os.Stat(filepath.Join(skillDir, "stale.md")); !os.IsNotExist(err) {
 		t.Fatalf("expected stale file removed, got err %v", err)

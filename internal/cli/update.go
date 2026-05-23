@@ -193,6 +193,9 @@ func applyPendingUpdate(pending pendingUpdatePaths) error {
 		if entry.Name() == ".update-pending" {
 			continue
 		}
+		if entry.Name() == ".skill-meta.yaml" && !pathExists(filepath.Join(tmp, ".skill-meta.yaml")) {
+			continue
+		}
 		if err := os.RemoveAll(filepath.Join(skillDir, entry.Name())); err != nil {
 			return err
 		}
@@ -458,6 +461,11 @@ func containsFlag(report safetyReport, name string) bool {
 
 func isExecutableAdded(fromMode, toMode os.FileMode) bool {
 	return fromMode&0o111 == 0 && toMode&0o111 != 0
+}
+
+func pathExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
 }
 
 func snapshotFiles(path string) (map[string]snapshotFile, error) {
