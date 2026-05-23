@@ -265,7 +265,7 @@ func runCheckWithPoller(args []string, stdout io.Writer, stderr io.Writer, gf gl
 		}
 
 		// Check if any files other than SKILL.md differ from live
-		multiFileChange, err := detectMultiFileChange(skillName, libraryPath, meta, upstreamTree, upstreamPath)
+		multiFileChange, upstreamSkillSHA, err := detectMultiFileChange(skillName, libraryPath, meta, upstreamTree, upstreamPath)
 		if err != nil {
 			fmt.Fprintf(outWriter, "%s: error (tree comparison failed)\n", skillName)
 			results = append(results, checkResult{
@@ -295,7 +295,38 @@ func runCheckWithPoller(args []string, stdout io.Writer, stderr io.Writer, gf gl
 			continue
 		}
 
-		// Only SKILL.md differs (or no diffs): proceed with staging
+		// Check if SKILL.md content actually changed. If upstream commit advanced but
+		// SKILL.md blob SHA is identical to live, skip staging — it's a no-op update.
+		liveSkillContent, liveReadErr := os.ReadFile(filepath.Join(libraryPath, skillName, "SKILL.md"))
+		if liveReadErr != nil {
+			fmt.Fprintf(outWriter, "%s: error (read live SKILL.md)\n", skillName)
+			results = append(results, checkResult{
+				Skill:  skillName,
+				Status: "error",
+				Error:  liveReadErr.Error(),
+			})
+			if err := stateDB.RefreshSkillPollCheckedAt(skillName); err != nil {
+				fmt.Fprintf(stderr, "refresh poll for %s: %v\n", skillName, err)
+				return ExitOpError
+			}
+			continue
+		}
+		liveSkillSHA := gitBlobSHA(liveSkillContent)
+		if upstreamSkillSHA != "" && liveSkillSHA == upstreamSkillSHA {
+			// Commit advanced upstream but SKILL.md is unchanged — advance poll cache, no staging.
+			if err := stateDB.UpsertSkillPoll(skillName, newCommit, etag); err != nil {
+				fmt.Fprintf(stderr, "upsert poll for %s: %v\n", skillName, err)
+				return ExitOpError
+			}
+			fmt.Fprintf(outWriter, "%s: checked (no change)\n", skillName)
+			results = append(results, checkResult{
+				Skill:  skillName,
+				Status: "checked",
+			})
+			continue
+		}
+
+		// SKILL.md content differs: proceed with staging
 		if err := stageUpdate(skillName, libraryPath, meta, newCommit); err != nil {
 			fmt.Fprintf(outWriter, "%s: error (fetch failed)\n", skillName)
 			results = append(results, checkResult{
@@ -424,22 +455,21 @@ func isWhitelistedLocalPath(rel string) bool {
 		return false
 	}
 	first := parts[0]
-	if first == ".skill-meta.yaml" || first == ".update-pending" {
-		return true
-	}
-	// Dotfiles at root (.git, .DS_Store, user dotfiles, etc.) — never tracked upstream.
-	if strings.HasPrefix(first, ".") {
+	switch first {
+	case ".skill-meta.yaml", ".update-pending", // manager-generated
+		".git", ".DS_Store", ".gitignore": // never legitimate upstream skill content
 		return true
 	}
 	return false
 }
 
-// Returns true if any files other than SKILL.md differ (considering whitelisted local files).
+// Returns (multiFileChange bool, upstreamSkillSHA string, err error).
+// upstreamSkillSHA is the git blob SHA of SKILL.md in the upstream tree ("" if not present).
 // Whitelisted paths (not counted as divergence if only in live, not upstream):
 //   - .skill-meta.yaml
 //   - .update-pending/**
-//   - anything starting with . at root
-func detectMultiFileChange(skillName string, libraryPath string, meta skillMeta, upstreamTree []TreeEntry, upstreamPath string) (bool, error) {
+//   - .git, .DS_Store, .gitignore
+func detectMultiFileChange(skillName string, libraryPath string, meta skillMeta, upstreamTree []TreeEntry, upstreamPath string) (bool, string, error) {
 	skillDir := filepath.Join(libraryPath, skillName)
 
 	// Build a map of upstream entries. Entries from FetchTree have the full path from repo root,
@@ -450,6 +480,7 @@ func detectMultiFileChange(skillName string, libraryPath string, meta skillMeta,
 		prefix = strings.Trim(upstreamPath, "/") + "/"
 	}
 
+	var upstreamSkillSHA string
 	for _, entry := range upstreamTree {
 		// Remove the prefix to get skill-relative path
 		relativePath := entry.Path
@@ -458,6 +489,7 @@ func detectMultiFileChange(skillName string, libraryPath string, meta skillMeta,
 		}
 		upstreamMap[relativePath] = entry.SHA
 	}
+	upstreamSkillSHA = upstreamMap["SKILL.md"]
 
 	// Check each upstream file against live
 	for upstreamPath, upstreamSHA := range upstreamMap {
@@ -469,19 +501,19 @@ func detectMultiFileChange(skillName string, libraryPath string, meta skillMeta,
 		liveFilePath := filepath.Join(skillDir, filepath.FromSlash(upstreamPath))
 		content, err := os.ReadFile(liveFilePath)
 		if err != nil && !os.IsNotExist(err) {
-			return false, fmt.Errorf("read live file %s: %w", upstreamPath, err)
+			return false, upstreamSkillSHA, fmt.Errorf("read live file %s: %w", upstreamPath, err)
 		}
 
 		if os.IsNotExist(err) {
 			// File exists upstream but not in live: multi-file change
-			return true, nil
+			return true, upstreamSkillSHA, nil
 		}
 
 		// File exists in both: check if content differs
 		liveSHA := gitBlobSHA(content)
 		if liveSHA != upstreamSHA {
 			// Content differs: multi-file change
-			return true, nil
+			return true, upstreamSkillSHA, nil
 		}
 	}
 
@@ -527,14 +559,14 @@ func detectMultiFileChange(skillName string, libraryPath string, meta skillMeta,
 
 		return nil
 	}); err != nil {
-		return false, err
+		return false, upstreamSkillSHA, err
 	}
 
 	if deletionFound {
-		return true, nil
+		return true, upstreamSkillSHA, nil
 	}
 
-	return false, nil
+	return false, upstreamSkillSHA, nil
 }
 
 // stageUpdate creates the .update-pending directory with snapshots.

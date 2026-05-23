@@ -1699,9 +1699,10 @@ origin:
 		t.Fatalf("write meta: %v", err)
 	}
 
-	// Create local-only dotfiles that shouldn't count as divergence
-	if err := os.WriteFile(filepath.Join(skillDir, ".myconfig"), []byte("local config\n"), 0644); err != nil {
-		t.Fatalf("write .myconfig: %v", err)
+	// Create local-only manager-generated/whitelisted dotfiles that shouldn't count as divergence.
+	// .gitignore is explicitly whitelisted — its presence in live but not upstream is not a deletion.
+	if err := os.WriteFile(filepath.Join(skillDir, ".gitignore"), []byte("*.swp\n"), 0644); err != nil {
+		t.Fatalf("write .gitignore: %v", err)
 	}
 
 	newSKILLContent := []byte("---\nname: pdf\n---\nBody v2\n")
@@ -1721,7 +1722,7 @@ origin:
 		},
 		tree: map[string][]TreeEntry{
 			"user/pdf-skill:def5678:": {
-				// Upstream only has SKILL.md, no .myconfig or .skill-meta.yaml
+				// Upstream only has SKILL.md, no .gitignore or .skill-meta.yaml
 				{Path: "SKILL.md", SHA: gitBlobSHA(newSKILLContent), Type: "blob"},
 			},
 		},
@@ -1840,5 +1841,109 @@ origin:
 	}
 	if strings.Contains(string(data), "def5678") {
 		t.Fatalf("origin.commit should NOT advance on multi-file deletion, but it did")
+	}
+}
+
+// TestCheckSkipsNoOpUpdate verifies that when upstream commit advances but SKILL.md blob
+// SHA is identical to live, the check skips staging (no .update-pending, no updates row)
+// but still advances skill_polls to the new commit and etag.
+func TestCheckSkipsNoOpUpdate(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+
+	stateDB, err := state.Open(home)
+	if err != nil {
+		t.Fatalf("Open state: %v", err)
+	}
+	defer stateDB.Close()
+
+	libraryPath := filepath.Join(home, "library")
+	skillDir := filepath.Join(libraryPath, "pdf")
+	if err := os.MkdirAll(skillDir, 0755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	// Live SKILL.md with specific content
+	liveContent := []byte("---\nname: pdf\ndescription: PDF tool\n---\nBody unchanged\n")
+	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), liveContent, 0644); err != nil {
+		t.Fatalf("write SKILL.md: %v", err)
+	}
+
+	metaContent := `version: 1
+origin:
+  type: github
+  url: https://github.com/user/pdf-skill
+  commit: abc1234
+`
+	if err := os.WriteFile(filepath.Join(skillDir, ".skill-meta.yaml"), []byte(metaContent), 0644); err != nil {
+		t.Fatalf("write meta: %v", err)
+	}
+
+	// Poller returns a new commit SHA
+	poller := &fakePoller{
+		responses: map[string]fakeResponse{
+			"user/pdf-skill": {
+				commit: "def5678",
+				etag:   "w/\"new-etag\"",
+			},
+		},
+	}
+
+	// Upstream tree has SKILL.md with the same blob SHA as live — commit advanced but content unchanged
+	oldFetcher := fetcher
+	fetcher = &fakeFetcher{
+		// FetchFile should NOT be called (no staging)
+		tree: map[string][]TreeEntry{
+			"user/pdf-skill:def5678:": {
+				{Path: "SKILL.md", SHA: gitBlobSHA(liveContent), Type: "blob"},
+			},
+		},
+	}
+	defer func() { fetcher = oldFetcher }()
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := runCheckWithPoller([]string{"--force"}, &stdout, &stderr, globalFlags{}, poller)
+	if code != 0 {
+		t.Fatalf("runCheck returned %d, want 0\nstderr: %s", code, stderr.String())
+	}
+
+	output := stdout.String()
+	// Should report "no change" (not "updated")
+	if !strings.Contains(output, "no change") {
+		t.Fatalf("stdout should contain 'no change', got:\n%s", output)
+	}
+	if strings.Contains(output, "updated") {
+		t.Fatalf("stdout should NOT contain 'updated' for no-op, got:\n%s", output)
+	}
+
+	// .update-pending must NOT be created
+	pendingRoot := filepath.Join(skillDir, ".update-pending")
+	if _, err := os.Stat(pendingRoot); !os.IsNotExist(err) {
+		t.Fatalf("should NOT create .update-pending when SKILL.md is unchanged")
+	}
+
+	// updates table must NOT have a row
+	pending, err := stateDB.GetPendingUpdate("pdf")
+	if err != nil {
+		t.Fatalf("GetPendingUpdate: %v", err)
+	}
+	if pending != nil {
+		t.Fatalf("should not insert update when SKILL.md is unchanged, got: %+v", pending)
+	}
+
+	// skill_polls MUST be advanced to the new commit and etag
+	poll, err := stateDB.GetSkillPoll("pdf")
+	if err != nil {
+		t.Fatalf("GetSkillPoll: %v", err)
+	}
+	if poll == nil {
+		t.Fatalf("skill_polls should exist after check")
+	}
+	if poll.LastCommit != "def5678" {
+		t.Fatalf("skill_polls.last_commit should be advanced to def5678, got: %s", poll.LastCommit)
+	}
+	if poll.ETag != "w/\"new-etag\"" {
+		t.Fatalf("skill_polls.etag should be updated to new-etag, got: %s", poll.ETag)
 	}
 }
