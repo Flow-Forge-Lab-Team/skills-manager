@@ -81,7 +81,7 @@ func runStatus(args []string, stdout io.Writer, stderr io.Writer, gf globalFlags
 		fmt.Fprintln(humanOut)
 		fmt.Fprintf(humanOut, "Unregistered:     %d detected", unregCount)
 		if unregCount > 0 {
-			fmt.Fprintf(humanOut, " (run `skills-manager scan`)")
+			fmt.Fprintf(humanOut, " (outside library; `scan` will be added with ingest)")
 		}
 		fmt.Fprintln(humanOut)
 		fmt.Fprintf(humanOut, "Scheduled checks: %s\n", sched)
