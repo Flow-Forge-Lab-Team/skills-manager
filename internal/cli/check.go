@@ -1,7 +1,9 @@
 package cli
 
 import (
+	"crypto/sha1"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -15,10 +17,18 @@ import (
 	"github.com/Flow-Forge-Lab-Team/skills-manager/internal/state"
 )
 
-// GitHubFetcher is an interface for fetching files from GitHub.
+// TreeEntry represents a single entry in a GitHub tree.
+type TreeEntry struct {
+	Path string // Path relative to repo root
+	SHA  string // Git blob/tree SHA
+	Type string // "blob" or "tree"
+}
+
+// GitHubFetcher is an interface for fetching files and trees from GitHub.
 // It can be overridden in tests.
 type GitHubFetcher interface {
 	FetchFile(owner, repo, ref, path string) ([]byte, error)
+	FetchTree(owner, repo, ref, subPath string) ([]TreeEntry, error)
 }
 
 // defaultFetcher implements GitHubFetcher using gh CLI.
@@ -26,6 +36,10 @@ type defaultFetcher struct{}
 
 func (f *defaultFetcher) FetchFile(owner, repo, ref, path string) ([]byte, error) {
 	return fetchFileFromGitHub(owner, repo, ref, path)
+}
+
+func (f *defaultFetcher) FetchTree(owner, repo, ref, subPath string) ([]TreeEntry, error) {
+	return fetchTreeFromGitHub(owner, repo, ref, subPath)
 }
 
 var fetcher GitHubFetcher = &defaultFetcher{}
@@ -202,7 +216,86 @@ func runCheckWithPoller(args []string, stdout io.Writer, stderr io.Writer, gf gl
 			continue
 		}
 
-		// New commit detected: stage the update FIRST, before caching the new commit+etag
+		// New commit detected: before staging, check if only SKILL.md differs
+		// (reject multi-file upstream changes in v0.1)
+		treeOwner, treeRepo, treeErr := parseGitHubURL(meta.Origin.URL)
+		if treeErr != nil {
+			fmt.Fprintf(outWriter, "%s: error (parse url)\n", skillName)
+			results = append(results, checkResult{
+				Skill:  skillName,
+				Status: "error",
+				Error:  treeErr.Error(),
+			})
+			if err := stateDB.RefreshSkillPollCheckedAt(skillName); err != nil {
+				fmt.Fprintf(stderr, "refresh poll for %s: %v\n", skillName, err)
+				return ExitOpError
+			}
+			continue
+		}
+
+		// Fetch the upstream tree to check for multi-file changes
+		upstreamPath := meta.Origin.Path
+		if !isSafeGitHubPath(upstreamPath) {
+			fmt.Fprintf(outWriter, "%s: error (unsafe origin.path)\n", skillName)
+			results = append(results, checkResult{
+				Skill:  skillName,
+				Status: "error",
+				Error:  "unsafe origin.path",
+			})
+			if err := stateDB.RefreshSkillPollCheckedAt(skillName); err != nil {
+				fmt.Fprintf(stderr, "refresh poll for %s: %v\n", skillName, err)
+				return ExitOpError
+			}
+			continue
+		}
+
+		upstreamTree, treeErr := fetcher.FetchTree(treeOwner, treeRepo, newCommit, upstreamPath)
+		if treeErr != nil {
+			fmt.Fprintf(outWriter, "%s: error (fetch tree failed)\n", skillName)
+			results = append(results, checkResult{
+				Skill:  skillName,
+				Status: "error",
+				Error:  treeErr.Error(),
+			})
+			if err := stateDB.RefreshSkillPollCheckedAt(skillName); err != nil {
+				fmt.Fprintf(stderr, "refresh poll for %s: %v\n", skillName, err)
+				return ExitOpError
+			}
+			continue
+		}
+
+		// Check if any files other than SKILL.md differ from live
+		multiFileChange, err := detectMultiFileChange(skillName, libraryPath, meta, upstreamTree, upstreamPath)
+		if err != nil {
+			fmt.Fprintf(outWriter, "%s: error (tree comparison failed)\n", skillName)
+			results = append(results, checkResult{
+				Skill:  skillName,
+				Status: "error",
+				Error:  err.Error(),
+			})
+			if err := stateDB.RefreshSkillPollCheckedAt(skillName); err != nil {
+				fmt.Fprintf(stderr, "refresh poll for %s: %v\n", skillName, err)
+				return ExitOpError
+			}
+			continue
+		}
+
+		if multiFileChange {
+			fmt.Fprintf(outWriter, "%s: error (multi-file upstream changes not supported in v0.1; only SKILL.md updates supported)\n", skillName)
+			results = append(results, checkResult{
+				Skill:  skillName,
+				Status: "error",
+				Error:  "multi-file upstream change",
+			})
+			// Only refresh last_checked_at; do NOT advance last_commit
+			if err := stateDB.RefreshSkillPollCheckedAt(skillName); err != nil {
+				fmt.Fprintf(stderr, "refresh poll for %s: %v\n", skillName, err)
+				return ExitOpError
+			}
+			continue
+		}
+
+		// Only SKILL.md differs (or no diffs): proceed with staging
 		if err := stageUpdate(skillName, libraryPath, meta, newCommit); err != nil {
 			fmt.Fprintf(outWriter, "%s: error (fetch failed)\n", skillName)
 			results = append(results, checkResult{
@@ -314,6 +407,64 @@ func parseGitHubURL(url string) (owner, repo string, err error) {
 	}
 
 	return owner, repo, nil
+}
+
+// detectMultiFileChange compares the upstream tree against the live skill directory.
+// Returns true if any files other than SKILL.md differ (considering whitelisted local files).
+// Whitelisted paths (not counted as divergence if only in live, not upstream):
+//   - .skill-meta.yaml
+//   - .update-pending/**
+//   - anything starting with . at root
+func detectMultiFileChange(skillName string, libraryPath string, meta skillMeta, upstreamTree []TreeEntry, upstreamPath string) (bool, error) {
+	skillDir := filepath.Join(libraryPath, skillName)
+
+	// Build a map of upstream entries. Entries from FetchTree have the full path from repo root,
+	// which includes upstreamPath as a prefix. Strip that to get skill-relative paths.
+	upstreamMap := make(map[string]string)
+	prefix := ""
+	if upstreamPath != "" {
+		prefix = strings.Trim(upstreamPath, "/") + "/"
+	}
+
+	for _, entry := range upstreamTree {
+		// Remove the prefix to get skill-relative path
+		relativePath := entry.Path
+		if prefix != "" && strings.HasPrefix(relativePath, prefix) {
+			relativePath = relativePath[len(prefix):]
+		}
+		upstreamMap[relativePath] = entry.SHA
+	}
+
+	// Check each upstream file against live
+	for upstreamPath, upstreamSHA := range upstreamMap {
+		if upstreamPath == "SKILL.md" {
+			// SKILL.md is expected to differ; continue
+			continue
+		}
+
+		liveFilePath := filepath.Join(skillDir, filepath.FromSlash(upstreamPath))
+		content, err := os.ReadFile(liveFilePath)
+		if err != nil && !os.IsNotExist(err) {
+			return false, fmt.Errorf("read live file %s: %w", upstreamPath, err)
+		}
+
+		if os.IsNotExist(err) {
+			// File exists upstream but not in live: multi-file change
+			return true, nil
+		}
+
+		// File exists in both: check if content differs
+		liveSHA := gitBlobSHA(content)
+		if liveSHA != upstreamSHA {
+			// Content differs: multi-file change
+			return true, nil
+		}
+	}
+
+	// Don't check if live has files upstream doesn't—those are local-only additions
+	// (like .skill-meta.yaml, references/, scripts/, etc.) and don't count as divergence.
+
+	return false, nil
 }
 
 // stageUpdate creates the .update-pending directory with snapshots.
@@ -567,6 +718,16 @@ func githubContentsPath(originPath string) string {
 	return path.Join(trimmed, "SKILL.md")
 }
 
+// gitBlobSHA computes the git blob SHA for the given content using the standard formula:
+// sha1("blob " + len(content) + "\0" + content)
+func gitBlobSHA(content []byte) string {
+	header := fmt.Sprintf("blob %d\x00", len(content))
+	h := sha1.New()
+	h.Write([]byte(header))
+	h.Write(content)
+	return fmt.Sprintf("%x", h.Sum(nil))
+}
+
 // fetchFileFromGitHub fetches a single file from a GitHub repo at a given ref.
 // Uses argv-style invocation (no shell) to prevent command injection attacks.
 func fetchFileFromGitHub(owner, repo, ref, filePath string) ([]byte, error) {
@@ -594,4 +755,48 @@ func fetchFileFromGitHub(owner, repo, ref, filePath string) ([]byte, error) {
 	}
 
 	return decoded, nil
+}
+
+// fetchTreeFromGitHub fetches the tree for a given ref and filters to entries under subPath.
+// Returns blob and tree entries, filtering to those whose path starts with subPath/ (if non-empty).
+func fetchTreeFromGitHub(owner, repo, ref, subPath string) ([]TreeEntry, error) {
+	var out strings.Builder
+	var errOut strings.Builder
+
+	// Call gh api to fetch the recursive tree
+	cmd := exec.Command("gh", "api",
+		"repos/"+owner+"/"+repo+"/git/trees/"+ref+"?recursive=true",
+		"--jq", ".tree[] | select(.type==\"blob\") | {path, sha}",
+	)
+	cmd.Stdout = &out
+	cmd.Stderr = &errOut
+
+	if err := cmd.Run(); err != nil {
+		return nil, fmt.Errorf("fetch tree from %s:%s: %v (stderr: %s)", owner+"/"+repo, ref, err, errOut.String())
+	}
+
+	// Parse the output line-by-line (one JSON object per line)
+	var entries []TreeEntry
+	for _, line := range strings.Split(strings.TrimSpace(out.String()), "\n") {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		var entry TreeEntry
+		if err := json.Unmarshal([]byte(line), &entry); err != nil {
+			return nil, fmt.Errorf("parse tree entry: %w", err)
+		}
+		entry.Type = "blob" // We only request blobs via jq filter
+
+		// Filter to entries under subPath if provided
+		if subPath != "" {
+			prefix := strings.Trim(subPath, "/") + "/"
+			if !strings.HasPrefix(entry.Path, prefix) {
+				continue
+			}
+		}
+
+		entries = append(entries, entry)
+	}
+
+	return entries, nil
 }

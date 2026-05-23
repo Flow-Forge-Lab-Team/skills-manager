@@ -58,7 +58,9 @@ var ErrGHNotFound = &MockError{msg: "gh CLI not found"}
 // fakeFetcher is a mock GitHubFetcher for testing.
 type fakeFetcher struct {
 	files               map[string][]byte
+	tree                map[string][]TreeEntry // keyed by "owner/repo:ref:subPath"
 	err                 error
+	treeErr             error
 	fetchedPathsForTest *[]string // optional: if set, tracks paths requested
 }
 
@@ -75,6 +77,18 @@ func (f *fakeFetcher) FetchFile(owner, repo, ref, path string) ([]byte, error) {
 		return content, nil
 	}
 	return nil, &MockError{msg: "file not found"}
+}
+
+func (f *fakeFetcher) FetchTree(owner, repo, ref, subPath string) ([]TreeEntry, error) {
+	if f.treeErr != nil {
+		return nil, f.treeErr
+	}
+	key := owner + "/" + repo + ":" + ref + ":" + subPath
+	if tree, ok := f.tree[key]; ok {
+		return tree, nil
+	}
+	// Return empty tree if not found
+	return []TreeEntry{}, nil
 }
 
 func TestCheckHappyPath(t *testing.T) {
@@ -121,10 +135,16 @@ origin:
 		},
 	}
 
+	newSKILLContent := []byte("---\nname: pdf\ndescription: PDF tool\n---\nBody v2\n")
 	oldFetcher := fetcher
 	fetcher = &fakeFetcher{
 		files: map[string][]byte{
-			"user/pdf-skill:def5678:SKILL.md": []byte("---\nname: pdf\ndescription: PDF tool\n---\nBody v2\n"),
+			"user/pdf-skill:def5678:SKILL.md": newSKILLContent,
+		},
+		tree: map[string][]TreeEntry{
+			"user/pdf-skill:def5678:": {
+				{Path: "SKILL.md", SHA: gitBlobSHA(newSKILLContent), Type: "blob"},
+			},
 		},
 	}
 	defer func() { fetcher = oldFetcher }()
@@ -223,10 +243,16 @@ origin:
 		},
 	}
 
+	newSKILLContent := []byte("---\nname: pdf\n---\nBody updated\n")
 	oldFetcher := fetcher
 	fetcher = &fakeFetcher{
 		files: map[string][]byte{
-			"user/pdf-skill:def5678:SKILL.md": []byte("---\nname: pdf\n---\nBody updated\n"),
+			"user/pdf-skill:def5678:SKILL.md": newSKILLContent,
+		},
+		tree: map[string][]TreeEntry{
+			"user/pdf-skill:def5678:": {
+				{Path: "SKILL.md", SHA: gitBlobSHA(newSKILLContent), Type: "blob"},
+			},
 		},
 	}
 	defer func() { fetcher = oldFetcher }()
@@ -402,9 +428,15 @@ origin:
 		},
 	}
 
+	newSKILLContent := []byte("---\nname: pdf\n---\nBody updated\n")
 	oldFetcher := fetcher
 	fetcher = &fakeFetcher{
 		err: &MockError{msg: "network error"},
+		tree: map[string][]TreeEntry{
+			"user/pdf-skill:def5678:": {
+				{Path: "SKILL.md", SHA: gitBlobSHA(newSKILLContent), Type: "blob"},
+			},
+		},
 	}
 	defer func() { fetcher = oldFetcher }()
 
@@ -499,9 +531,15 @@ origin:
 		},
 	}
 
+	newSKILLContent := []byte("---\nname: pdf\n---\nBody updated\n")
 	oldFetcher := fetcher
 	fetcher = &fakeFetcher{
 		err: &MockError{msg: "fetch error"},
+		tree: map[string][]TreeEntry{
+			"user/pdf-skill:def5678:": {
+				{Path: "SKILL.md", SHA: gitBlobSHA(newSKILLContent), Type: "blob"},
+			},
+		},
 	}
 	defer func() { fetcher = oldFetcher }()
 
@@ -559,10 +597,16 @@ origin:
 		},
 	}
 
+	retrySKILLContent := []byte("---\nname: pdf\n---\nBody updated\n")
 	oldFetcher2 := fetcher
 	fetcher = &fakeFetcher{
 		files: map[string][]byte{
-			"user/pdf-skill:def5678:SKILL.md": []byte("---\nname: pdf\n---\nBody updated\n"),
+			"user/pdf-skill:def5678:SKILL.md": retrySKILLContent,
+		},
+		tree: map[string][]TreeEntry{
+			"user/pdf-skill:def5678:": {
+				{Path: "SKILL.md", SHA: gitBlobSHA(retrySKILLContent), Type: "blob"},
+			},
 		},
 	}
 	defer func() { fetcher = oldFetcher2 }()
@@ -635,10 +679,16 @@ origin:
 		},
 	}
 
+	newSKILLContent := []byte("---\nname: pdf\n---\nBody v2\n")
 	oldFetcher := fetcher
 	fetcher = &fakeFetcher{
 		files: map[string][]byte{
-			"user/pdf-skill:def5678:SKILL.md": []byte("---\nname: pdf\n---\nBody v2\n"),
+			"user/pdf-skill:def5678:SKILL.md": newSKILLContent,
+		},
+		tree: map[string][]TreeEntry{
+			"user/pdf-skill:def5678:": {
+				{Path: "SKILL.md", SHA: gitBlobSHA(newSKILLContent), Type: "blob"},
+			},
 		},
 	}
 	defer func() { fetcher = oldFetcher }()
@@ -723,10 +773,16 @@ origin:
 		},
 	}
 
+	newSKILLContent := []byte("---\nname: pdf\n---\nBody v2\n")
 	oldFetcher := fetcher
 	fetcher = &fakeFetcher{
 		files: map[string][]byte{
-			"user/pdf-skill:def5678:SKILL.md": []byte("---\nname: pdf\n---\nBody v2\n"),
+			"user/pdf-skill:def5678:SKILL.md": newSKILLContent,
+		},
+		tree: map[string][]TreeEntry{
+			"user/pdf-skill:def5678:": {
+				{Path: "SKILL.md", SHA: gitBlobSHA(newSKILLContent), Type: "blob"},
+			},
 		},
 	}
 	defer func() { fetcher = oldFetcher }()
@@ -795,10 +851,16 @@ origin:
 		},
 	}
 
+	newSKILLContent := []byte("---\nname: pdf\n---\nBody v2\n")
 	oldFetcher := fetcher
 	fetcher = &fakeFetcher{
 		files: map[string][]byte{
-			"user/pdf-skill:def5678:SKILL.md": []byte("---\nname: pdf\n---\nBody v2\n"),
+			"user/pdf-skill:def5678:SKILL.md": newSKILLContent,
+		},
+		tree: map[string][]TreeEntry{
+			"user/pdf-skill:def5678:": {
+				{Path: "SKILL.md", SHA: gitBlobSHA(newSKILLContent), Type: "blob"},
+			},
 		},
 	}
 	defer func() { fetcher = oldFetcher }()
@@ -944,14 +1006,20 @@ origin:
 		},
 	}
 
+	newSKILLContent := []byte("---\nname: pdf\n---\nBody v2\n")
 	oldFetcher := fetcher
 	fetchedPaths := []string{}
 	fetcher = &fakeFetcher{
 		files: map[string][]byte{
 			// Should fetch from skills/pdf/SKILL.md, not SKILL.md
-			"user/repo:def5678:skills/pdf/SKILL.md": []byte("---\nname: pdf\n---\nBody v2\n"),
+			"user/repo:def5678:skills/pdf/SKILL.md": newSKILLContent,
 		},
 		fetchedPathsForTest: &fetchedPaths,
+		tree: map[string][]TreeEntry{
+			"user/repo:def5678:skills/pdf": {
+				{Path: "skills/pdf/SKILL.md", SHA: gitBlobSHA(newSKILLContent), Type: "blob"},
+			},
+		},
 	}
 	defer func() { fetcher = oldFetcher }()
 
@@ -1037,13 +1105,19 @@ origin:
 		},
 	}
 
+	newSKILLContent := []byte("---\nname: pdf\n---\nBody v2\n")
 	oldFetcher := fetcher
 	fetchedPaths := []string{}
 	fetcher = &fakeFetcher{
 		files: map[string][]byte{
-			"user/pdf-skill:def5678:SKILL.md": []byte("---\nname: pdf\n---\nBody v2\n"),
+			"user/pdf-skill:def5678:SKILL.md": newSKILLContent,
 		},
 		fetchedPathsForTest: &fetchedPaths,
+		tree: map[string][]TreeEntry{
+			"user/pdf-skill:def5678:": {
+				{Path: "SKILL.md", SHA: gitBlobSHA(newSKILLContent), Type: "blob"},
+			},
+		},
 	}
 	defer func() { fetcher = oldFetcher }()
 
@@ -1119,10 +1193,17 @@ origin:
 		},
 	}
 
+	newSKILLContent := []byte("---\nname: advanced\ndescription: Advanced skill\n---\nBody v1 updated\n")
 	oldFetcher := fetcher
 	fetcher = &fakeFetcher{
 		files: map[string][]byte{
-			"user/advanced-skill:def5678:SKILL.md": []byte("---\nname: advanced\ndescription: Advanced skill\n---\nBody v1 updated\n"),
+			"user/advanced-skill:def5678:SKILL.md": newSKILLContent,
+		},
+		tree: map[string][]TreeEntry{
+			"user/advanced-skill:def5678:": {
+				// Upstream only has SKILL.md, no references or scripts (they're local)
+				{Path: "SKILL.md", SHA: gitBlobSHA(newSKILLContent), Type: "blob"},
+			},
 		},
 	}
 	defer func() { fetcher = oldFetcher }()
@@ -1383,5 +1464,280 @@ func TestGitHubContentsPath(t *testing.T) {
 				t.Errorf("githubContentsPath result should not contain %q: %q", string(filepath.Separator), got)
 			}
 		})
+	}
+}
+
+// TestCheckDetectsMultiFileUpstreamChange tests that multi-file upstream changes
+// are rejected and reported as errors, without staging or advancing last_commit.
+func TestCheckDetectsMultiFileUpstreamChange(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+
+	stateDB, err := state.Open(home)
+	if err != nil {
+		t.Fatalf("Open state: %v", err)
+	}
+	defer stateDB.Close()
+
+	libraryPath := filepath.Join(home, "library")
+	skillDir := filepath.Join(libraryPath, "pdf")
+	if err := os.MkdirAll(skillDir, 0755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	// Write initial SKILL.md
+	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte("---\nname: pdf\n---\nBody v1\n"), 0644); err != nil {
+		t.Fatalf("write SKILL.md: %v", err)
+	}
+
+	metaContent := `version: 1
+origin:
+  type: github
+  url: https://github.com/user/pdf-skill
+  commit: abc1234
+`
+	if err := os.WriteFile(filepath.Join(skillDir, ".skill-meta.yaml"), []byte(metaContent), 0644); err != nil {
+		t.Fatalf("write meta: %v", err)
+	}
+
+	// Create a sibling file locally
+	if err := os.MkdirAll(filepath.Join(skillDir, "references"), 0755); err != nil {
+		t.Fatalf("mkdir references: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(skillDir, "references", "foo.md"), []byte("Local reference\n"), 0644); err != nil {
+		t.Fatalf("write references/foo.md: %v", err)
+	}
+
+	poller := &fakePoller{
+		responses: map[string]fakeResponse{
+			"user/pdf-skill": {
+				commit: "def5678",
+				etag:   "w/\"new-etag\"",
+			},
+		},
+	}
+
+	oldFetcher := fetcher
+	fetcher = &fakeFetcher{
+		files: map[string][]byte{
+			"user/pdf-skill:def5678:SKILL.md": []byte("---\nname: pdf\n---\nBody v2\n"),
+		},
+		tree: map[string][]TreeEntry{
+			"user/pdf-skill:def5678:": {
+				// Upstream has both SKILL.md and a different references/foo.md
+				{Path: "SKILL.md", SHA: gitBlobSHA([]byte("---\nname: pdf\n---\nBody v2\n")), Type: "blob"},
+				{Path: "references/foo.md", SHA: gitBlobSHA([]byte("Different reference\n")), Type: "blob"},
+			},
+		},
+	}
+	defer func() { fetcher = oldFetcher }()
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := runCheckWithPoller([]string{"--force"}, &stdout, &stderr, globalFlags{}, poller)
+	if code != 0 {
+		t.Fatalf("runCheck returned %d, want 0", code)
+	}
+
+	output := stdout.String()
+	if !strings.Contains(output, "error") || !strings.Contains(output, "multi-file upstream") {
+		t.Fatalf("stdout should indicate multi-file error, got:\n%s", output)
+	}
+
+	// Verify .update-pending was NOT created
+	pendingRoot := filepath.Join(skillDir, ".update-pending")
+	if _, err := os.Stat(pendingRoot); !os.IsNotExist(err) {
+		t.Fatalf("should NOT create .update-pending on multi-file change")
+	}
+
+	// Verify updates table was NOT inserted
+	pending, err := stateDB.GetPendingUpdate("pdf")
+	if err != nil {
+		t.Fatalf("GetPendingUpdate: %v", err)
+	}
+	if pending != nil {
+		t.Fatalf("should not insert update on multi-file change")
+	}
+
+	// Verify skill_polls.last_commit was NOT advanced
+	poll, err := stateDB.GetSkillPoll("pdf")
+	if err != nil {
+		t.Fatalf("GetSkillPoll: %v", err)
+	}
+	if poll != nil && poll.LastCommit != "" {
+		t.Fatalf("skill_polls.last_commit should not be advanced on multi-file change, got: %s", poll.LastCommit)
+	}
+}
+
+// TestCheckAcceptsSingleFileChange tests that if only SKILL.md differs,
+// the update proceeds normally (no multi-file error).
+func TestCheckAcceptsSingleFileChange(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+
+	stateDB, err := state.Open(home)
+	if err != nil {
+		t.Fatalf("Open state: %v", err)
+	}
+	defer stateDB.Close()
+
+	libraryPath := filepath.Join(home, "library")
+	skillDir := filepath.Join(libraryPath, "pdf")
+	if err := os.MkdirAll(skillDir, 0755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte("---\nname: pdf\n---\nBody v1\n"), 0644); err != nil {
+		t.Fatalf("write SKILL.md: %v", err)
+	}
+
+	metaContent := `version: 1
+origin:
+  type: github
+  url: https://github.com/user/pdf-skill
+  commit: abc1234
+`
+	if err := os.WriteFile(filepath.Join(skillDir, ".skill-meta.yaml"), []byte(metaContent), 0644); err != nil {
+		t.Fatalf("write meta: %v", err)
+	}
+
+	newSKILLContent := []byte("---\nname: pdf\n---\nBody v2\n")
+	poller := &fakePoller{
+		responses: map[string]fakeResponse{
+			"user/pdf-skill": {
+				commit: "def5678",
+				etag:   "w/\"new-etag\"",
+			},
+		},
+	}
+
+	oldFetcher := fetcher
+	fetcher = &fakeFetcher{
+		files: map[string][]byte{
+			"user/pdf-skill:def5678:SKILL.md": newSKILLContent,
+		},
+		tree: map[string][]TreeEntry{
+			"user/pdf-skill:def5678:": {
+				// Only SKILL.md in upstream
+				{Path: "SKILL.md", SHA: gitBlobSHA(newSKILLContent), Type: "blob"},
+			},
+		},
+	}
+	defer func() { fetcher = oldFetcher }()
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := runCheckWithPoller([]string{"--force"}, &stdout, &stderr, globalFlags{}, poller)
+	if code != 0 {
+		t.Fatalf("runCheck returned %d, want 0\nstderr: %s", code, stderr.String())
+	}
+
+	output := stdout.String()
+	if !strings.Contains(output, "updated") {
+		t.Fatalf("stdout should show 'updated', got:\n%s", output)
+	}
+
+	// Verify .update-pending WAS created
+	pendingRoot := filepath.Join(skillDir, ".update-pending")
+	if _, err := os.Stat(pendingRoot); err != nil {
+		t.Fatalf("pending dir should be created: %v", err)
+	}
+
+	// Verify updates table WAS inserted
+	pending, err := stateDB.GetPendingUpdate("pdf")
+	if err != nil {
+		t.Fatalf("GetPendingUpdate: %v", err)
+	}
+	if pending == nil || pending.ToVersion != "def5678" {
+		t.Fatalf("update should be inserted, got: %+v", pending)
+	}
+
+	// Verify skill_polls WAS updated
+	poll, err := stateDB.GetSkillPoll("pdf")
+	if err != nil {
+		t.Fatalf("GetSkillPoll: %v", err)
+	}
+	if poll == nil || poll.LastCommit != "def5678" {
+		t.Fatalf("skill_polls.last_commit should be advanced to def5678, got: %+v", poll)
+	}
+}
+
+// TestCheckWhitelistsLocalFiles tests that local-only files (.skill-meta.yaml, .update-pending, etc.)
+// don't count as divergence when they exist in live but not upstream.
+func TestCheckWhitelistsLocalFiles(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+
+	stateDB, err := state.Open(home)
+	if err != nil {
+		t.Fatalf("Open state: %v", err)
+	}
+	defer stateDB.Close()
+
+	libraryPath := filepath.Join(home, "library")
+	skillDir := filepath.Join(libraryPath, "pdf")
+	if err := os.MkdirAll(skillDir, 0755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte("---\nname: pdf\n---\nBody v1\n"), 0644); err != nil {
+		t.Fatalf("write SKILL.md: %v", err)
+	}
+
+	metaContent := `version: 1
+origin:
+  type: github
+  url: https://github.com/user/pdf-skill
+  commit: abc1234
+`
+	if err := os.WriteFile(filepath.Join(skillDir, ".skill-meta.yaml"), []byte(metaContent), 0644); err != nil {
+		t.Fatalf("write meta: %v", err)
+	}
+
+	// Create local-only dotfiles that shouldn't count as divergence
+	if err := os.WriteFile(filepath.Join(skillDir, ".myconfig"), []byte("local config\n"), 0644); err != nil {
+		t.Fatalf("write .myconfig: %v", err)
+	}
+
+	newSKILLContent := []byte("---\nname: pdf\n---\nBody v2\n")
+	poller := &fakePoller{
+		responses: map[string]fakeResponse{
+			"user/pdf-skill": {
+				commit: "def5678",
+				etag:   "w/\"new-etag\"",
+			},
+		},
+	}
+
+	oldFetcher := fetcher
+	fetcher = &fakeFetcher{
+		files: map[string][]byte{
+			"user/pdf-skill:def5678:SKILL.md": newSKILLContent,
+		},
+		tree: map[string][]TreeEntry{
+			"user/pdf-skill:def5678:": {
+				// Upstream only has SKILL.md, no .myconfig or .skill-meta.yaml
+				{Path: "SKILL.md", SHA: gitBlobSHA(newSKILLContent), Type: "blob"},
+			},
+		},
+	}
+	defer func() { fetcher = oldFetcher }()
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := runCheckWithPoller([]string{"--force"}, &stdout, &stderr, globalFlags{}, poller)
+	if code != 0 {
+		t.Fatalf("runCheck returned %d, want 0\nstderr: %s", code, stderr.String())
+	}
+
+	output := stdout.String()
+	if !strings.Contains(output, "updated") {
+		t.Fatalf("stdout should show 'updated' (local files whitelisted), got:\n%s", output)
+	}
+
+	// Verify staging proceeded
+	pendingRoot := filepath.Join(skillDir, ".update-pending")
+	if _, err := os.Stat(pendingRoot); err != nil {
+		t.Fatalf("pending dir should be created: %v", err)
 	}
 }

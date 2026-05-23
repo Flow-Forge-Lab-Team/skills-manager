@@ -29,7 +29,7 @@ gh api repos/user/some-skill/commits/main --jq .sha
 # returns current main commit
 ```
 
-If returned SHA ≠ stored commit, update available. Diff = `git diff stored_commit..current_main` against the relevant file paths.
+If returned SHA ≠ stored commit, update available. Diff = `git diff stored_commit..current_main` against the relevant file paths. In v0.1, only SKILL.md updates are supported; upstream changes to other files are rejected with a clear error.
 
 Rate budget: with a GitHub token, 5,000 req/hr. 251 skills polled daily uses ~7 reqs/min on a one-shot scan — trivial. With ETag/`If-None-Match` headers, most poll calls return 304 (cheap and don't count against the strict limit).
 
