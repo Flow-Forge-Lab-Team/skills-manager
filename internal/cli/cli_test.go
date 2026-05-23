@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/Flow-Forge-Lab-Team/skills-manager/internal/state"
 )
 
 func TestVersion(t *testing.T) {
@@ -2257,5 +2259,126 @@ func TestUninstallRefusesUnknownArg(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "unknown uninstall argument") {
 		t.Fatalf("stderr = %q, want unknown argument message", stderr.String())
+	}
+}
+
+func TestRunStatus_BasicAndJSON(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+
+	// minimal library
+	writeFile(t, filepath.Join(home, "library", "catalog.yaml"), `version: 1
+skills:
+  - name: demo
+    categories: [Engineering]
+    compatibility:
+      mode: portable
+    requirements: {}
+`)
+	writeFile(t, filepath.Join(home, "library", "demo", "SKILL.md"), "demo skill\n")
+
+	// seed a detected unregistered
+	db, err := state.Open(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	db.Exec(`INSERT INTO detected (path, skill_name, detected_at, action) VALUES ('/p1', 'extra', ?, 'pending')`, time.Now().UTC().Format(time.RFC3339))
+	db.Close()
+
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{"status"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("status code=%d stderr=%s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "Library:          1 skills") {
+		t.Fatalf("stdout missing library count: %s", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "Unregistered:     1 detected") {
+		t.Fatalf("stdout missing unregistered: %s", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "pending FLO-238") {
+		t.Fatalf("stdout missing scheduled note: %s", stdout.String())
+	}
+
+	// json
+	stdout.Reset()
+	stderr.Reset()
+	code = Run([]string{"status", "--json"}, &stdout, &stderr) // --json consumed global
+	if code != 0 {
+		t.Fatal(code)
+	}
+	var j map[string]interface{}
+	if err := json.Unmarshal(stdout.Bytes(), &j); err != nil {
+		t.Fatalf("json unmarshal: %v out=%s", err, stdout.String())
+	}
+	if j["library_skills"].(float64) != 1 || j["unregistered"].(float64) != 1 {
+		t.Fatalf("json counts wrong: %+v", j)
+	}
+}
+
+func TestRunDoctor_ProblemsAndRebuild(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+
+	// library with gh req (will miss in test env)
+	writeFile(t, filepath.Join(home, "library", "catalog.yaml"), `version: 1
+skills:
+  - name: needs-gh
+    categories: [Engineering]
+    compatibility:
+      mode: portable
+    requirements:
+      tools:
+        - name: gh
+          required: true
+`)
+	writeFile(t, filepath.Join(home, "library", "needs-gh", "SKILL.md"), `---
+name: needs-gh
+---
+needs gh
+`)
+	writeFile(t, filepath.Join(home, "library", "needs-gh", ".skill-meta.yaml"), `version: 1
+requirements:
+  tools:
+    - name: definitely-missing-tool-abc123
+      required: true
+`)
+
+	// seed a manifest with drift (nonexistent path)
+	proj := t.TempDir()
+	m := installManifest{
+		Version:      1,
+		ProjectPath:  proj,
+		ProjectSlug:  "p",
+		ManagedPaths: []string{"missing/path"},
+		Files:        map[string]string{"missing/path": "deadbeef"},
+	}
+	if err := writeManifest(filepath.Join(home, "manifests", "p.json"), m); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{"doctor"}, &stdout, &stderr)
+	if code != 1 {
+		t.Fatalf("doctor should exit 1 on problems, got %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
+	}
+	out := stdout.String() + stderr.String()
+	if !strings.Contains(out, "definitely-missing-tool-abc123") {
+		t.Fatalf("missing tool problem not reported: %s", out)
+	}
+	if !strings.Contains(out, "manifest integrity") {
+		t.Fatalf("manifest problem not reported: %s", out)
+	}
+
+	// rebuild-state should work (even if drift)
+	stdout.Reset()
+	stderr.Reset()
+	code = Run([]string{"doctor", "--rebuild-state"}, &stdout, &stderr)
+	// after rebuild, state drift gone but tool still missing -> still 1
+	if code != 1 {
+		t.Fatalf("doctor --rebuild-state with other problems: code=%d out=%s", code, stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "rebuilt state.db") {
+		t.Fatalf("no rebuild message: %s", stdout.String())
 	}
 }

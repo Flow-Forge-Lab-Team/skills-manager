@@ -215,6 +215,7 @@ Forms:
   --safety <skill>     print a safety report for one pending update
   --accept-all-safe    apply every pending update that has no blocking flags;
                        refuses (exit 4) if any update is blocked
+` + globalFlagHelp()
 	case "set":
 		return `skills-manager set <skill> --compatibility <mode> [flags]
 
@@ -226,6 +227,19 @@ Flags:
   --harness <name>           target harness (required for exclusive)
   --harnesses <a,b,c>        target harnesses (required for compatible)
   --reason "<text>"          optional human note (exclusive mode)
+
+` + globalFlagHelp()
+	case "status":
+		return `skills-manager status
+
+Show library counts, pending updates, unregistered skills, stale scheduled check state.
+
+` + globalFlagHelp()
+	case "doctor":
+		return `skills-manager doctor [--rebuild-state] [--rebuild-catalog]
+
+Check manifests, fingerprints, catalog/state drift, required tools/MCP/credentials/runtimes.
+Rebuild derived state or catalog if requested. Non-zero exit on problems.
 
 ` + globalFlagHelp()
 	}
@@ -240,6 +254,8 @@ Commands:
   list        list skills in the canonical library
   show        show details for a single skill
   update      review and accept pending library updates
+  status      show library counts, pending, unregistered, scheduled state
+  doctor      diagnose problems; --rebuild-state --rebuild-catalog
   set         update a skill's compatibility declaration
   help        show help for a command
 
