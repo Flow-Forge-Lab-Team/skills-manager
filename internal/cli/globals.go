@@ -253,6 +253,18 @@ Forms:
                       refuses (exit 4) if any update is blocked
 
 ` + globalFlagHelp()
+	case "summarize":
+		return `skills-manager summarize <skill> (--auto | --handoff | --from <file>)
+
+Generate or import an advisory AI summary for a pending update. Raw diffs and
+deterministic safety flags remain the source of truth.
+
+Forms:
+  --auto          run the configured provider command
+  --handoff       write a prompt file for an agent fallback
+  --from <file>   validate and cache saved agent/provider output
+
+` + globalFlagHelp()
 	case "set":
 		return `skills-manager set <skill> --compatibility <mode> [flags]
 
@@ -336,6 +348,7 @@ Commands:
   match       preview ranked skills matching project categories+tags (with --explain --suggest)
   show        show details for a single skill
   update      review and accept pending library updates
+  summarize   generate or import advisory update summaries
   status      show library counts, pending, unregistered, scheduled state
   doctor      diagnose problems; --rebuild-state --rebuild-catalog
   set         update a skill's compatibility declaration
