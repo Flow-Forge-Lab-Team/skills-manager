@@ -177,6 +177,9 @@ func applyPendingUpdate(pending pendingUpdatePaths) error {
 		}
 		return os.RemoveAll(pending.Root)
 	}
+	if !pathExists(filepath.Join(pending.To, "SKILL.md")) {
+		return fmt.Errorf("incoming snapshot missing SKILL.md")
+	}
 	tmp, err := os.MkdirTemp("", "skills-manager-update-*")
 	if err != nil {
 		return err
@@ -299,6 +302,9 @@ func computeSafetyReport(skill, fromPath, toPath string) (safetyReport, error) {
 	report := safetyReport{Skill: skill}
 	addFlag := func(name, file string, line int, detail string, blocking bool) {
 		report.Flags = append(report.Flags, safetyFlag{Name: name, File: file, Line: line, Detail: detail, Blocking: blocking})
+	}
+	if _, ok := toFiles["SKILL.md"]; !ok {
+		addFlag("missing-skill-file", "SKILL.md", 0, "incoming snapshot does not contain SKILL.md", true)
 	}
 
 	if from, ok := fromFiles["SKILL.md"]; ok {

@@ -187,6 +187,37 @@ func TestUpdateAcceptAllSafeRefusesMalformedPendingUpdates(t *testing.T) {
 	}
 }
 
+func TestUpdateAcceptAllSafeRefusesIncomingSnapshotsWithoutSkillMD(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+	skillDir := filepath.Join(home, "library", "notes")
+	root := filepath.Join(skillDir, ".update-pending")
+	writeFile(t, filepath.Join(skillDir, "SKILL.md"), "---\nname: notes\ndescription: Take notes\n---\nOld body\n")
+	writeFile(t, filepath.Join(root, "from", "SKILL.md"), "---\nname: notes\ndescription: Take notes\n---\nOld body\n")
+	writeFile(t, filepath.Join(root, "to", "references", "example.md"), "example\n")
+
+	var safetyOut bytes.Buffer
+	var safetyErr bytes.Buffer
+	code := Run([]string{"update", "--safety", "notes"}, &safetyOut, &safetyErr)
+	if code != 0 {
+		t.Fatalf("safety returned %d, want 0\nstderr:\n%s", code, safetyErr.String())
+	}
+	if !strings.Contains(safetyOut.String(), "missing-skill-file") {
+		t.Fatalf("safety output missing missing-skill-file:\n%s", safetyOut.String())
+	}
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code = Run([]string{"update", "--accept-all-safe"}, &stdout, &stderr)
+	if code != 4 {
+		t.Fatalf("Run returned %d, want 4\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+	}
+	assertFileContent(t, filepath.Join(skillDir, "SKILL.md"), "---\nname: notes\ndescription: Take notes\n---\nOld body\n")
+	if _, err := os.Stat(root); err != nil {
+		t.Fatalf("pending update should remain unapplied: %v", err)
+	}
+}
+
 func TestUpdateAcceptAllSafeAppliesFileSnapshots(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("SKILLS_MANAGER_HOME", home)
