@@ -162,6 +162,46 @@ func TestSummarizeFromRejectsMissingRequiredSections(t *testing.T) {
 	}
 }
 
+func TestSummarizeFromRejectsUnexpectedSections(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+	root := filepath.Join(home, "library", "notes", ".update-pending")
+	writeFile(t, filepath.Join(root, "from-current", "SKILL.md"), "---\nname: notes\n---\nOld\n")
+	writeFile(t, filepath.Join(root, "to-incoming", "SKILL.md"), "---\nname: notes\n---\nNew\n")
+	output := filepath.Join(t.TempDir(), "summary.md")
+	writeFile(t, output, validSummary("notes", "none", "no", "no", "no")+"\n## Extra notes\n- Do not cache this.\n")
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := Run([]string{"summarize", "notes", "--from", output}, &stdout, &stderr)
+	if code != ExitUsageError {
+		t.Fatalf("Run returned %d, want usage error\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "unexpected section") {
+		t.Fatalf("stderr missing unexpected section validation:\n%s", stderr.String())
+	}
+}
+
+func TestSummarizeFromRejectsDuplicateSections(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+	root := filepath.Join(home, "library", "notes", ".update-pending")
+	writeFile(t, filepath.Join(root, "from-current", "SKILL.md"), "---\nname: notes\n---\nOld\n")
+	writeFile(t, filepath.Join(root, "to-incoming", "SKILL.md"), "---\nname: notes\n---\nNew\n")
+	output := filepath.Join(t.TempDir(), "summary.md")
+	writeFile(t, output, validSummary("notes", "none", "no", "no", "no")+"\n## Safety flags\n- Safety flags: none\n")
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := Run([]string{"summarize", "notes", "--from", output}, &stdout, &stderr)
+	if code != ExitUsageError {
+		t.Fatalf("Run returned %d, want usage error\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "duplicate section") {
+		t.Fatalf("stderr missing duplicate section validation:\n%s", stderr.String())
+	}
+}
+
 func TestSummarizeFromRejectsOutputThatDropsDeterministicFlags(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("SKILLS_MANAGER_HOME", home)

@@ -309,6 +309,11 @@ func saveSummaryOutput(skill, output string, pending pendingUpdatePaths, report 
 
 func parseSummaryOutput(output string) (parsedSummary, error) {
 	sections := map[string]string{}
+	required := []string{"what changed", "impact assessment", "requirements changed", "safety flags", "hostile review instructions", "recommended action"}
+	allowed := make(map[string]bool, len(required))
+	for _, name := range required {
+		allowed[name] = true
+	}
 	current := ""
 	var buf strings.Builder
 	flush := func() {
@@ -322,6 +327,12 @@ func parseSummaryOutput(output string) (parsedSummary, error) {
 		if strings.HasPrefix(line, "## ") {
 			flush()
 			current = strings.ToLower(strings.TrimSpace(strings.TrimPrefix(line, "## ")))
+			if !allowed[current] {
+				return parsedSummary{}, fmt.Errorf("unexpected section %q", current)
+			}
+			if _, exists := sections[current]; exists {
+				return parsedSummary{}, fmt.Errorf("duplicate section %q", current)
+			}
 			continue
 		}
 		if current != "" {
@@ -330,7 +341,6 @@ func parseSummaryOutput(output string) (parsedSummary, error) {
 		}
 	}
 	flush()
-	required := []string{"what changed", "impact assessment", "requirements changed", "safety flags", "hostile review instructions", "recommended action"}
 	for _, name := range required {
 		if strings.TrimSpace(sections[name]) == "" {
 			return parsedSummary{}, fmt.Errorf("missing required section %q", name)
