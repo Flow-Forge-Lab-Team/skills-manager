@@ -51,6 +51,8 @@ func Run(args []string, stdout io.Writer, stderr io.Writer) int {
 
 	var code int
 	switch cmd {
+	case "check":
+		code = runCheck(cmdArgs, stdout, stderr, gf)
 	case "install":
 		code = runInstall(cmdArgs, stdout, stderr, false, gf)
 	case "sync":

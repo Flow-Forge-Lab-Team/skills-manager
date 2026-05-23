@@ -2296,7 +2296,7 @@ skills:
 	if !strings.Contains(stdout.String(), "Unregistered:     1 detected") {
 		t.Fatalf("stdout missing unregistered: %s", stdout.String())
 	}
-	if !strings.Contains(stdout.String(), "pending FLO-238") {
+	if !strings.Contains(stdout.String(), "Scheduled checks: 0 tracked") {
 		t.Fatalf("stdout missing scheduled note: %s", stdout.String())
 	}
 

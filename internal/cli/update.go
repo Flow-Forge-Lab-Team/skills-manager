@@ -4,9 +4,12 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/Flow-Forge-Lab-Team/skills-manager/internal/state"
 )
 
 type safetyFlag struct {
@@ -37,10 +40,10 @@ type snapshotFile struct {
 
 func runUpdate(args []string, realStdout io.Writer, stderr io.Writer, gf globalFlags) int {
 	stdout := gf.outWriter(realStdout)
+
+	// No args: list pending updates
 	if len(args) == 0 {
-		fmt.Fprintln(stdout, "Usage: skills-manager update --safety <skill>")
-		fmt.Fprintln(stdout, "       skills-manager update --accept-all-safe")
-		return ExitSuccess
+		return listPendingUpdates(realStdout, stdout, stderr, gf)
 	}
 
 	if args[0] == "--safety" {
@@ -66,6 +69,14 @@ func runUpdate(args []string, realStdout io.Writer, stderr io.Writer, gf globalF
 			}
 		}
 		return ExitSuccess
+	}
+
+	if args[0] == "--diff" {
+		if len(args) < 2 || strings.TrimSpace(args[1]) == "" {
+			fmt.Fprintln(stderr, "usage: skills-manager update --diff <skill>")
+			return ExitUsageError
+		}
+		return runDiff(args[1], stdout, stderr)
 	}
 
 	if args[0] == "--accept-all-safe" {
@@ -134,6 +145,13 @@ func runAcceptAllSafe(realStdout io.Writer, stdout io.Writer, stderr io.Writer, 
 		fmt.Fprintf(stderr, "manager home: %v\n", err)
 		return ExitOpError
 	}
+	stateDB, err := state.Open(home)
+	if err != nil {
+		fmt.Fprintf(stderr, "open state: %v\n", err)
+		return ExitOpError
+	}
+	defer stateDB.Close()
+
 	libraryPath, err := ensureLibrary(home)
 	if err != nil {
 		fmt.Fprintf(stderr, "ensure library: %v\n", err)
@@ -228,6 +246,10 @@ func runAcceptAllSafe(realStdout io.Writer, stdout io.Writer, stderr io.Writer, 
 	for _, pending := range safe {
 		if err := applyPendingUpdate(pending); err != nil {
 			fmt.Fprintf(stderr, "accept update for %s: %v\n", pending.Skill, err)
+			return ExitOpError
+		}
+		if err := stateDB.MarkUpdateAccepted(pending.Skill); err != nil {
+			fmt.Fprintf(stderr, "mark update accepted for %s: %v\n", pending.Skill, err)
 			return ExitOpError
 		}
 		fmt.Fprintf(stdout, "- %s: accepted\n", pending.Skill)
@@ -935,4 +957,178 @@ func setPendingMetaValue(path, key, value string) error {
 		lines = append(lines, fmt.Sprintf("%s: %s", key, value))
 	}
 	return os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0644)
+}
+
+// listPendingUpdates queries the state DB and lists all pending updates.
+func listPendingUpdates(realStdout io.Writer, stdout io.Writer, stderr io.Writer, gf globalFlags) int {
+	home, err := managerHome()
+	if err != nil {
+		fmt.Fprintf(stderr, "manager home: %v\n", err)
+		return ExitOpError
+	}
+
+	stateDB, err := state.Open(home)
+	if err != nil {
+		fmt.Fprintf(stderr, "open state: %v\n", err)
+		return ExitOpError
+	}
+	defer stateDB.Close()
+
+	updates, err := stateDB.ListPendingUpdates()
+	if err != nil {
+		fmt.Fprintf(stderr, "list pending updates: %v\n", err)
+		return ExitOpError
+	}
+
+	if gf.JSON {
+		// Always emit JSON, even for empty list, so consuming scripts get valid output
+		if err := writeJSON(realStdout, updates); err != nil {
+			fmt.Fprintln(stderr, err)
+			return ExitOpError
+		}
+	} else {
+		// Text output: print message and list
+		if len(updates) == 0 {
+			fmt.Fprintln(stdout, "No pending updates.")
+		} else {
+			fmt.Fprintf(stdout, "Pending updates (%d):\n\n", len(updates))
+			for _, u := range updates {
+				fromShort := u.FromVersion
+				toShort := u.ToVersion
+				if len(fromShort) > 7 {
+					fromShort = fromShort[:7]
+				}
+				if len(toShort) > 7 {
+					toShort = toShort[:7]
+				}
+				fmt.Fprintf(stdout, "  %-20s %s → %s   %s\n", u.SkillName, fromShort, toShort, u.Source)
+			}
+		}
+	}
+
+	return ExitSuccess
+}
+
+// runDiff prints a unified diff between from.md and to.md for a pending update.
+func runDiff(skill string, stdout io.Writer, stderr io.Writer) int {
+	home, err := managerHome()
+	if err != nil {
+		fmt.Fprintf(stderr, "manager home: %v\n", err)
+		return ExitOpError
+	}
+
+	libraryPath, err := ensureLibrary(home)
+	if err != nil {
+		fmt.Fprintf(stderr, "ensure library: %v\n", err)
+		return ExitOpError
+	}
+
+	pendingRoot := filepath.Join(libraryPath, skill, ".update-pending")
+
+	// Check if pending update exists
+	if _, err := os.Stat(pendingRoot); err != nil {
+		if os.IsNotExist(err) {
+			fmt.Fprintf(stderr, "no pending update for %s\n", skill)
+			return ExitNoPending
+		}
+		fmt.Fprintf(stderr, "inspect pending: %v\n", err)
+		return ExitOpError
+	}
+
+	// Find from/to snapshots (look for from-current or from, to-incoming or to)
+	pending, err := findPendingUpdate(skill, pendingRoot)
+	if err != nil {
+		fmt.Fprintf(stderr, "find pending update: %v\n", err)
+		return ExitOpError
+	}
+
+	// Read SKILL.md from snapshots
+	fromFiles, err := snapshotFiles(pending.From)
+	if err != nil {
+		fmt.Fprintf(stderr, "read from snapshot: %v\n", err)
+		return ExitOpError
+	}
+
+	toFiles, err := snapshotFiles(pending.To)
+	if err != nil {
+		fmt.Fprintf(stderr, "read to snapshot: %v\n", err)
+		return ExitOpError
+	}
+
+	fromSnapshot, ok := fromFiles["SKILL.md"]
+	if !ok {
+		fmt.Fprintf(stderr, "SKILL.md not found in from snapshot\n")
+		return ExitOpError
+	}
+
+	toSnapshot, ok := toFiles["SKILL.md"]
+	if !ok {
+		fmt.Fprintf(stderr, "SKILL.md not found in to snapshot\n")
+		return ExitOpError
+	}
+
+	fromBytes := []byte(fromSnapshot.Content)
+	toBytes := []byte(toSnapshot.Content)
+
+	// Use git diff --no-index for proper unified diff
+	diff, err := gitDiff(fromBytes, toBytes)
+	if err != nil {
+		fmt.Fprintf(stderr, "git diff error: %v\n", err)
+		return ExitOpError
+	}
+	fmt.Fprint(stdout, diff)
+
+	return ExitSuccess
+}
+
+// gitDiff returns a unified diff between two byte slices using git diff --no-index.
+// Returns empty string if files are identical. Returns error only for execution issues.
+func gitDiff(fromBytes, toBytes []byte) (string, error) {
+	// Create temporary files for git diff
+	fromFile, err := os.CreateTemp("", "skill-diff-from-")
+	if err != nil {
+		return "", fmt.Errorf("create temp from file: %w", err)
+	}
+	defer os.Remove(fromFile.Name())
+
+	toFile, err := os.CreateTemp("", "skill-diff-to-")
+	if err != nil {
+		return "", fmt.Errorf("create temp to file: %w", err)
+	}
+	defer os.Remove(toFile.Name())
+
+	// Write content to temporary files
+	if _, err := fromFile.Write(fromBytes); err != nil {
+		fromFile.Close()
+		return "", fmt.Errorf("write from file: %w", err)
+	}
+	fromFile.Close()
+
+	if _, err := toFile.Write(toBytes); err != nil {
+		toFile.Close()
+		return "", fmt.Errorf("write to file: %w", err)
+	}
+	toFile.Close()
+
+	// Run git diff --no-index
+	cmd := exec.Command("git", "diff", "--no-index", "--no-color", fromFile.Name(), toFile.Name())
+	output, err := cmd.CombinedOutput()
+
+	// git diff exits with 1 when files differ (that's success)
+	if err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			if exitErr.ExitCode() == 1 && len(output) > 0 {
+				// This is the expected case: files differ, output contains the diff
+				return string(output), nil
+			} else if exitErr.ExitCode() == 0 {
+				// Files are identical
+				return "", nil
+			}
+		}
+		// Some other error occurred
+		return "", fmt.Errorf("git diff execution: %w", err)
+	}
+
+	// Exit code 0 means no diff
+	return "", nil
 }

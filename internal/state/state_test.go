@@ -10,6 +10,7 @@ func expectedTables() []string {
 	return []string{
 		"skills", "projects", "installs", "updates",
 		"invocations", "detected", "requirement_checks", "schema_version",
+		"skill_polls",
 	}
 }
 
@@ -49,8 +50,8 @@ func TestOpenAppliesMigrations(t *testing.T) {
 	if err := db.QueryRow(`SELECT COUNT(*) FROM schema_version`).Scan(&v); err != nil {
 		t.Fatalf("schema_version count: %v", err)
 	}
-	if v != 1 {
-		t.Errorf("schema_version rows = %d, want 1", v)
+	if v < 1 {
+		t.Errorf("schema_version rows = %d, want at least 1", v)
 	}
 	db.Close()
 

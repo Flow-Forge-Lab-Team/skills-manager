@@ -127,9 +127,15 @@ func checkScheduledState(db *state.DB) string {
 	err := db.QueryRow(`SELECT name FROM sqlite_master WHERE type='table' AND name='skill_polls'`).Scan(&name)
 	if err != nil {
 		if err == sql.ErrNoRows || strings.Contains(err.Error(), "no such table") {
-			return "not configured (pending FLO-238)"
+			return "not configured"
 		}
-		return "unknown (pending FLO-238)"
+		return "unknown"
 	}
-	return "table present (stale detection in FLO-238)"
+	var tracked, stale int
+	db.QueryRow(`SELECT COUNT(*) FROM skill_polls WHERE last_checked_at != ''`).Scan(&tracked)
+	db.QueryRow(`SELECT COUNT(*) FROM skill_polls WHERE last_checked_at != '' AND datetime(last_checked_at) < datetime('now', '-24 hours')`).Scan(&stale)
+	if tracked == 0 {
+		return "0 tracked (run `skills-manager check`)"
+	}
+	return fmt.Sprintf("%d tracked, %d stale (>24h)", tracked, stale)
 }
