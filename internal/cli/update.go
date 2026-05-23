@@ -99,8 +99,9 @@ func safetyReportJSON(report safetyReport) safetyReportJSONShape {
 }
 
 type acceptAllSafeJSON struct {
-	Accepted []string `json:"accepted"`
-	Blocked  []string `json:"blocked,omitempty"`
+	Accepted   []string `json:"accepted"`
+	Blocked    []string `json:"blocked,omitempty"`
+	Conflicted []string `json:"conflicted,omitempty"`
 }
 
 func analyzePendingUpdate(skill string, stderr io.Writer) (safetyReport, pendingUpdatePaths, int) {
@@ -188,6 +189,35 @@ func runAcceptAllSafe(realStdout io.Writer, stdout io.Writer, stderr io.Writer, 
 		}
 		if gf.JSON {
 			if err := writeJSON(realStdout, acceptAllSafeJSON{Blocked: blocked, Accepted: []string{}}); err != nil {
+				fmt.Fprintln(stderr, err)
+				return ExitOpError
+			}
+		}
+		return ExitPartial
+	}
+	var conflicted []string
+	conflictReasons := map[string]string{}
+	for _, pending := range safe {
+		skillDir := filepath.Dir(pending.Root)
+		diverged, reason, err := liveDivergesFromBase(skillDir, pending.From, pending.To)
+		if err != nil {
+			fmt.Fprintf(stderr, "check divergence for %s: %v\n", pending.Skill, err)
+			return ExitOpError
+		}
+		if diverged {
+			conflicted = append(conflicted, pending.Skill)
+			conflictReasons[pending.Skill] = reason
+		}
+	}
+	sort.Strings(conflicted)
+	if len(conflicted) > 0 {
+		fmt.Fprintf(stdout, "Refusing --accept-all-safe: %d update(s) diverged from staged base since update was prepared\n", len(conflicted))
+		for _, skill := range conflicted {
+			fmt.Fprintf(stdout, "- %s: %s\n", skill, conflictReasons[skill])
+		}
+		fmt.Fprintln(stdout, "Resolve manually (re-stage the update or revert the local change) before retrying.")
+		if gf.JSON {
+			if err := writeJSON(realStdout, acceptAllSafeJSON{Conflicted: conflicted, Accepted: []string{}}); err != nil {
 				fmt.Fprintln(stderr, err)
 				return ExitOpError
 			}
@@ -624,6 +654,151 @@ func snapshotFiles(path string) (map[string]snapshotFile, error) {
 		return nil
 	})
 	return files, err
+}
+
+// liveDivergesFromBase returns true if the live skill directory's content no
+// longer matches the staged "from" snapshot — i.e. someone (a user, another
+// tool) modified the live skill between the time the update was staged and
+// the time we are about to accept it. Refusing to apply in that case prevents
+// the accept step from silently wiping local edits or local-only files.
+//
+// The branch matches applyPendingUpdate's: applyPendingUpdate keys on whether
+// toPath is a directory, and that decides whether the live dir gets wiped or
+// only SKILL.md is replaced. The guard must use the same key so it covers the
+// scenarios apply will actually touch — including the from-file/to-directory
+// case where a single-file skill grows reference files in its next version
+// (apply takes the wipe branch; the guard must enumerate the live dir).
+//
+// .skill-meta.yaml is excluded symmetrically: apply preserves the local
+// sidecar across updates rather than overwriting it, and the staged base
+// historically may or may not carry one. .update-pending is excluded from
+// the live side because it is the staging area itself.
+func liveDivergesFromBase(skillDir, fromPath, toPath string) (bool, string, error) {
+	toInfo, err := os.Stat(toPath)
+	if err != nil {
+		return false, "", err
+	}
+	if !toInfo.IsDir() {
+		// File-form update: apply only rewrites SKILL.md. Other live files
+		// are left alone, so only SKILL.md divergence matters.
+		liveData, err := os.ReadFile(filepath.Join(skillDir, "SKILL.md"))
+		if err != nil {
+			if os.IsNotExist(err) {
+				return true, "SKILL.md missing from live skill directory", nil
+			}
+			return false, "", err
+		}
+		baseSKILL, err := readBaseSKILLMD(fromPath)
+		if err != nil {
+			return false, "", err
+		}
+		if baseSKILL == nil {
+			// No base SKILL.md to compare against; cannot determine divergence.
+			return false, "", nil
+		}
+		if string(liveData) != *baseSKILL {
+			return true, "SKILL.md modified since update was staged", nil
+		}
+		return false, "", nil
+	}
+	base, err := snapshotFiles(fromPath)
+	if err != nil {
+		return false, "", err
+	}
+	delete(base, ".skill-meta.yaml")
+	live, err := snapshotLiveSkillDir(skillDir)
+	if err != nil {
+		return false, "", err
+	}
+	for _, rel := range sortedSnapshotKeys(base) {
+		baseFile := base[rel]
+		liveFile, ok := live[rel]
+		if !ok {
+			return true, fmt.Sprintf("missing %s", rel), nil
+		}
+		if liveFile.Content != baseFile.Content {
+			return true, fmt.Sprintf("modified %s", rel), nil
+		}
+		if liveFile.Mode&0o111 != baseFile.Mode&0o111 {
+			return true, fmt.Sprintf("executable bit changed on %s", rel), nil
+		}
+	}
+	for _, rel := range sortedSnapshotKeys(live) {
+		if _, ok := base[rel]; !ok {
+			return true, fmt.Sprintf("unexpected file %s", rel), nil
+		}
+	}
+	return false, "", nil
+}
+
+func readBaseSKILLMD(fromPath string) (*string, error) {
+	info, err := os.Stat(fromPath)
+	if err != nil {
+		return nil, err
+	}
+	if !info.IsDir() {
+		data, err := os.ReadFile(fromPath)
+		if err != nil {
+			return nil, err
+		}
+		s := string(data)
+		return &s, nil
+	}
+	data, err := os.ReadFile(filepath.Join(fromPath, "SKILL.md"))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	s := string(data)
+	return &s, nil
+}
+
+func snapshotLiveSkillDir(skillDir string) (map[string]snapshotFile, error) {
+	files := map[string]snapshotFile{}
+	err := filepath.WalkDir(skillDir, func(p string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(skillDir, p)
+		if err != nil {
+			return err
+		}
+		relSlash := filepath.ToSlash(rel)
+		if d.IsDir() {
+			if relSlash == ".update-pending" {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if relSlash == ".skill-meta.yaml" {
+			return nil
+		}
+		info, err := d.Info()
+		if err != nil {
+			return err
+		}
+		data, err := os.ReadFile(p)
+		if err != nil {
+			return err
+		}
+		files[relSlash] = snapshotFile{Content: string(data), Mode: info.Mode()}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return files, nil
+}
+
+func sortedSnapshotKeys(m map[string]snapshotFile) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 func parseFrontmatterText(text string) (name, description string) {
