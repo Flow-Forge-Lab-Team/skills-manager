@@ -242,6 +242,61 @@ func TestRebuildCatalogPrefersSidecarSummary(t *testing.T) {
 	}
 }
 
+func TestCatalogRoundTripPreservesHashInScalars(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+
+	libraryPath := filepath.Join(home, "library")
+	if err := os.MkdirAll(libraryPath, 0755); err != nil {
+		t.Fatalf("mkdir library failed: %v", err)
+	}
+
+	writeFile(t, filepath.Join(libraryPath, "csharp", "SKILL.md"),
+		"---\nname: csharp\ndescription: Build C# skills\n---\nBody")
+	if err := writeSkillMeta(filepath.Join(libraryPath, "csharp", ".skill-meta.yaml"), skillMeta{
+		Version: 1,
+		Tags:    []string{"c#", "dotnet"},
+		Summary: "Build C# skills",
+	}); err != nil {
+		t.Fatalf("write sidecar failed: %v", err)
+	}
+
+	cat, err := rebuildCatalogFromLibrary(libraryPath)
+	if err != nil {
+		t.Fatalf("rebuild failed: %v", err)
+	}
+	catalogPath := filepath.Join(libraryPath, "catalog.yaml")
+	if err := writeCatalog(catalogPath, cat); err != nil {
+		t.Fatalf("write catalog failed: %v", err)
+	}
+
+	parsed, err := readCatalog(catalogPath)
+	if err != nil {
+		t.Fatalf("read catalog failed: %v", err)
+	}
+	if len(parsed.Skills) != 1 {
+		t.Fatalf("got %d skills, want 1", len(parsed.Skills))
+	}
+	got := parsed.Skills[0]
+	if got.Summary != "Build C# skills" {
+		t.Errorf("summary = %q, want %q", got.Summary, "Build C# skills")
+	}
+	if len(got.Tags) != 2 || got.Tags[0] != "c#" || got.Tags[1] != "dotnet" {
+		t.Errorf("tags = %v, want [c# dotnet]", got.Tags)
+	}
+
+	meta, err := readSkillMeta(filepath.Join(libraryPath, "csharp", ".skill-meta.yaml"))
+	if err != nil {
+		t.Fatalf("read sidecar failed: %v", err)
+	}
+	if meta.Summary != "Build C# skills" {
+		t.Errorf("sidecar summary = %q, want %q", meta.Summary, "Build C# skills")
+	}
+	if len(meta.Tags) != 2 || meta.Tags[0] != "c#" {
+		t.Errorf("sidecar tags = %v, want [c# dotnet]", meta.Tags)
+	}
+}
+
 func TestRebuildCatalogReadable(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("SKILLS_MANAGER_HOME", home)

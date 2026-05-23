@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -1338,8 +1339,26 @@ func toolRequirementsFromNames(names []string) []toolRequirement {
 }
 
 func stripComment(line string) string {
-	if before, _, ok := strings.Cut(line, "#"); ok {
-		return before
+	var quote byte
+	for i := 0; i < len(line); i++ {
+		c := line[i]
+		if quote != 0 {
+			if c == '\\' && quote == '"' && i+1 < len(line) {
+				i++
+				continue
+			}
+			if c == quote {
+				quote = 0
+			}
+			continue
+		}
+		if c == '"' || c == '\'' {
+			quote = c
+			continue
+		}
+		if c == '#' {
+			return line[:i]
+		}
 	}
 	return line
 }
@@ -1349,7 +1368,13 @@ func indent(line string) int {
 }
 
 func unquote(value string) string {
-	return strings.Trim(strings.TrimSpace(value), `"'`)
+	v := strings.TrimSpace(value)
+	if len(v) >= 2 && v[0] == '"' && v[len(v)-1] == '"' {
+		if unquoted, err := strconv.Unquote(v); err == nil {
+			return unquoted
+		}
+	}
+	return strings.Trim(v, `"'`)
 }
 
 func missingLockedSkills(lock installLock, catalog catalog) []string {
