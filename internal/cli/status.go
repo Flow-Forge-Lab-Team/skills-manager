@@ -61,11 +61,11 @@ func runStatus(args []string, stdout io.Writer, stderr io.Writer, gf globalFlags
 
 	if gf.JSON {
 		out := map[string]interface{}{
-			"library_skills":   libCount,
-			"projects":         projCount,
-			"pending_updates":  pendingCount,
-			"unregistered":     unregCount,
-			"scheduled_check":  sched,
+			"library_skills":  libCount,
+			"projects":        projCount,
+			"pending_updates": pendingCount,
+			"unregistered":    unregCount,
+			"scheduled_check": sched,
 		}
 		if err := writeJSON(stdout, out); err != nil {
 			fmt.Fprintln(stderr, err)
