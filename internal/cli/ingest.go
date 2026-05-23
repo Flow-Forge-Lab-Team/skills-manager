@@ -411,6 +411,9 @@ func ingestFromSource(src ingestSource, opts ingestOptions, home string, out io.
 			if len(fromOut.Compatibility.Harnesses) > 0 {
 				meta.Compatibility.Harnesses = fromOut.Compatibility.Harnesses
 			}
+			// Ensure ExplicitPortable is cleared so rebuildCatalogFromLibrary
+			// does not override the LLM-provided mode back to portable.
+			meta.Compatibility.ExplicitPortable = false
 		}
 		meta.Requirements = reqs
 	} else {
