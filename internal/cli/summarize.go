@@ -23,6 +23,7 @@ type summarizeResult struct {
 }
 
 type parsedSummary struct {
+	Header        string
 	Sections      map[string]string
 	Badges        []string
 	SummaryStatus string
@@ -228,11 +229,7 @@ func runConfiguredSummaryProvider(prompt string) (string, error) {
 	if command == "" {
 		return "", fmt.Errorf("no provider command configured; set SKILLS_MANAGER_LLM_COMMAND or use --handoff")
 	}
-	parts := strings.Fields(command)
-	if len(parts) == 0 {
-		return "", fmt.Errorf("empty provider command")
-	}
-	cmd := exec.Command(parts[0], parts[1:]...)
+	cmd := exec.Command("sh", "-c", command)
 	cmd.Stdin = strings.NewReader(prompt)
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
@@ -251,6 +248,10 @@ func runConfiguredSummaryProvider(prompt string) (string, error) {
 func saveSummaryOutput(skill, output string, pending pendingUpdatePaths, report safetyReport, realStdout, stdout, stderr io.Writer, gf globalFlags, mode string) int {
 	parsed, err := parseSummaryOutput(output)
 	if err != nil {
+		fmt.Fprintf(stderr, "validate summary: %v\n", err)
+		return ExitUsageError
+	}
+	if err := validateSummaryHeader(parsed, skill, pending); err != nil {
 		fmt.Fprintf(stderr, "validate summary: %v\n", err)
 		return ExitUsageError
 	}
@@ -308,6 +309,7 @@ func saveSummaryOutput(skill, output string, pending pendingUpdatePaths, report 
 }
 
 func parseSummaryOutput(output string) (parsedSummary, error) {
+	header := ""
 	sections := map[string]string{}
 	required := []string{"what changed", "impact assessment", "requirements changed", "safety flags", "hostile review instructions", "recommended action"}
 	allowed := make(map[string]bool, len(required))
@@ -324,6 +326,10 @@ func parseSummaryOutput(output string) (parsedSummary, error) {
 		buf.Reset()
 	}
 	for _, line := range strings.Split(output, "\n") {
+		if strings.HasPrefix(line, "# ") && header == "" {
+			header = strings.TrimSpace(strings.TrimPrefix(line, "# "))
+			continue
+		}
 		if strings.HasPrefix(line, "## ") {
 			flush()
 			current = strings.ToLower(strings.TrimSpace(strings.TrimPrefix(line, "## ")))
@@ -346,13 +352,23 @@ func parseSummaryOutput(output string) (parsedSummary, error) {
 			return parsedSummary{}, fmt.Errorf("missing required section %q", name)
 		}
 	}
+	if header == "" {
+		return parsedSummary{}, fmt.Errorf("missing summary header")
+	}
 	badges := summaryBadges(sections)
 	status := "generated"
-	hostile := strings.ToLower(sections["hostile review instructions"])
-	if strings.Contains(hostile, "yes") && !strings.Contains(hostile, "none") {
+	if summaryFieldIsAffirmative(sections["hostile review instructions"], "hostile review instructions") {
 		status = "tainted"
 	}
-	return parsedSummary{Sections: sections, Badges: badges, SummaryStatus: status}, nil
+	return parsedSummary{Header: header, Sections: sections, Badges: badges, SummaryStatus: status}, nil
+}
+
+func validateSummaryHeader(parsed parsedSummary, skill string, pending pendingUpdatePaths) error {
+	want := fmt.Sprintf("%s %s -> %s", skill, filepath.Base(pending.From), filepath.Base(pending.To))
+	if parsed.Header != want {
+		return fmt.Errorf("summary header %q does not match pending update %q", parsed.Header, want)
+	}
+	return nil
 }
 
 func summaryBadges(sections map[string]string) []string {
@@ -403,6 +419,20 @@ func summarySafetyFlagBadges(section string) []string {
 		}
 	}
 	return badges
+}
+
+func summaryFieldIsAffirmative(section, fieldName string) bool {
+	want := strings.ToLower(fieldName)
+	for _, line := range strings.Split(section, "\n") {
+		trimmed := strings.TrimSpace(strings.TrimPrefix(line, "-"))
+		field, value, ok := strings.Cut(trimmed, ":")
+		if !ok || strings.ToLower(strings.TrimSpace(field)) != want {
+			continue
+		}
+		value = strings.TrimSpace(strings.ToLower(value))
+		return strings.HasPrefix(value, "yes") || strings.HasPrefix(value, "true")
+	}
+	return false
 }
 
 func validateSummaryAgainstReport(parsed parsedSummary, report safetyReport) error {
