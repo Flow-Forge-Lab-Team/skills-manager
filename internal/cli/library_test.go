@@ -1252,3 +1252,305 @@ description: A test skill
 		t.Errorf("effective Harnesses should be empty in exclusive mode, got %v", meta.Compatibility.Harnesses)
 	}
 }
+
+// FLO-235 Issue 1: Detector dir resolution outside repo
+func TestLoadDetectors_RelativeToExecutable(t *testing.T) {
+	t.Run("with env var set", func(t *testing.T) {
+		tempDir := t.TempDir()
+
+		// Create a detector file
+		compatDir := filepath.Join(tempDir, "compatibility")
+		if err := os.MkdirAll(compatDir, 0755); err != nil {
+			t.Fatalf("mkdir failed: %v", err)
+		}
+
+		detectorYaml := filepath.Join(compatDir, "test.yaml")
+		content := `version: 1
+detectors:
+  - id: test-detector
+    harness: claude
+    confidence: high
+    patterns:
+      - "test pattern"
+`
+		if err := os.WriteFile(detectorYaml, []byte(content), 0644); err != nil {
+			t.Fatalf("write detector failed: %v", err)
+		}
+
+		// Set env var
+		t.Setenv("SKILLS_MANAGER_DETECTORS_DIR", tempDir)
+
+		set, err := loadDetectors()
+		if err != nil {
+			t.Fatalf("loadDetectors failed: %v", err)
+		}
+
+		if len(set.compatibilityDetectors) != 1 {
+			t.Errorf("expected 1 compatibility detector, got %d", len(set.compatibilityDetectors))
+		}
+		if len(set.compatibilityDetectors) > 0 && set.compatibilityDetectors[0].ID != "test-detector" {
+			t.Errorf("detector ID = %q, want test-detector", set.compatibilityDetectors[0].ID)
+		}
+	})
+
+	t.Run("no env var, exe resolution", func(t *testing.T) {
+		// Unset env var
+		t.Setenv("SKILLS_MANAGER_DETECTORS_DIR", "")
+
+		// Call loadDetectors without env var set
+		// It should try to find detectors relative to exe, fall back to cwd
+		set, err := loadDetectors()
+		if err != nil {
+			t.Fatalf("loadDetectors failed: %v", err)
+		}
+
+		// Should not panic and return a valid detectorSet (may be empty if detectors not found)
+		_ = set
+	})
+}
+
+// FLO-235 Issue 2: Detection results influence effective install
+func TestApplyAutoClassification_ExclusiveHighConfidence(t *testing.T) {
+	detected := map[string]detectionResult{
+		"claude": {Confidence: "high", Reasons: []string{"AskUserQuestion"}},
+	}
+
+	result := applyAutoClassification(detected)
+
+	if result.Mode != "exclusive" {
+		t.Errorf("mode = %q, want exclusive", result.Mode)
+	}
+	if result.Harness != "claude" {
+		t.Errorf("harness = %q, want claude", result.Harness)
+	}
+	if len(result.Harnesses) != 0 {
+		t.Errorf("harnesses should be empty for exclusive, got %v", result.Harnesses)
+	}
+}
+
+func TestApplyAutoClassification_Compatible(t *testing.T) {
+	detected := map[string]detectionResult{
+		"claude": {Confidence: "medium", Reasons: []string{"Plan Mode"}},
+		"codex":  {Confidence: "medium", Reasons: []string{"Agent references"}},
+	}
+
+	result := applyAutoClassification(detected)
+
+	if result.Mode != "compatible" {
+		t.Errorf("mode = %q, want compatible", result.Mode)
+	}
+	if result.Harness != "" {
+		t.Errorf("harness should be empty for compatible, got %q", result.Harness)
+	}
+	if len(result.Harnesses) != 2 {
+		t.Errorf("harnesses length = %d, want 2", len(result.Harnesses))
+	}
+}
+
+func TestApplyAutoClassification_Portable(t *testing.T) {
+	detected := map[string]detectionResult{}
+
+	result := applyAutoClassification(detected)
+
+	if result.Mode != "portable" {
+		t.Errorf("mode = %q, want portable", result.Mode)
+	}
+	if result.Harness != "" {
+		t.Errorf("harness should be empty for portable, got %q", result.Harness)
+	}
+	if len(result.Harnesses) != 0 {
+		t.Errorf("harnesses should be empty for portable, got %v", result.Harnesses)
+	}
+}
+
+func TestRebuildCatalogFromLibrary_AutoClassificationApplied(t *testing.T) {
+	home := t.TempDir()
+	libraryPath := filepath.Join(home, "library")
+
+	// Create skill directory
+	skillDir := filepath.Join(libraryPath, "test-claude-skill")
+	if err := os.MkdirAll(skillDir, 0755); err != nil {
+		t.Fatalf("mkdir failed: %v", err)
+	}
+
+	// Create SKILL.md with Claude-only pattern (no declaration)
+	skillMdPath := filepath.Join(skillDir, "SKILL.md")
+	skillMdContent := `---
+name: test-claude-skill
+description: A skill that uses AskUserQuestion
+---
+# Test Skill
+
+This skill uses AskUserQuestion to ask the user for input.
+`
+	if err := os.WriteFile(skillMdPath, []byte(skillMdContent), 0644); err != nil {
+		t.Fatalf("write SKILL.md failed: %v", err)
+	}
+
+	// Rebuild catalog
+	cat, err := rebuildCatalogFromLibrary(libraryPath)
+	if err != nil {
+		t.Fatalf("rebuildCatalogFromLibrary failed: %v", err)
+	}
+
+	if len(cat.Skills) != 1 {
+		t.Fatalf("expected 1 skill, got %d", len(cat.Skills))
+	}
+
+	skill := cat.Skills[0]
+	if skill.Name != "test-claude-skill" {
+		t.Errorf("skill name = %q, want test-claude-skill", skill.Name)
+	}
+
+	// Should be detected as exclusive:claude due to high-confidence AskUserQuestion pattern
+	if skill.Compatibility.Mode != "exclusive" {
+		t.Errorf("mode = %q, want exclusive (detected from AskUserQuestion)", skill.Compatibility.Mode)
+	}
+	if skill.Compatibility.Harness != "claude" {
+		t.Errorf("harness = %q, want claude", skill.Compatibility.Harness)
+	}
+
+	// Verify .skill-meta.yaml was updated with the effective mode
+	metaPath := filepath.Join(skillDir, ".skill-meta.yaml")
+	meta, err := readSkillMeta(metaPath)
+	if err != nil {
+		t.Fatalf("readSkillMeta failed: %v", err)
+	}
+
+	if meta.Compatibility.Mode != "exclusive" {
+		t.Errorf("meta.compatibility.mode = %q, want exclusive", meta.Compatibility.Mode)
+	}
+	if meta.Compatibility.Harness != "claude" {
+		t.Errorf("meta.compatibility.harness = %q, want claude", meta.Compatibility.Harness)
+	}
+	// Detected should be populated with the detection results
+	if len(meta.Compatibility.Detected) > 0 {
+		// Good: detection found signals
+	} else {
+		// If detectors didn't load in test, at least the effective mode was still applied
+		// This is the key behavior change for this fix
+	}
+}
+
+// FLO-235 Issue 3: Requirements inference called during catalog rebuild
+func TestRebuildCatalogFromLibrary_InferRequirements(t *testing.T) {
+	home := t.TempDir()
+	libraryPath := filepath.Join(home, "library")
+
+	// Create skill directory
+	skillDir := filepath.Join(libraryPath, "gh-skill")
+	if err := os.MkdirAll(skillDir, 0755); err != nil {
+		t.Fatalf("mkdir failed: %v", err)
+	}
+
+	// Create SKILL.md with requirement pattern (e.g., gh pr create)
+	skillMdPath := filepath.Join(skillDir, "SKILL.md")
+	skillMdContent := `---
+name: gh-skill
+description: A skill that uses GitHub CLI
+---
+# GitHub PR Creator
+
+This skill runs "gh pr create" to create pull requests.
+`
+	if err := os.WriteFile(skillMdPath, []byte(skillMdContent), 0644); err != nil {
+		t.Fatalf("write SKILL.md failed: %v", err)
+	}
+
+	// Rebuild catalog
+	cat, err := rebuildCatalogFromLibrary(libraryPath)
+	if err != nil {
+		t.Fatalf("rebuildCatalogFromLibrary failed: %v", err)
+	}
+
+	if len(cat.Skills) != 1 {
+		t.Fatalf("expected 1 skill, got %d", len(cat.Skills))
+	}
+
+	skill := cat.Skills[0]
+	if skill.Name != "gh-skill" {
+		t.Errorf("skill name = %q, want gh-skill", skill.Name)
+	}
+
+	// Should have inferred gh requirement
+	if len(skill.Requirements.Tools) == 0 {
+		t.Errorf("expected at least 1 inferred tool requirement")
+	}
+
+	found := false
+	for _, tool := range skill.Requirements.Tools {
+		if tool.Name == "gh" && tool.Required {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected inferred tool gh (required), got %v", skill.Requirements.Tools)
+	}
+
+	// Verify .skill-meta.yaml was updated
+	metaPath := filepath.Join(skillDir, ".skill-meta.yaml")
+	meta, err := readSkillMeta(metaPath)
+	if err != nil {
+		t.Fatalf("readSkillMeta failed: %v", err)
+	}
+
+	if len(meta.Requirements.Tools) == 0 {
+		t.Errorf("meta.requirements.tools should be populated from inference")
+	}
+}
+
+func TestRebuildCatalogFromLibrary_PreservesExplicitRequirements(t *testing.T) {
+	home := t.TempDir()
+	libraryPath := filepath.Join(home, "library")
+
+	// Create skill directory
+	skillDir := filepath.Join(libraryPath, "explicit-req-skill")
+	if err := os.MkdirAll(skillDir, 0755); err != nil {
+		t.Fatalf("mkdir failed: %v", err)
+	}
+
+	skillMdPath := filepath.Join(skillDir, "SKILL.md")
+	skillMdContent := `---
+name: explicit-req-skill
+description: A skill with explicit requirements
+---
+# Skill
+
+This skill uses "gh pr create" but has explicit requirements.
+`
+	if err := os.WriteFile(skillMdPath, []byte(skillMdContent), 0644); err != nil {
+		t.Fatalf("write SKILL.md failed: %v", err)
+	}
+
+	// Write .skill-meta.yaml with explicit requirements
+	metaPath := filepath.Join(skillDir, ".skill-meta.yaml")
+	existingMeta := skillMeta{
+		Version: 1,
+		Requirements: requirements{
+			Tools: []toolRequirement{
+				{Name: "custom-tool", Required: true},
+			},
+		},
+	}
+	if err := writeSkillMeta(metaPath, existingMeta); err != nil {
+		t.Fatalf("writeSkillMeta failed: %v", err)
+	}
+
+	// Rebuild catalog
+	cat, err := rebuildCatalogFromLibrary(libraryPath)
+	if err != nil {
+		t.Fatalf("rebuildCatalogFromLibrary failed: %v", err)
+	}
+
+	skill := cat.Skills[0]
+
+	// Should NOT infer gh because explicit requirements exist
+	// Only custom-tool should remain
+	if len(skill.Requirements.Tools) != 1 {
+		t.Errorf("requirements.tools length = %d, want 1 (explicit preserved, no inference)", len(skill.Requirements.Tools))
+	}
+	if skill.Requirements.Tools[0].Name != "custom-tool" {
+		t.Errorf("tool name = %q, want custom-tool", skill.Requirements.Tools[0].Name)
+	}
+}

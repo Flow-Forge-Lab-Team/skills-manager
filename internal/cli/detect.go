@@ -42,14 +42,27 @@ func loadDetectors() (detectorSet, error) {
 	detectorsDir := os.Getenv("SKILLS_MANAGER_DETECTORS_DIR")
 	if detectorsDir == "" {
 		// Try multiple paths to find detectors
-		candidates := []string{
-			"detectors",                            // cwd (for tests)
-			filepath.Join("..", "..", "detectors"), // relative to binary location
+		candidates := []string{}
+
+		// 1. Resolve relative to installed binary
+		if exePath, err := os.Executable(); err == nil {
+			if evalPath, err := filepath.EvalSymlinks(exePath); err == nil {
+				exeDir := filepath.Dir(evalPath)
+				// Try <exe-dir>/detectors
+				candidates = append(candidates, filepath.Join(exeDir, "detectors"))
+				// Try <exe-dir>/../detectors (when binary is in bin/ subdir)
+				candidates = append(candidates, filepath.Join(exeDir, "..", "detectors"))
+			}
 		}
-		// Add user home path if available
+
+		// 2. User home directory
 		if userHome, err := os.UserHomeDir(); err == nil {
 			candidates = append(candidates, filepath.Join(userHome, ".skills-manager", "detectors"))
 		}
+
+		// 3. CWD-based fallback (for tests without install)
+		candidates = append(candidates, "detectors")
+		candidates = append(candidates, filepath.Join("..", "..", "detectors"))
 
 		for _, candidate := range candidates {
 			if _, err := os.Stat(candidate); err == nil {
@@ -314,6 +327,49 @@ func matchPattern(pattern, text string) bool {
 	}
 	// Simple substring match for all other patterns
 	return strings.Contains(text, pattern)
+}
+
+// applyAutoClassification returns a compatibility declaration based on detection results.
+// Rule: if one harness has high-confidence patterns and no other harness has any signal,
+// mark exclusive. Else if multiple harnesses with at-least-medium confidence, mark compatible.
+// Else leave portable.
+func applyAutoClassification(detected map[string]detectionResult) compatibilityDeclaration {
+	if len(detected) == 0 {
+		// No signals: portable (default)
+		return compatibilityDeclaration{Mode: "portable"}
+	}
+
+	// Collect harnesses by confidence level
+	highConfidence := []string{}
+	mediumOrHigher := []string{}
+
+	for harness, result := range detected {
+		if result.Confidence == "high" {
+			highConfidence = append(highConfidence, harness)
+			mediumOrHigher = append(mediumOrHigher, harness)
+		} else if result.Confidence == "medium" {
+			mediumOrHigher = append(mediumOrHigher, harness)
+		}
+	}
+
+	// If exactly one harness with high confidence and no other signals: exclusive
+	if len(highConfidence) == 1 && len(detected) == 1 {
+		return compatibilityDeclaration{
+			Mode:    "exclusive",
+			Harness: highConfidence[0],
+		}
+	}
+
+	// If multiple harnesses with at-least-medium confidence: compatible
+	if len(mediumOrHigher) > 1 {
+		return compatibilityDeclaration{
+			Mode:      "compatible",
+			Harnesses: mediumOrHigher,
+		}
+	}
+
+	// Default: portable
+	return compatibilityDeclaration{Mode: "portable"}
 }
 
 func readSkillBody(path string) (string, error) {
