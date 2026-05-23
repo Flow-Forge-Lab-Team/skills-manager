@@ -45,7 +45,7 @@ func runStatus(args []string, stdout io.Writer, stderr io.Writer, gf globalFlags
 	db.QueryRow("SELECT COUNT(*) FROM projects").Scan(&projCount)
 
 	var unregCount int
-	db.QueryRow("SELECT COUNT(*) FROM detected").Scan(&unregCount)
+	db.QueryRow("SELECT COUNT(*) FROM detected WHERE action IS NULL OR action = '' OR action = 'pending'").Scan(&unregCount)
 
 	sched := checkScheduledState(db)
 

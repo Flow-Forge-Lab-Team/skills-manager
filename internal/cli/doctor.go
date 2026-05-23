@@ -222,8 +222,13 @@ func toolCheckPasses(name string) bool {
 }
 
 func mcpCheckPasses(name string) bool {
-	if name != "linear" {
+	// Env opt-in (matches install.go missingRequiredMCPServers convention)
+	envVar := "SKILLS_MANAGER_MCP_" + strings.ToUpper(strings.ReplaceAll(name, "-", "_"))
+	if os.Getenv(envVar) == "available" {
 		return true
+	}
+	if name != "linear" {
+		return false // unknown MCPs require the env (or future config) to be considered present
 	}
 	h, _ := os.UserHomeDir()
 	cands := []string{
