@@ -106,6 +106,7 @@ func TestUpdateAcceptAllSafeAppliesSafeUpdates(t *testing.T) {
 	writeFile(t, filepath.Join(skillDir, ".skill-meta.yaml"), "version: 1\norigin:\n  type: github\n")
 	writeFile(t, filepath.Join(skillDir, "stale.md"), "stale\n")
 	writeFile(t, filepath.Join(root, "from", "SKILL.md"), "---\nname: notes\ndescription: Take notes\n---\nOld body\n")
+	writeFile(t, filepath.Join(root, "from", "stale.md"), "stale\n")
 	writeFile(t, filepath.Join(root, "to", "SKILL.md"), "---\nname: notes\ndescription: Take notes\n---\nNew body\n")
 	writeFile(t, filepath.Join(root, "to", ".skill-meta.yaml"), "version: 1\norigin:\n  type: marketplace\n")
 	writeFile(t, filepath.Join(root, "to", "references", "example.md"), "example\n")
@@ -280,6 +281,74 @@ func TestUpdateAcceptAllSafeAppliesFileSnapshots(t *testing.T) {
 	if _, err := os.Stat(root); !os.IsNotExist(err) {
 		t.Fatalf("expected pending update removed, got err %v", err)
 	}
+}
+
+func TestUpdateAcceptAllSafeRefusesWhenLiveFileModified(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+	skillDir := filepath.Join(home, "library", "notes")
+	root := filepath.Join(skillDir, ".update-pending")
+	writeFile(t, filepath.Join(skillDir, "SKILL.md"), "---\nname: notes\ndescription: Take notes\n---\nLocally edited body\n")
+	writeFile(t, filepath.Join(root, "from", "SKILL.md"), "---\nname: notes\ndescription: Take notes\n---\nOld body\n")
+	writeFile(t, filepath.Join(root, "to", "SKILL.md"), "---\nname: notes\ndescription: Take notes\n---\nNew body\n")
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := Run([]string{"update", "--accept-all-safe"}, &stdout, &stderr)
+	if code != 4 {
+		t.Fatalf("Run returned %d, want 4\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "diverged from staged base") || !strings.Contains(stdout.String(), "notes") {
+		t.Fatalf("stdout missing divergence refusal:\n%s", stdout.String())
+	}
+	assertFileContent(t, filepath.Join(skillDir, "SKILL.md"), "---\nname: notes\ndescription: Take notes\n---\nLocally edited body\n")
+	if _, err := os.Stat(root); err != nil {
+		t.Fatalf("pending update should remain: %v", err)
+	}
+}
+
+func TestUpdateAcceptAllSafeRefusesWhenLiveAddsFile(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+	skillDir := filepath.Join(home, "library", "notes")
+	root := filepath.Join(skillDir, ".update-pending")
+	writeFile(t, filepath.Join(skillDir, "SKILL.md"), "---\nname: notes\ndescription: Take notes\n---\nOld body\n")
+	writeFile(t, filepath.Join(skillDir, "local-notes.md"), "private notes\n")
+	writeFile(t, filepath.Join(root, "from", "SKILL.md"), "---\nname: notes\ndescription: Take notes\n---\nOld body\n")
+	writeFile(t, filepath.Join(root, "to", "SKILL.md"), "---\nname: notes\ndescription: Take notes\n---\nNew body\n")
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := Run([]string{"update", "--accept-all-safe"}, &stdout, &stderr)
+	if code != 4 {
+		t.Fatalf("Run returned %d, want 4\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "diverged from staged base") {
+		t.Fatalf("stdout missing divergence refusal:\n%s", stdout.String())
+	}
+	assertFileContent(t, filepath.Join(skillDir, "local-notes.md"), "private notes\n")
+}
+
+func TestUpdateAcceptAllSafeProceedsWhenLiveMatchesBase(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+	skillDir := filepath.Join(home, "library", "notes")
+	root := filepath.Join(skillDir, ".update-pending")
+	writeFile(t, filepath.Join(skillDir, "SKILL.md"), "---\nname: notes\ndescription: Take notes\n---\nOld body\n")
+	writeFile(t, filepath.Join(skillDir, "references", "keep.md"), "keep\n")
+	writeFile(t, filepath.Join(root, "from", "SKILL.md"), "---\nname: notes\ndescription: Take notes\n---\nOld body\n")
+	writeFile(t, filepath.Join(root, "from", "references", "keep.md"), "keep\n")
+	writeFile(t, filepath.Join(root, "to", "SKILL.md"), "---\nname: notes\ndescription: Take notes\n---\nNew body\n")
+	writeFile(t, filepath.Join(root, "to", "references", "keep.md"), "keep\n")
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := Run([]string{"update", "--accept-all-safe"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("Run returned %d, want 0\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+	}
+	assertFileContent(t, filepath.Join(skillDir, "SKILL.md"), "---\nname: notes\ndescription: Take notes\n---\nNew body\n")
+	assertFileContent(t, filepath.Join(skillDir, "references", "keep.md"), "keep\n")
 }
 
 func TestUpdateSafetyFlagsMultilineDescriptionChanges(t *testing.T) {

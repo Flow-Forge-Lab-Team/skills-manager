@@ -216,6 +216,32 @@ If hostile instructions are detected:
 - UI and CLI show the raw suspicious lines
 - The user can still accept manually after reviewing the raw diff
 
+### Divergence guard on accept
+
+Between the moment an update is staged under `library/<skill>/.update-pending/`
+and the moment the user runs `--accept-all-safe`, the live skill directory
+can change — the user might edit a file, another tool might drop in a
+local-only support file, or a sibling workspace could sync new content. If
+accept blindly replaced the live contents with the incoming snapshot, those
+local edits and local-only files would be silently destroyed.
+
+To prevent that, `--accept-all-safe` compares each live skill directory
+against the `from/` snapshot (the "what the live state was supposed to look
+like when the update was staged") before applying:
+
+- Live content is compared byte-for-byte against `from/`.
+- Executable bits are compared.
+- `.update-pending/` and `.skill-meta.yaml` on the live side are excluded
+  (the staged base never includes them).
+- Any extra file, missing file, modified content, or executable-bit
+  difference is treated as divergence.
+
+If any pending update diverges, the whole batch is refused with exit code
+`4` (partial) — mirroring the all-or-nothing behavior used when any update
+has blocking safety flags. The diverged skill is listed with the specific
+reason. Manual resolution is required (re-stage the update or revert the
+local change). The manager never attempts to merge automatically.
+
 ### Accept / reject / pin
 
 ```
