@@ -35,17 +35,18 @@ type snapshotFile struct {
 	Mode    os.FileMode
 }
 
-func runUpdate(args []string, stdout io.Writer, stderr io.Writer) int {
+func runUpdate(args []string, realStdout io.Writer, stderr io.Writer, gf globalFlags) int {
+	stdout := gf.outWriter(realStdout)
 	if len(args) == 0 {
 		fmt.Fprintln(stdout, "Usage: skills-manager update --safety <skill>")
 		fmt.Fprintln(stdout, "       skills-manager update --accept-all-safe")
-		return 0
+		return ExitSuccess
 	}
 
 	if args[0] == "--safety" {
 		if len(args) < 2 || strings.TrimSpace(args[1]) == "" {
 			fmt.Fprintln(stderr, "usage: skills-manager update --safety <skill>")
-			return 2
+			return ExitUsageError
 		}
 		report, pending, code := analyzePendingUpdate(args[1], stderr)
 		if code != 0 {
@@ -54,19 +55,52 @@ func runUpdate(args []string, stdout io.Writer, stderr io.Writer) int {
 		if report.SummaryStatus == "tainted" {
 			if err := setPendingMetaValue(filepath.Join(pending.Root, "meta.yaml"), "summary_status", "tainted"); err != nil {
 				fmt.Fprintf(stderr, "write pending metadata: %v\n", err)
-				return 3
+				return ExitOpError
 			}
 		}
 		printSafetyReport(report, stdout)
-		return 0
+		if gf.JSON {
+			if err := writeJSON(realStdout, safetyReportJSON(report)); err != nil {
+				fmt.Fprintln(stderr, err)
+				return ExitOpError
+			}
+		}
+		return ExitSuccess
 	}
 
 	if args[0] == "--accept-all-safe" {
-		return runAcceptAllSafe(stdout, stderr)
+		return runAcceptAllSafe(realStdout, stdout, stderr, gf)
 	}
 
 	fmt.Fprintf(stderr, "unknown update option: %s\n", args[0])
-	return 2
+	return ExitUsageError
+}
+
+type safetyFlagJSON struct {
+	Name     string `json:"name"`
+	File     string `json:"file"`
+	Line     int    `json:"line,omitempty"`
+	Detail   string `json:"detail"`
+	Blocking bool   `json:"blocking"`
+}
+
+type safetyReportJSONShape struct {
+	Skill         string           `json:"skill"`
+	Flags         []safetyFlagJSON `json:"flags"`
+	SummaryStatus string           `json:"summary_status,omitempty"`
+}
+
+func safetyReportJSON(report safetyReport) safetyReportJSONShape {
+	out := safetyReportJSONShape{Skill: report.Skill, SummaryStatus: report.SummaryStatus, Flags: []safetyFlagJSON{}}
+	for _, f := range report.Flags {
+		out.Flags = append(out.Flags, safetyFlagJSON{Name: f.Name, File: f.File, Line: f.Line, Detail: f.Detail, Blocking: f.Blocking})
+	}
+	return out
+}
+
+type acceptAllSafeJSON struct {
+	Accepted []string `json:"accepted"`
+	Blocked  []string `json:"blocked,omitempty"`
 }
 
 func analyzePendingUpdate(skill string, stderr io.Writer) (safetyReport, pendingUpdatePaths, int) {
@@ -93,21 +127,21 @@ func analyzePendingUpdate(skill string, stderr io.Writer) (safetyReport, pending
 	return report, pending, 0
 }
 
-func runAcceptAllSafe(stdout io.Writer, stderr io.Writer) int {
+func runAcceptAllSafe(realStdout io.Writer, stdout io.Writer, stderr io.Writer, gf globalFlags) int {
 	home, err := managerHome()
 	if err != nil {
 		fmt.Fprintf(stderr, "manager home: %v\n", err)
-		return 3
+		return ExitOpError
 	}
 	libraryPath, err := ensureLibrary(home)
 	if err != nil {
 		fmt.Fprintf(stderr, "ensure library: %v\n", err)
-		return 3
+		return ExitOpError
 	}
 	entries, err := os.ReadDir(libraryPath)
 	if err != nil {
 		fmt.Fprintf(stderr, "read library: %v\n", err)
-		return 3
+		return ExitOpError
 	}
 	var blocked []string
 	var safe []pendingUpdatePaths
@@ -121,22 +155,22 @@ func runAcceptAllSafe(stdout io.Writer, stderr io.Writer) int {
 				continue
 			}
 			fmt.Fprintf(stderr, "inspect pending update for %s: %v\n", entry.Name(), err)
-			return 3
+			return ExitOpError
 		}
 		pending, err := findPendingUpdate(entry.Name(), pendingRoot)
 		if err != nil {
 			fmt.Fprintf(stderr, "pending update for %s: %v\n", entry.Name(), err)
-			return 4
+			return ExitPartial
 		}
 		report, err := computeSafetyReport(entry.Name(), pending.From, pending.To)
 		if err != nil {
 			fmt.Fprintf(stderr, "compute safety flags for %s: %v\n", entry.Name(), err)
-			return 3
+			return ExitOpError
 		}
 		if report.SummaryStatus == "tainted" {
 			if err := setPendingMetaValue(filepath.Join(pending.Root, "meta.yaml"), "summary_status", "tainted"); err != nil {
 				fmt.Fprintf(stderr, "write pending metadata for %s: %v\n", entry.Name(), err)
-				return 3
+				return ExitOpError
 			}
 		}
 		if hasBlockingFlags(report) {
@@ -152,17 +186,31 @@ func runAcceptAllSafe(stdout io.Writer, stderr io.Writer) int {
 		for _, skill := range blocked {
 			fmt.Fprintf(stdout, "- %s\n", skill)
 		}
-		return 4
+		if gf.JSON {
+			if err := writeJSON(realStdout, acceptAllSafeJSON{Blocked: blocked, Accepted: []string{}}); err != nil {
+				fmt.Fprintln(stderr, err)
+				return ExitOpError
+			}
+		}
+		return ExitPartial
 	}
+	accepted := make([]string, 0, len(safe))
 	for _, pending := range safe {
 		if err := applyPendingUpdate(pending); err != nil {
 			fmt.Fprintf(stderr, "accept update for %s: %v\n", pending.Skill, err)
-			return 3
+			return ExitOpError
 		}
 		fmt.Fprintf(stdout, "- %s: accepted\n", pending.Skill)
+		accepted = append(accepted, pending.Skill)
 	}
 	fmt.Fprintf(stdout, "All pending updates accepted (%d).\n", len(safe))
-	return 0
+	if gf.JSON {
+		if err := writeJSON(realStdout, acceptAllSafeJSON{Accepted: accepted}); err != nil {
+			fmt.Fprintln(stderr, err)
+			return ExitOpError
+		}
+	}
+	return ExitSuccess
 }
 
 func applyPendingUpdate(pending pendingUpdatePaths) error {
@@ -175,7 +223,7 @@ func applyPendingUpdate(pending pendingUpdatePaths) error {
 		if err := copyFile(pending.To, filepath.Join(skillDir, "SKILL.md"), toInfo.Mode()); err != nil {
 			return err
 		}
-		if err := refreshSkillMeta(skillDir); err != nil {
+		if err := refreshSkillMeta(skillDir, nil); err != nil {
 			return err
 		}
 		return os.RemoveAll(pending.Root)
@@ -191,8 +239,13 @@ func applyPendingUpdate(pending pendingUpdatePaths) error {
 	if err := copyDir(pending.To, tmp); err != nil {
 		return err
 	}
-	if pathExists(filepath.Join(skillDir, ".skill-meta.yaml")) {
-		if err := os.Remove(filepath.Join(tmp, ".skill-meta.yaml")); err != nil && !os.IsNotExist(err) {
+	var incomingMeta *skillMeta
+	incomingMetaPath := filepath.Join(tmp, ".skill-meta.yaml")
+	if pathExists(incomingMetaPath) {
+		if m, err := readSkillMeta(incomingMetaPath); err == nil {
+			incomingMeta = &m
+		}
+		if err := os.Remove(incomingMetaPath); err != nil && !os.IsNotExist(err) {
 			return err
 		}
 	}
@@ -211,15 +264,31 @@ func applyPendingUpdate(pending pendingUpdatePaths) error {
 	if err := copyDir(tmp, skillDir); err != nil {
 		return err
 	}
-	if err := refreshSkillMeta(skillDir); err != nil {
+	if err := refreshSkillMeta(skillDir, incomingMeta); err != nil {
 		return err
 	}
 	return os.RemoveAll(pending.Root)
 }
 
-func refreshSkillMeta(skillDir string) error {
+// refreshSkillMeta rewrites the local .skill-meta.yaml with a refreshed
+// fingerprint. When an incoming snapshot meta is provided, its content fields
+// (summary, categories, tags, compatibility, requirements) overwrite the
+// local copy so that safe updates don't silently drop non-blocking metadata
+// changes. Install-time fields (origin, categorization, local-change tracking)
+// are preserved from the local meta.
+func refreshSkillMeta(skillDir string, incoming *skillMeta) error {
 	metaPath := filepath.Join(skillDir, ".skill-meta.yaml")
 	meta, _ := readSkillMeta(metaPath)
+	if incoming != nil {
+		meta.Summary = incoming.Summary
+		meta.Categories = incoming.Categories
+		meta.Tags = incoming.Tags
+		meta.Compatibility = incoming.Compatibility
+		meta.Requirements = incoming.Requirements
+		if incoming.Version != 0 {
+			meta.Version = incoming.Version
+		}
+	}
 	if meta.Version == 0 {
 		meta.Version = 1
 	}
