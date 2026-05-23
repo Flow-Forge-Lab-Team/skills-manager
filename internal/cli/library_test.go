@@ -511,7 +511,7 @@ func TestListCommand(t *testing.T) {
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 
-	code := runList([]string{}, &stdout, &stderr)
+	code := runList([]string{}, &stdout, &stderr, globalFlags{})
 
 	if code != 0 {
 		t.Fatalf("runList returned %d, want 0\nstderr: %s", code, stderr.String())
@@ -576,7 +576,7 @@ func TestShowCommand(t *testing.T) {
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 
-	code := runShow([]string{"test-skill"}, &stdout, &stderr)
+	code := runShow([]string{"test-skill"}, &stdout, &stderr, globalFlags{})
 
 	if code != 0 {
 		t.Fatalf("runShow returned %d, want 0\nstderr: %s", code, stderr.String())
@@ -614,7 +614,7 @@ func TestShowCommandMissingSkill(t *testing.T) {
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 
-	code := runShow([]string{"missing-skill"}, &stdout, &stderr)
+	code := runShow([]string{"missing-skill"}, &stdout, &stderr, globalFlags{})
 
 	if code != 3 {
 		t.Fatalf("runShow returned %d, want 3", code)
@@ -651,7 +651,7 @@ func TestShowCommandJSON(t *testing.T) {
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 
-	code := runShow([]string{"json-test", "--json"}, &stdout, &stderr)
+	code := runShow([]string{"json-test"}, &stdout, &stderr, globalFlags{JSON: true})
 
 	if code != 0 {
 		t.Fatalf("runShow returned %d, want 0\nstderr: %s", code, stderr.String())
