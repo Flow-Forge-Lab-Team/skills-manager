@@ -2076,3 +2076,220 @@ func TestReadCatalog_RoundTripsMCPAndModel(t *testing.T) {
 		t.Errorf("model.tool_use = %q, want %q", skill.Requirements.Model.ToolUse, "required")
 	}
 }
+
+func TestRebuildCatalog_PreservesExplicitMCPOnlyRequirements(t *testing.T) {
+	home := t.TempDir()
+	libraryPath := filepath.Join(home, "library")
+
+	// Create skill directory
+	skillDir := filepath.Join(libraryPath, "mcp-only-skill")
+	if err := os.MkdirAll(skillDir, 0755); err != nil {
+		t.Fatalf("mkdir failed: %v", err)
+	}
+
+	skillMdPath := filepath.Join(skillDir, "SKILL.md")
+	skillMdContent := `---
+name: mcp-only-skill
+description: A skill with MCP-only requirements
+---
+# Skill
+
+This skill mentions "gh pr" which would normally infer gh tool,
+but has explicit MCP-only requirements that should be preserved.
+`
+	if err := os.WriteFile(skillMdPath, []byte(skillMdContent), 0644); err != nil {
+		t.Fatalf("write SKILL.md failed: %v", err)
+	}
+
+	// Write .skill-meta.yaml with explicit MCP requirements only (inferred=false)
+	metaPath := filepath.Join(skillDir, ".skill-meta.yaml")
+	existingMeta := skillMeta{
+		Version: 1,
+		Requirements: requirements{
+			MCPServers: []mcpRequirement{
+				{Name: "linear", Required: true},
+			},
+			Inferred: false,
+		},
+	}
+	if err := writeSkillMeta(metaPath, existingMeta); err != nil {
+		t.Fatalf("writeSkillMeta failed: %v", err)
+	}
+
+	// Rebuild catalog
+	cat, err := rebuildCatalogFromLibrary(libraryPath)
+	if err != nil {
+		t.Fatalf("rebuildCatalogFromLibrary failed: %v", err)
+	}
+
+	skill := cat.Skills[0]
+
+	// Should NOT infer gh tool because explicit MCP requirements exist
+	// Only mcp_servers should be present, no tools
+	if len(skill.Requirements.Tools) != 0 {
+		t.Errorf("requirements.tools length = %d, want 0 (explicit MCP preserved, no tool inference)", len(skill.Requirements.Tools))
+	}
+	if len(skill.Requirements.MCPServers) != 1 {
+		t.Errorf("requirements.mcp_servers length = %d, want 1", len(skill.Requirements.MCPServers))
+	}
+	if skill.Requirements.MCPServers[0].Name != "linear" {
+		t.Errorf("mcp_server name = %q, want linear", skill.Requirements.MCPServers[0].Name)
+	}
+}
+
+func TestRebuildCatalog_PreservesExplicitModelOnlyRequirements(t *testing.T) {
+	home := t.TempDir()
+	libraryPath := filepath.Join(home, "library")
+
+	// Create skill directory
+	skillDir := filepath.Join(libraryPath, "model-only-skill")
+	if err := os.MkdirAll(skillDir, 0755); err != nil {
+		t.Fatalf("mkdir failed: %v", err)
+	}
+
+	skillMdPath := filepath.Join(skillDir, "SKILL.md")
+	skillMdContent := `---
+name: model-only-skill
+description: A skill with model-only requirements
+---
+# Skill
+
+This skill mentions "gh pr" which would normally infer gh tool,
+but has explicit model-only requirements that should be preserved.
+`
+	if err := os.WriteFile(skillMdPath, []byte(skillMdContent), 0644); err != nil {
+		t.Fatalf("write SKILL.md failed: %v", err)
+	}
+
+	// Write .skill-meta.yaml with explicit model requirements only (inferred=false)
+	metaPath := filepath.Join(skillDir, ".skill-meta.yaml")
+	existingMeta := skillMeta{
+		Version: 1,
+		Requirements: requirements{
+			Model: modelRequirement{
+				ToolUse: "required",
+			},
+			Inferred: false,
+		},
+	}
+	if err := writeSkillMeta(metaPath, existingMeta); err != nil {
+		t.Fatalf("writeSkillMeta failed: %v", err)
+	}
+
+	// Rebuild catalog
+	cat, err := rebuildCatalogFromLibrary(libraryPath)
+	if err != nil {
+		t.Fatalf("rebuildCatalogFromLibrary failed: %v", err)
+	}
+
+	skill := cat.Skills[0]
+
+	// Should NOT infer gh tool because explicit model requirements exist
+	// Only model should be present, no tools
+	if len(skill.Requirements.Tools) != 0 {
+		t.Errorf("requirements.tools length = %d, want 0 (explicit model preserved, no tool inference)", len(skill.Requirements.Tools))
+	}
+	if skill.Requirements.Model.ToolUse != "required" {
+		t.Errorf("requirements.model.tool_use = %q, want required", skill.Requirements.Model.ToolUse)
+	}
+}
+
+func TestWriteSkillMeta_MCPOnlyRequirementsRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	metaPath := filepath.Join(dir, ".skill-meta.yaml")
+
+	// Create a skillMeta with no tools but explicit MCP servers
+	original := skillMeta{
+		Version: 1,
+		Requirements: requirements{
+			MCPServers: []mcpRequirement{
+				{Name: "linear", Required: true},
+				{Name: "github", Required: false},
+			},
+			Inferred: false,
+		},
+		Summary: "MCP-only skill",
+	}
+
+	// Write to file
+	if err := writeSkillMeta(metaPath, original); err != nil {
+		t.Fatalf("writeSkillMeta failed: %v", err)
+	}
+
+	// Read back from file
+	read, err := readSkillMeta(metaPath)
+	if err != nil {
+		t.Fatalf("readSkillMeta failed: %v", err)
+	}
+
+	// Verify no tools
+	if len(read.Requirements.Tools) != 0 {
+		t.Errorf("requirements.tools length = %d, want 0", len(read.Requirements.Tools))
+	}
+
+	// Verify MCPServers survived the round-trip
+	if len(read.Requirements.MCPServers) != 2 {
+		raw, _ := os.ReadFile(metaPath)
+		t.Fatalf("requirements.mcp_servers length = %d, want 2; file:\n%s", len(read.Requirements.MCPServers), string(raw))
+	}
+
+	mcpMap := make(map[string]bool)
+	for _, server := range read.Requirements.MCPServers {
+		mcpMap[server.Name] = server.Required
+	}
+	if !mcpMap["linear"] {
+		t.Errorf("linear required = false, want true")
+	}
+	if mcpMap["github"] {
+		t.Errorf("github required = true, want false")
+	}
+
+	// Verify Inferred flag survived
+	if read.Requirements.Inferred {
+		t.Errorf("requirements.inferred = true, want false")
+	}
+}
+
+func TestWriteSkillMeta_ModelOnlyRequirementsRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	metaPath := filepath.Join(dir, ".skill-meta.yaml")
+
+	// Create a skillMeta with no tools but explicit model requirement
+	original := skillMeta{
+		Version: 1,
+		Requirements: requirements{
+			Model: modelRequirement{
+				ToolUse: "required",
+			},
+			Inferred: false,
+		},
+		Summary: "Model-only skill",
+	}
+
+	// Write to file
+	if err := writeSkillMeta(metaPath, original); err != nil {
+		t.Fatalf("writeSkillMeta failed: %v", err)
+	}
+
+	// Read back from file
+	read, err := readSkillMeta(metaPath)
+	if err != nil {
+		t.Fatalf("readSkillMeta failed: %v", err)
+	}
+
+	// Verify no tools
+	if len(read.Requirements.Tools) != 0 {
+		t.Errorf("requirements.tools length = %d, want 0", len(read.Requirements.Tools))
+	}
+
+	// Verify Model survived the round-trip
+	if read.Requirements.Model.ToolUse != "required" {
+		raw, _ := os.ReadFile(metaPath)
+		t.Fatalf("requirements.model.tool_use = %q, want required; file:\n%s", read.Requirements.Model.ToolUse, string(raw))
+	}
+
+	// Verify Inferred flag survived
+	if read.Requirements.Inferred {
+		t.Errorf("requirements.inferred = true, want false")
+	}
+}
