@@ -661,15 +661,21 @@ func rebuildCatalogFromLibrary(libraryPath string) (catalog, error) {
 		// Read skill body once for detection and inference
 		skillBody, _ := readSkillBody(skillMdPath)
 
-		// ALWAYS refresh the sidecar's Declared block from frontmatter (source of truth).
-		// This ensures stale declarations are overwritten.
+		// Refresh the sidecar's Declared block from frontmatter when present (source of truth).
+		needsWrite := false
+		oldDeclared := meta.Compatibility.Declared
+
 		if compDecl.Mode != "" {
 			meta.Compatibility.Declared = &compDecl
 			// Clear explicit_portable if frontmatter now has a declaration (frontmatter wins)
 			meta.Compatibility.ExplicitPortable = false
+			needsWrite = true
 		} else {
 			// Frontmatter has no declaration, so clear the stale Declared block
 			meta.Compatibility.Declared = nil
+			if oldDeclared != nil {
+				needsWrite = true // we cleared a previous declaration
+			}
 		}
 
 		// Check for explicit declaration: either from frontmatter OR from explicit_portable flag
@@ -702,11 +708,13 @@ func rebuildCatalogFromLibrary(libraryPath string) (catalog, error) {
 				meta.Compatibility.Mode = autoClass.Mode
 				meta.Compatibility.Harness = autoClass.Harness
 				meta.Compatibility.Harnesses = autoClass.Harnesses
-			} else {
-				// No detection signals: default to portable, clear any stale harness data
+				needsWrite = true
+			} else if meta.Compatibility.Mode != "portable" || meta.Compatibility.Harness != "" || len(meta.Compatibility.Harnesses) > 0 {
+				// No detection signals: default to portable, but only write if we are changing something
 				meta.Compatibility.Mode = "portable"
 				meta.Compatibility.Harness = ""
 				meta.Compatibility.Harnesses = nil
+				needsWrite = true
 			}
 		}
 
@@ -719,14 +727,20 @@ func rebuildCatalogFromLibrary(libraryPath string) (catalog, error) {
 			inferred := inferRequirements(detectors, skillBody)
 			meta.Requirements = inferred
 			meta.Requirements.Inferred = true
+			needsWrite = true
 		}
 
 		if meta.Compatibility.Mode == "" {
 			meta.Compatibility.Mode = "portable"
 		}
 
-		// Persist the updated meta back to .skill-meta.yaml
-		_ = writeSkillMeta(metaPath, meta)
+		// Only rewrite the sidecar if we actually changed modeled data.
+		// This prevents silent deletion of unmodeled fields (e.g. requirements.scripts,
+		// requirements.credentials, model.min_context_tokens, etc.) that are documented
+		// but not yet represented in the Go structs.
+		if needsWrite {
+			_ = writeSkillMeta(metaPath, meta)
+		}
 
 		summary := meta.Summary
 		if summary == "" {
