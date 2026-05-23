@@ -1398,6 +1398,24 @@ func readCatalog(path string) (catalog, error) {
 					current.Requirements.Tools = items
 				}
 			}
+		case "mcp_servers":
+			if section == "requirements" {
+				if strings.HasPrefix(value, "[") && strings.HasSuffix(value, "]") {
+					current.Requirements.MCPServers = mcpRequirementsFromNames(parseInlineList(value))
+				} else {
+					items, next := readMCPServerRequirements(lines, i)
+					i = next
+					current.Requirements.MCPServers = items
+				}
+			}
+		case "model":
+			if section == "requirements" {
+				section = "requirements:model"
+			}
+		case "tool_use":
+			if section == "requirements:model" {
+				current.Requirements.Model.ToolUse = unquote(value)
+			}
 		}
 	}
 	if current != nil {

@@ -1987,3 +1987,92 @@ This is a simple portable skill with no patterns.
 		t.Errorf("persisted meta: harnesses = %v, want empty slice", meta.Compatibility.Harnesses)
 	}
 }
+
+func TestReadCatalog_RoundTripsMCPAndModel(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+
+	libraryPath := filepath.Join(home, "library")
+	if err := os.MkdirAll(libraryPath, 0755); err != nil {
+		t.Fatalf("mkdir library failed: %v", err)
+	}
+
+	// Create a skill with tools, mcp_servers, and model requirements
+	writeFile(t, filepath.Join(libraryPath, "testskill", "SKILL.md"),
+		"---\nname: testskill\ndescription: Test skill\n---\nBody")
+	if err := writeSkillMeta(filepath.Join(libraryPath, "testskill", ".skill-meta.yaml"), skillMeta{
+		Version: 1,
+		Requirements: requirements{
+			Tools: []toolRequirement{
+				{Name: "gh", Required: true},
+				{Name: "jq", Required: false},
+			},
+			MCPServers: []mcpRequirement{
+				{Name: "linear", Required: true},
+				{Name: "github", Required: false},
+			},
+			Model: modelRequirement{
+				ToolUse: "required",
+			},
+		},
+	}); err != nil {
+		t.Fatalf("write sidecar failed: %v", err)
+	}
+
+	// Build and write catalog
+	cat, err := rebuildCatalogFromLibrary(libraryPath)
+	if err != nil {
+		t.Fatalf("rebuild failed: %v", err)
+	}
+	catalogPath := filepath.Join(libraryPath, "catalog.yaml")
+	if err := writeCatalog(catalogPath, cat); err != nil {
+		t.Fatalf("write catalog failed: %v", err)
+	}
+
+	// Read catalog back and verify all fields round-trip
+	parsed, err := readCatalog(catalogPath)
+	if err != nil {
+		t.Fatalf("read catalog failed: %v", err)
+	}
+	if len(parsed.Skills) != 1 {
+		raw, _ := os.ReadFile(catalogPath)
+		t.Fatalf("got %d skills, want 1; catalog:\n%s", len(parsed.Skills), string(raw))
+	}
+
+	skill := parsed.Skills[0]
+
+	// Verify tools round-trip
+	if len(skill.Requirements.Tools) != 2 {
+		t.Errorf("tools count = %d, want 2", len(skill.Requirements.Tools))
+	}
+	toolMap := make(map[string]bool)
+	for _, tool := range skill.Requirements.Tools {
+		toolMap[tool.Name] = tool.Required
+	}
+	if !toolMap["gh"] {
+		t.Errorf("gh required = false, want true")
+	}
+	if toolMap["jq"] {
+		t.Errorf("jq required = true, want false")
+	}
+
+	// Verify mcp_servers round-trip
+	if len(skill.Requirements.MCPServers) != 2 {
+		t.Errorf("mcp_servers count = %d, want 2", len(skill.Requirements.MCPServers))
+	}
+	mcpMap := make(map[string]bool)
+	for _, server := range skill.Requirements.MCPServers {
+		mcpMap[server.Name] = server.Required
+	}
+	if !mcpMap["linear"] {
+		t.Errorf("linear required = false, want true")
+	}
+	if mcpMap["github"] {
+		t.Errorf("github required = true, want false")
+	}
+
+	// Verify model round-trip
+	if skill.Requirements.Model.ToolUse != "required" {
+		t.Errorf("model.tool_use = %q, want %q", skill.Requirements.Model.ToolUse, "required")
+	}
+}
