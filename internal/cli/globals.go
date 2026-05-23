@@ -215,6 +215,8 @@ Forms:
   --safety <skill>     print a safety report for one pending update
   --accept-all-safe    apply every pending update that has no blocking flags;
                        refuses (exit 4) if any update is blocked
+
+` + globalFlagHelp()
 	case "set":
 		return `skills-manager set <skill> --compatibility <mode> [flags]
 
