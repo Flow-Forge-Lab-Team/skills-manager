@@ -30,6 +30,11 @@ type pendingUpdatePaths struct {
 	To    string
 }
 
+type snapshotFile struct {
+	Content string
+	Mode    os.FileMode
+}
+
 func runUpdate(args []string, stdout io.Writer, stderr io.Writer) int {
 	if len(args) == 0 {
 		fmt.Fprintln(stdout, "Usage: skills-manager update --safety <skill>")
@@ -154,6 +159,16 @@ func runAcceptAllSafe(stdout io.Writer, stderr io.Writer) int {
 
 func applyPendingUpdate(pending pendingUpdatePaths) error {
 	skillDir := filepath.Dir(pending.Root)
+	toInfo, err := os.Stat(pending.To)
+	if err != nil {
+		return err
+	}
+	if !toInfo.IsDir() {
+		if err := copyFile(pending.To, filepath.Join(skillDir, "SKILL.md"), toInfo.Mode()); err != nil {
+			return err
+		}
+		return os.RemoveAll(pending.Root)
+	}
 	tmp, err := os.MkdirTemp("", "skills-manager-update-*")
 	if err != nil {
 		return err
@@ -277,18 +292,16 @@ func computeSafetyReport(skill, fromPath, toPath string) (safetyReport, error) {
 
 	if from, ok := fromFiles["SKILL.md"]; ok {
 		if to, ok := toFiles["SKILL.md"]; ok {
-			fromName, fromDesc := parseFrontmatterText(from)
-			toName, toDesc := parseFrontmatterText(to)
-			_ = fromName
-			_ = toName
+			_, fromDesc := parseFrontmatterText(from.Content)
+			_, toDesc := parseFrontmatterText(to.Content)
 			if fromDesc != toDesc {
-				addFlag("description-changed", "SKILL.md", frontmatterLine(to, "description"), "frontmatter description changed", true)
+				addFlag("description-changed", "SKILL.md", frontmatterLine(to.Content, "description"), "frontmatter description changed", true)
 			}
 		}
 	}
 
-	fromMeta := parseMetaText(fromFiles[".skill-meta.yaml"])
-	toMeta := parseMetaText(toFiles[".skill-meta.yaml"])
+	fromMeta := parseMetaText(fromFiles[".skill-meta.yaml"].Content)
+	toMeta := parseMetaText(toFiles[".skill-meta.yaml"].Content)
 	if !stringSlicesEqual(fromMeta["compatibility"], toMeta["compatibility"]) {
 		addFlag("compatibility-changed", ".skill-meta.yaml", 0, "compatibility section changed", true)
 	}
@@ -318,21 +331,27 @@ func computeSafetyReport(skill, fromPath, toPath string) (safetyReport, error) {
 			if strings.HasPrefix(filepath.ToSlash(rel), "scripts/") {
 				addFlag("script-added", rel, 0, "new script file added", true)
 			}
-			addedLines += lineCount(to)
-			for lineNo, line := range strings.Split(to, "\n") {
+			addedLines += lineCount(to.Content)
+			for lineNo, line := range strings.Split(to.Content, "\n") {
 				checkAddedLine(addFlag, rel, lineNo+1, line)
 			}
 			continue
 		}
 		if fromOK && !toOK {
-			removedLines += lineCount(from)
+			removedLines += lineCount(from.Content)
 			continue
 		}
-		if !fromOK || !toOK || from == to {
+		if !fromOK || !toOK {
 			continue
 		}
-		fromLines := lineMultiset(strings.Split(from, "\n"))
-		for lineNo, line := range strings.Split(to, "\n") {
+		if isExecutableAdded(from.Mode, to.Mode) && strings.HasPrefix(filepath.ToSlash(rel), "scripts/") {
+			addFlag("script-added", rel, 0, "script executable bit added", true)
+		}
+		if from.Content == to.Content {
+			continue
+		}
+		fromLines := lineMultiset(strings.Split(from.Content, "\n"))
+		for lineNo, line := range strings.Split(to.Content, "\n") {
 			if fromLines[line] > 0 {
 				fromLines[line]--
 				continue
@@ -340,8 +359,8 @@ func computeSafetyReport(skill, fromPath, toPath string) (safetyReport, error) {
 			addedLines++
 			checkAddedLine(addFlag, rel, lineNo+1, line)
 		}
-		toLines := lineMultiset(strings.Split(to, "\n"))
-		for _, line := range strings.Split(from, "\n") {
+		toLines := lineMultiset(strings.Split(to.Content, "\n"))
+		for _, line := range strings.Split(from.Content, "\n") {
 			if toLines[line] > 0 {
 				toLines[line]--
 				continue
@@ -429,21 +448,29 @@ func containsFlag(report safetyReport, name string) bool {
 	return false
 }
 
-func snapshotFiles(path string) (map[string]string, error) {
+func isExecutableAdded(fromMode, toMode os.FileMode) bool {
+	return fromMode&0o111 == 0 && toMode&0o111 != 0
+}
+
+func snapshotFiles(path string) (map[string]snapshotFile, error) {
 	stat, err := os.Stat(path)
 	if err != nil {
 		return nil, err
 	}
-	files := map[string]string{}
+	files := map[string]snapshotFile{}
 	if !stat.IsDir() {
 		data, err := os.ReadFile(path)
 		if err != nil {
 			return nil, err
 		}
-		files["SKILL.md"] = string(data)
+		files["SKILL.md"] = snapshotFile{Content: string(data), Mode: stat.Mode()}
 		return files, nil
 	}
 	err = filepath.WalkDir(path, func(p string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		info, err := d.Info()
 		if err != nil {
 			return err
 		}
@@ -458,7 +485,7 @@ func snapshotFiles(path string) (map[string]string, error) {
 		if err != nil {
 			return err
 		}
-		files[filepath.ToSlash(rel)] = string(data)
+		files[filepath.ToSlash(rel)] = snapshotFile{Content: string(data), Mode: info.Mode()}
 		return nil
 	})
 	return files, err
@@ -474,14 +501,37 @@ func parseFrontmatterText(text string) (name, description string) {
 	}
 	frontmatter := text[3 : endIdx+3]
 	lines := strings.Split(frontmatter, "\n")
+	var inDescription bool
+	var descLines []string
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
 		if strings.HasPrefix(trimmed, "name:") {
 			name = unquote(strings.TrimSpace(strings.TrimPrefix(trimmed, "name:")))
+			inDescription = false
+			continue
 		}
 		if strings.HasPrefix(trimmed, "description:") {
-			description = unquote(strings.TrimSpace(strings.TrimPrefix(trimmed, "description:")))
+			inDescription = true
+			rest := strings.TrimSpace(strings.TrimPrefix(trimmed, "description:"))
+			if rest != "" {
+				descLines = append(descLines, rest)
+			}
+			continue
 		}
+		if inDescription {
+			if strings.Contains(trimmed, ":") && !strings.HasPrefix(trimmed, "-") && indent(line) == 0 {
+				break
+			}
+			if !strings.HasPrefix(trimmed, "-") {
+				descLines = append(descLines, trimmed)
+			}
+		}
+	}
+	if len(descLines) > 0 {
+		description = unquote(strings.TrimSpace(strings.Join(descLines, " ")))
 	}
 	return name, description
 }

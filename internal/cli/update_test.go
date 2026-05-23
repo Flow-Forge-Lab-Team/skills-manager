@@ -156,3 +156,70 @@ local_changes: true
 		t.Fatalf("stdout has false requirements flag:\n%s", stdout.String())
 	}
 }
+
+func TestUpdateAcceptAllSafeAppliesFileSnapshots(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+	skillDir := filepath.Join(home, "library", "notes")
+	root := filepath.Join(skillDir, ".update-pending")
+	writeFile(t, filepath.Join(skillDir, "SKILL.md"), "---\nname: notes\ndescription: Take notes\n---\nOld body\n")
+	writeFile(t, filepath.Join(skillDir, "references", "keep.md"), "keep\n")
+	writeFile(t, filepath.Join(root, "from-v1.0.0.md"), "---\nname: notes\ndescription: Take notes\n---\nOld body\n")
+	writeFile(t, filepath.Join(root, "to-v1.1.0.md"), "---\nname: notes\ndescription: Take notes\n---\nNew body\n")
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := Run([]string{"update", "--accept-all-safe"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("Run returned %d, want 0\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+	}
+	assertFileContent(t, filepath.Join(skillDir, "SKILL.md"), "---\nname: notes\ndescription: Take notes\n---\nNew body\n")
+	assertFileContent(t, filepath.Join(skillDir, "references", "keep.md"), "keep\n")
+	if _, err := os.Stat(root); !os.IsNotExist(err) {
+		t.Fatalf("expected pending update removed, got err %v", err)
+	}
+}
+
+func TestUpdateSafetyFlagsMultilineDescriptionChanges(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+	root := filepath.Join(home, "library", "notes", ".update-pending")
+	writeFile(t, filepath.Join(root, "from", "SKILL.md"), "---\nname: notes\ndescription: >\n  Take notes\n  for meetings\n---\nBody\n")
+	writeFile(t, filepath.Join(root, "to", "SKILL.md"), "---\nname: notes\ndescription: >\n  Take notes\n  and summarize meetings\n---\nBody\n")
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := Run([]string{"update", "--safety", "notes"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("Run returned %d, want 0\nstderr:\n%s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "description-changed") {
+		t.Fatalf("stdout missing multiline description flag:\n%s", stdout.String())
+	}
+}
+
+func TestUpdateSafetyFlagsExecutableScriptModeChanges(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+	root := filepath.Join(home, "library", "notes", ".update-pending")
+	writeFile(t, filepath.Join(root, "from", "SKILL.md"), "---\nname: notes\ndescription: Take notes\n---\nBody\n")
+	writeFile(t, filepath.Join(root, "to", "SKILL.md"), "---\nname: notes\ndescription: Take notes\n---\nBody\n")
+	writeFile(t, filepath.Join(root, "from", "scripts", "audit.sh"), "#!/bin/sh\necho audit\n")
+	writeFile(t, filepath.Join(root, "to", "scripts", "audit.sh"), "#!/bin/sh\necho audit\n")
+	if err := os.Chmod(filepath.Join(root, "from", "scripts", "audit.sh"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(filepath.Join(root, "to", "scripts", "audit.sh"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := Run([]string{"update", "--safety", "notes"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("Run returned %d, want 0\nstderr:\n%s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "script-added") || !strings.Contains(stdout.String(), "executable bit") {
+		t.Fatalf("stdout missing executable script flag:\n%s", stdout.String())
+	}
+}
