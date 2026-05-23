@@ -107,6 +107,7 @@ func TestUpdateAcceptAllSafeAppliesSafeUpdates(t *testing.T) {
 	writeFile(t, filepath.Join(skillDir, "stale.md"), "stale\n")
 	writeFile(t, filepath.Join(root, "from", "SKILL.md"), "---\nname: notes\ndescription: Take notes\n---\nOld body\n")
 	writeFile(t, filepath.Join(root, "to", "SKILL.md"), "---\nname: notes\ndescription: Take notes\n---\nNew body\n")
+	writeFile(t, filepath.Join(root, "to", ".skill-meta.yaml"), "version: 1\norigin:\n  type: marketplace\n")
 	writeFile(t, filepath.Join(root, "to", "references", "example.md"), "example\n")
 
 	var stdout bytes.Buffer
@@ -120,8 +121,8 @@ func TestUpdateAcceptAllSafeAppliesSafeUpdates(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected refreshed metadata: %v", err)
 	}
-	if !strings.Contains(string(meta), "type: github") || !strings.Contains(string(meta), "fingerprint:") {
-		t.Fatalf("metadata should preserve origin and refresh fingerprint:\n%s", string(meta))
+	if !strings.Contains(string(meta), "type: github") || strings.Contains(string(meta), "type: marketplace") || !strings.Contains(string(meta), "fingerprint:") {
+		t.Fatalf("metadata should preserve local origin and refresh fingerprint:\n%s", string(meta))
 	}
 	assertFileContent(t, filepath.Join(skillDir, "references", "example.md"), "example\n")
 	if _, err := os.Stat(filepath.Join(skillDir, "stale.md")); !os.IsNotExist(err) {

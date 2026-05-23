@@ -191,15 +191,17 @@ func applyPendingUpdate(pending pendingUpdatePaths) error {
 	if err := copyDir(pending.To, tmp); err != nil {
 		return err
 	}
+	if pathExists(filepath.Join(skillDir, ".skill-meta.yaml")) {
+		if err := os.Remove(filepath.Join(tmp, ".skill-meta.yaml")); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+	}
 	entries, err := os.ReadDir(skillDir)
 	if err != nil {
 		return err
 	}
 	for _, entry := range entries {
-		if entry.Name() == ".update-pending" {
-			continue
-		}
-		if entry.Name() == ".skill-meta.yaml" && !pathExists(filepath.Join(tmp, ".skill-meta.yaml")) {
+		if entry.Name() == ".update-pending" || entry.Name() == ".skill-meta.yaml" {
 			continue
 		}
 		if err := os.RemoveAll(filepath.Join(skillDir, entry.Name())); err != nil {
