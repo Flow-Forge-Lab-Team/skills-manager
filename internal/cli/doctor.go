@@ -54,22 +54,32 @@ func runDoctor(args []string, stdout io.Writer, stderr io.Writer, gf globalFlags
 		return ExitOpError
 	}
 
-	cat, err := rebuildCatalogFromLibrary(libraryPath)
-	if err != nil {
-		fmt.Fprintf(stderr, "rebuild catalog: %v\n", err)
-		return ExitOpError
-	}
-
 	catalogPath := filepath.Join(libraryPath, "catalog.yaml")
 	rebuilt := []string{}
 
+	var cat catalog
 	if opts.rebuildCatalog {
+		cat, err = rebuildCatalogFromLibrary(libraryPath)
+		if err != nil {
+			fmt.Fprintf(stderr, "rebuild catalog: %v\n", err)
+			return ExitOpError
+		}
 		if err := writeCatalog(catalogPath, cat); err != nil {
 			fmt.Fprintf(stderr, "write catalog: %v\n", err)
 			return ExitOpError
 		}
 		rebuilt = append(rebuilt, "catalog")
 		fmt.Fprintln(humanOut, "rebuilt catalog.yaml")
+	} else {
+		cat, err = readCatalog(catalogPath)
+		if err != nil {
+			// Fallback for first-run or missing catalog.yaml
+			cat, err = rebuildCatalogFromLibrary(libraryPath)
+			if err != nil {
+				fmt.Fprintf(stderr, "load catalog: %v\n", err)
+				return ExitOpError
+			}
+		}
 	}
 
 	if opts.rebuildState {
@@ -177,7 +187,9 @@ func collectProblems(home, libraryPath string, cat catalog) []string {
 		}
 	}
 	for m := range reqMCPs {
-		if !mcpCheckPasses(m) {
+		if m != "linear" {
+			problems = append(problems, fmt.Sprintf("MCP %s declared as required; automated check not implemented for non-linear MCPs — verify manually (see COMPATIBILITY.md)", m))
+		} else if !mcpCheckPasses(m) {
 			problems = append(problems, fmt.Sprintf("missing required MCP %s (configure connector for your harness)", m))
 		}
 	}
@@ -194,17 +206,19 @@ func collectProblems(home, libraryPath string, cat catalog) []string {
 }
 
 func toolCheckPasses(name string) bool {
-	cmdStr := ""
 	switch name {
 	case "gh":
-		cmdStr = "gh auth status"
+		c := exec.Command("gh", "auth", "status")
+		return c.Run() == nil
 	case "rg":
-		cmdStr = "rg --version"
+		c := exec.Command("rg", "--version")
+		return c.Run() == nil
 	default:
-		cmdStr = "command -v " + name + " > /dev/null 2>&1 || exit 1"
+		// Safe: no shell, just presence check. Names from catalog are expected
+		// to be simple binaries; LookPath does not evaluate the name as code.
+		_, err := exec.LookPath(name)
+		return err == nil
 	}
-	c := exec.Command("/bin/sh", "-c", cmdStr)
-	return c.Run() == nil
 }
 
 func mcpCheckPasses(name string) bool {

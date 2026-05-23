@@ -2329,7 +2329,7 @@ skills:
       mode: portable
     requirements:
       tools:
-        - name: gh
+        - name: definitely-missing-tool-abc123
           required: true
 `)
 	writeFile(t, filepath.Join(home, "library", "needs-gh", "SKILL.md"), `---
