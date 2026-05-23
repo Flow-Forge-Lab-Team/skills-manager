@@ -46,6 +46,7 @@ type catalog struct {
 
 type catalogSkill struct {
 	Name          string
+	Summary       string
 	Categories    []string
 	Tags          []string
 	Compatibility compatibility
@@ -1175,6 +1176,8 @@ func readCatalog(path string) (catalog, error) {
 			continue
 		}
 		switch key {
+		case "summary":
+			current.Summary = unquote(value)
 		case "categories", "tags":
 			items, next := readYAMLStringList(lines, i, value)
 			i = next
