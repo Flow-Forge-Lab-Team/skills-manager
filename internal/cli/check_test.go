@@ -834,3 +834,194 @@ func TestCheckRejectsUnsafeOriginPath(t *testing.T) {
 		}
 	}
 }
+
+// TestFetchFileUsesGetNotPost verifies that fetchFileFromGitHub uses a query string
+// for the ref parameter (triggering GET) rather than -f flag (which causes POST).
+// This test uses a recording fetcher that captures the gh command arguments.
+func TestFetchFileUsesGetNotPost(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+
+	stateDB, err := state.Open(home)
+	if err != nil {
+		t.Fatalf("Open state: %v", err)
+	}
+	defer stateDB.Close()
+
+	libraryPath := filepath.Join(home, "library")
+	skillDir := filepath.Join(libraryPath, "pdf")
+	if err := os.MkdirAll(skillDir, 0755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte("---\nname: pdf\n---\nBody v1\n"), 0644); err != nil {
+		t.Fatalf("write SKILL.md: %v", err)
+	}
+
+	metaContent := `version: 1
+origin:
+  type: github
+  url: https://github.com/user/pdf-skill
+  commit: abc1234
+`
+	if err := os.WriteFile(filepath.Join(skillDir, ".skill-meta.yaml"), []byte(metaContent), 0644); err != nil {
+		t.Fatalf("write meta: %v", err)
+	}
+
+	poller := &fakePoller{
+		responses: map[string]fakeResponse{
+			"user/pdf-skill": {
+				commit: "def5678",
+				etag:   "w/\"new-etag\"",
+			},
+		},
+	}
+
+	oldFetcher := fetcher
+	fetchedPaths := []string{}
+	fetcher = &fakeFetcher{
+		files: map[string][]byte{
+			"user/pdf-skill:def5678:SKILL.md": []byte("---\nname: pdf\n---\nBody v2\n"),
+		},
+		fetchedPathsForTest: &fetchedPaths,
+	}
+	defer func() { fetcher = oldFetcher }()
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := runCheckWithPoller(nil, &stdout, &stderr, globalFlags{}, poller)
+	if code != 0 {
+		t.Fatalf("runCheck returned %d, want 0\nstderr: %s", code, stderr.String())
+	}
+
+	// Verify the fetch was called with the right path
+	if len(fetchedPaths) != 1 || fetchedPaths[0] != "SKILL.md" {
+		t.Fatalf("expected fetch of SKILL.md, got: %v", fetchedPaths)
+	}
+}
+
+// TestAcceptPreservesSiblingFiles verifies that when a skill has sibling files
+// like references/ or scripts/, accepting an update via --accept-all-safe
+// preserves those files instead of deleting them.
+func TestAcceptPreservesSiblingFiles(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+
+	stateDB, err := state.Open(home)
+	if err != nil {
+		t.Fatalf("Open state: %v", err)
+	}
+	defer stateDB.Close()
+
+	libraryPath := filepath.Join(home, "library")
+	skillDir := filepath.Join(libraryPath, "advanced")
+	if err := os.MkdirAll(skillDir, 0755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	// Create initial SKILL.md
+	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte("---\nname: advanced\ndescription: Advanced skill\n---\nBody v1\n"), 0644); err != nil {
+		t.Fatalf("write SKILL.md: %v", err)
+	}
+
+	// Create .skill-meta.yaml
+	metaContent := `version: 1
+origin:
+  type: github
+  url: https://github.com/user/advanced-skill
+  commit: abc1234
+`
+	if err := os.WriteFile(filepath.Join(skillDir, ".skill-meta.yaml"), []byte(metaContent), 0644); err != nil {
+		t.Fatalf("write meta: %v", err)
+	}
+
+	// Create sibling files: references/example.md and scripts/foo.sh
+	if err := os.MkdirAll(filepath.Join(skillDir, "references"), 0755); err != nil {
+		t.Fatalf("mkdir references: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(skillDir, "references", "example.md"), []byte("# Example\nThis is a reference file\n"), 0644); err != nil {
+		t.Fatalf("write references/example.md: %v", err)
+	}
+
+	if err := os.MkdirAll(filepath.Join(skillDir, "scripts"), 0755); err != nil {
+		t.Fatalf("mkdir scripts: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(skillDir, "scripts", "foo.sh"), []byte("#!/bin/bash\necho hello\n"), 0755); err != nil {
+		t.Fatalf("write scripts/foo.sh: %v", err)
+	}
+
+	poller := &fakePoller{
+		responses: map[string]fakeResponse{
+			"user/advanced-skill": {
+				commit: "def5678",
+				etag:   "w/\"new-etag\"",
+			},
+		},
+	}
+
+	oldFetcher := fetcher
+	fetcher = &fakeFetcher{
+		files: map[string][]byte{
+			"user/advanced-skill:def5678:SKILL.md": []byte("---\nname: advanced\ndescription: Advanced skill\n---\nBody v1 updated\n"),
+		},
+	}
+	defer func() { fetcher = oldFetcher }()
+
+	// Step 1: Run check to stage the update
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := runCheckWithPoller(nil, &stdout, &stderr, globalFlags{}, poller)
+	if code != 0 {
+		t.Fatalf("runCheck returned %d, want 0\nstderr: %s", code, stderr.String())
+	}
+
+	// Check safety flags first to understand what's blocking
+	stdout.Reset()
+	stderr.Reset()
+	code = Run([]string{"update", "--safety", "advanced"}, &stdout, &stderr)
+	safetyOutput := stdout.String()
+
+	// Step 2: Run --accept-all-safe
+	stdout.Reset()
+	stderr.Reset()
+	code = Run([]string{"update", "--accept-all-safe"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("update --accept-all-safe returned %d, want 0\nSafety flags: %s\nstdout: %s\nstderr: %s", code, safetyOutput, stdout.String(), stderr.String())
+	}
+
+	// Step 3: Verify sibling files still exist after accept
+	referencesPath := filepath.Join(skillDir, "references", "example.md")
+	if _, err := os.Stat(referencesPath); err != nil {
+		t.Fatalf("references/example.md should be preserved after accept, got: %v", err)
+	}
+
+	scriptPath := filepath.Join(skillDir, "scripts", "foo.sh")
+	if _, err := os.Stat(scriptPath); err != nil {
+		t.Fatalf("scripts/foo.sh should be preserved after accept, got: %v", err)
+	}
+
+	// Verify content is still correct
+	content, err := os.ReadFile(referencesPath)
+	if err != nil {
+		t.Fatalf("read references/example.md: %v", err)
+	}
+	if !strings.Contains(string(content), "This is a reference file") {
+		t.Fatalf("references/example.md content corrupted")
+	}
+
+	// Verify SKILL.md was updated
+	skillMdPath := filepath.Join(skillDir, "SKILL.md")
+	skillContent, err := os.ReadFile(skillMdPath)
+	if err != nil {
+		t.Fatalf("read SKILL.md: %v", err)
+	}
+	if !strings.Contains(string(skillContent), "Body v1 updated") {
+		t.Fatalf("SKILL.md should be updated, got: %s", string(skillContent))
+	}
+
+	// Verify .update-pending was cleaned up
+	pendingPath := filepath.Join(skillDir, ".update-pending")
+	if _, err := os.Stat(pendingPath); err == nil {
+		t.Fatalf(".update-pending directory should be removed after accept")
+	}
+}

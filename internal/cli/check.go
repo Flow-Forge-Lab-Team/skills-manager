@@ -298,10 +298,9 @@ func stageUpdate(skillName string, libraryPath string, meta skillMeta, newCommit
 	skillDir := filepath.Join(libraryPath, skillName)
 	pendingRoot := filepath.Join(skillDir, ".update-pending")
 
-	// Read current SKILL.md as "from-current" snapshot
+	// Verify current SKILL.md exists (we'll copy the entire live directory as from-current)
 	currentPath := filepath.Join(skillDir, "SKILL.md")
-	currentContent, err := os.ReadFile(currentPath)
-	if err != nil {
+	if _, err := os.Stat(currentPath); err != nil {
 		return fmt.Errorf("read current SKILL.md: %w", err)
 	}
 
@@ -343,23 +342,86 @@ func stageUpdate(skillName string, libraryPath string, meta skillMeta, newCommit
 		return fmt.Errorf("create pending dir: %w", err)
 	}
 
-	// from-current: snapshot with current state (SKILL.md + live .skill-meta.yaml as-is)
+	// from-current: snapshot the entire live skill directory so safety checks compare
+	// a complete baseline (not just SKILL.md) against to-incoming. This ensures that
+	// sibling files are detected as part of the base, not as "added" by the update.
 	fromCurrentDir := filepath.Join(pendingRoot, "from-current")
+	if err := os.RemoveAll(fromCurrentDir); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("remove existing from-current: %w", err)
+	}
 	if err := os.MkdirAll(fromCurrentDir, 0755); err != nil {
 		return fmt.Errorf("mkdir from-current: %w", err)
 	}
-	if err := os.WriteFile(filepath.Join(fromCurrentDir, "SKILL.md"), currentContent, 0644); err != nil {
-		return fmt.Errorf("write from-current/SKILL.md: %w", err)
-	}
-	if err := os.WriteFile(filepath.Join(fromCurrentDir, ".skill-meta.yaml"), liveMetaContent, 0644); err != nil {
-		return fmt.Errorf("write from-current/.skill-meta.yaml: %w", err)
+
+	// Copy entire live skill directory (except .update-pending) into from-current
+	if err := filepath.WalkDir(skillDir, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(skillDir, path)
+		if err != nil {
+			return err
+		}
+		if rel == ".update-pending" {
+			return filepath.SkipDir
+		}
+		if rel == "." {
+			return nil
+		}
+		destPath := filepath.Join(fromCurrentDir, rel)
+		if d.IsDir() {
+			return os.MkdirAll(destPath, 0755)
+		}
+		info, err := d.Info()
+		if err != nil {
+			return err
+		}
+		return copyFile(path, destPath, info.Mode())
+	}); err != nil {
+		return fmt.Errorf("copy live skill to from-current: %w", err)
 	}
 
-	// to-incoming: snapshot with incoming state; rewrite origin.commit to newCommit so accept advances it
+	// to-incoming: snapshot the entire live skill directory so applyPendingUpdate
+	// (which treats directory-form "to" as authoritative) won't wipe sibling files
+	// like references/ or scripts/. Then overwrite SKILL.md and .skill-meta.yaml
+	// with incoming content.
 	toIncomingDir := filepath.Join(pendingRoot, "to-incoming")
+	if err := os.RemoveAll(toIncomingDir); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("remove existing to-incoming: %w", err)
+	}
 	if err := os.MkdirAll(toIncomingDir, 0755); err != nil {
 		return fmt.Errorf("mkdir to-incoming: %w", err)
 	}
+
+	// Copy entire live skill directory (except .update-pending) into to-incoming
+	if err := filepath.WalkDir(skillDir, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(skillDir, path)
+		if err != nil {
+			return err
+		}
+		if rel == ".update-pending" {
+			return filepath.SkipDir
+		}
+		if rel == "." {
+			return nil
+		}
+		destPath := filepath.Join(toIncomingDir, rel)
+		if d.IsDir() {
+			return os.MkdirAll(destPath, 0755)
+		}
+		info, err := d.Info()
+		if err != nil {
+			return err
+		}
+		return copyFile(path, destPath, info.Mode())
+	}); err != nil {
+		return fmt.Errorf("copy live skill to to-incoming: %w", err)
+	}
+
+	// Overwrite SKILL.md with incoming content
 	if err := os.WriteFile(filepath.Join(toIncomingDir, "SKILL.md"), incomingContent, 0644); err != nil {
 		return fmt.Errorf("write to-incoming/SKILL.md: %w", err)
 	}
@@ -475,11 +537,10 @@ func fetchFileFromGitHub(owner, repo, ref, path string) ([]byte, error) {
 	var errOut strings.Builder
 
 	// Call gh api with argv-style arguments (no shell to prevent injection)
-	// gh api repos/{owner}/{repo}/contents/{path} --jq '.content' --query='{ref}'
+	// Use query string for ref to ensure GET (not POST with -f flag)
 	cmd := exec.Command("gh", "api",
-		"repos/"+owner+"/"+repo+"/contents/"+path,
+		"repos/"+owner+"/"+repo+"/contents/"+path+"?ref="+ref,
 		"--jq", ".content",
-		"-f", "ref="+ref,
 	)
 	cmd.Stdout = &out
 	cmd.Stderr = &errOut
