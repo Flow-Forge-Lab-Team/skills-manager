@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -550,6 +551,39 @@ func TestUpdateNArgsNoPending(t *testing.T) {
 	output := stdout.String()
 	if !strings.Contains(output, "No pending updates") {
 		t.Fatalf("stdout should indicate no pending updates:\n%s", output)
+	}
+}
+
+func TestUpdateNArgsEmptyJSONOutput(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+
+	// Set up empty state DB
+	_, err := state.Open(home)
+	if err != nil {
+		t.Fatalf("Open state: %v", err)
+	}
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := Run([]string{"update", "--json"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("Run returned %d, want 0\nstderr: %s", code, stderr.String())
+	}
+
+	output := stdout.String()
+	// Empty list should be valid JSON (either [] or null)
+	if output == "" {
+		t.Fatalf("--json with no pending updates should emit JSON, got empty output")
+	}
+
+	// Verify it's valid JSON that can unmarshal to a slice
+	var updates []interface{}
+	if err := json.Unmarshal([]byte(output), &updates); err != nil {
+		t.Fatalf("output is not valid JSON: %v\noutput: %q", err, output)
+	}
+	if len(updates) != 0 {
+		t.Fatalf("expected empty slice, got %d items: %v", len(updates), updates)
 	}
 }
 

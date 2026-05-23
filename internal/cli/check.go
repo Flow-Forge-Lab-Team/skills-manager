@@ -244,7 +244,9 @@ func parseGitHubURL(url string) (owner, repo string, err error) {
 	return owner, repo, nil
 }
 
-// stageUpdate creates the .update-pending directory with from.md, to.md, and meta.yaml.
+// stageUpdate creates the .update-pending directory with snapshots.
+// Currently stages SKILL.md and .skill-meta.yaml per snapshot directory.
+// Multi-file scope (references/, scripts/, etc.) is deferred to a future PR.
 func stageUpdate(skillName string, libraryPath string, meta skillMeta, newCommit string) error {
 	skillDir := filepath.Join(libraryPath, skillName)
 	pendingRoot := filepath.Join(skillDir, ".update-pending")
@@ -254,6 +256,13 @@ func stageUpdate(skillName string, libraryPath string, meta skillMeta, newCommit
 	currentContent, err := os.ReadFile(currentPath)
 	if err != nil {
 		return fmt.Errorf("read current SKILL.md: %w", err)
+	}
+
+	// Read live .skill-meta.yaml (will be used in both snapshots)
+	liveMetaPath := filepath.Join(skillDir, ".skill-meta.yaml")
+	liveMetaContent, err := os.ReadFile(liveMetaPath)
+	if err != nil {
+		return fmt.Errorf("read live .skill-meta.yaml: %w", err)
 	}
 
 	// Fetch incoming SKILL.md via fetcher (GitHub or mock in tests)
@@ -273,6 +282,7 @@ func stageUpdate(skillName string, libraryPath string, meta skillMeta, newCommit
 		return fmt.Errorf("create pending dir: %w", err)
 	}
 
+	// from-current: snapshot with current state (SKILL.md + live .skill-meta.yaml as-is)
 	fromCurrentDir := filepath.Join(pendingRoot, "from-current")
 	if err := os.MkdirAll(fromCurrentDir, 0755); err != nil {
 		return fmt.Errorf("mkdir from-current: %w", err)
@@ -280,13 +290,26 @@ func stageUpdate(skillName string, libraryPath string, meta skillMeta, newCommit
 	if err := os.WriteFile(filepath.Join(fromCurrentDir, "SKILL.md"), currentContent, 0644); err != nil {
 		return fmt.Errorf("write from-current/SKILL.md: %w", err)
 	}
+	if err := os.WriteFile(filepath.Join(fromCurrentDir, ".skill-meta.yaml"), liveMetaContent, 0644); err != nil {
+		return fmt.Errorf("write from-current/.skill-meta.yaml: %w", err)
+	}
 
+	// to-incoming: snapshot with incoming state; rewrite origin.commit to newCommit so accept advances it
 	toIncomingDir := filepath.Join(pendingRoot, "to-incoming")
 	if err := os.MkdirAll(toIncomingDir, 0755); err != nil {
 		return fmt.Errorf("mkdir to-incoming: %w", err)
 	}
 	if err := os.WriteFile(filepath.Join(toIncomingDir, "SKILL.md"), incomingContent, 0644); err != nil {
 		return fmt.Errorf("write to-incoming/SKILL.md: %w", err)
+	}
+
+	// Write to-incoming/.skill-meta.yaml with origin.commit rewritten to newCommit
+	toIncomingMetaPath := filepath.Join(toIncomingDir, ".skill-meta.yaml")
+	if err := os.WriteFile(toIncomingMetaPath, liveMetaContent, 0644); err != nil {
+		return fmt.Errorf("write to-incoming/.skill-meta.yaml: %w", err)
+	}
+	if err := rewriteOriginCommit(toIncomingMetaPath, newCommit); err != nil {
+		return fmt.Errorf("rewrite origin.commit in to-incoming/.skill-meta.yaml: %w", err)
 	}
 
 	// Write meta.yaml with version info
@@ -303,6 +326,33 @@ status: pending
 	}
 
 	return nil
+}
+
+// rewriteOriginCommit updates the origin.commit field in a .skill-meta.yaml file.
+// Uses line-based rewriting to preserve formatting.
+func rewriteOriginCommit(metaPath string, newCommit string) error {
+	data, err := os.ReadFile(metaPath)
+	if err != nil {
+		return err
+	}
+	lines := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
+	found := false
+	for i, line := range lines {
+		// Match "origin.commit:" at start of line (after any indent)
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "origin.commit:") {
+			// Preserve indentation
+			indent := len(line) - len(trimmed)
+			lines[i] = strings.Repeat(" ", indent) + "origin.commit: " + newCommit
+			found = true
+			break
+		}
+	}
+	if !found {
+		// If not found, append it (shouldn't happen for valid meta, but be safe)
+		lines = append(lines, "origin.commit: "+newCommit)
+	}
+	return os.WriteFile(metaPath, []byte(strings.Join(lines, "\n")+"\n"), 0644)
 }
 
 // fetchFileFromGitHub fetches a single file from a GitHub repo at a given ref.

@@ -428,3 +428,163 @@ origin:
 		t.Fatalf("skill_polls should still be updated: %+v", poll)
 	}
 }
+
+func TestCheckStagesSkillMeta(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+
+	stateDB, err := state.Open(home)
+	if err != nil {
+		t.Fatalf("Open state: %v", err)
+	}
+	defer stateDB.Close()
+
+	libraryPath := filepath.Join(home, "library")
+	skillDir := filepath.Join(libraryPath, "pdf")
+	if err := os.MkdirAll(skillDir, 0755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	// Write SKILL.md
+	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte("---\nname: pdf\n---\nBody v1\n"), 0644); err != nil {
+		t.Fatalf("write SKILL.md: %v", err)
+	}
+
+	// Write .skill-meta.yaml with old commit
+	metaContent := `version: 1
+origin:
+  type: github
+  url: https://github.com/user/pdf-skill
+  commit: abc1234
+`
+	if err := os.WriteFile(filepath.Join(skillDir, ".skill-meta.yaml"), []byte(metaContent), 0644); err != nil {
+		t.Fatalf("write meta: %v", err)
+	}
+
+	poller := &fakePoller{
+		responses: map[string]fakeResponse{
+			"user/pdf-skill": {
+				commit: "def5678",
+				etag:   "w/\"new-etag\"",
+			},
+		},
+	}
+
+	oldFetcher := fetcher
+	fetcher = &fakeFetcher{
+		files: map[string][]byte{
+			"user/pdf-skill:def5678:SKILL.md": []byte("---\nname: pdf\n---\nBody v2\n"),
+		},
+	}
+	defer func() { fetcher = oldFetcher }()
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := runCheckWithPoller(nil, &stdout, &stderr, globalFlags{}, poller)
+	if code != 0 {
+		t.Fatalf("runCheck returned %d, want 0\nstderr: %s", code, stderr.String())
+	}
+
+	// Verify .skill-meta.yaml was staged in both snapshots
+	fromMetaPath := filepath.Join(skillDir, ".update-pending", "from-current", ".skill-meta.yaml")
+	if _, err := os.Stat(fromMetaPath); err != nil {
+		t.Fatalf("from-current/.skill-meta.yaml not created: %v", err)
+	}
+
+	toMetaPath := filepath.Join(skillDir, ".update-pending", "to-incoming", ".skill-meta.yaml")
+	if _, err := os.Stat(toMetaPath); err != nil {
+		t.Fatalf("to-incoming/.skill-meta.yaml not created: %v", err)
+	}
+
+	// Verify to-incoming has origin.commit rewritten to new SHA
+	toMetaContent, err := os.ReadFile(toMetaPath)
+	if err != nil {
+		t.Fatalf("read to-incoming/.skill-meta.yaml: %v", err)
+	}
+	toMetaStr := string(toMetaContent)
+	// Use trimspace for comparison since YAML output may have different formatting
+	if !strings.Contains(strings.TrimSpace(toMetaStr), "commit: def5678") {
+		t.Fatalf("to-incoming/.skill-meta.yaml should have rewritten commit to def5678, got:\n%s", toMetaStr)
+	}
+
+	// Verify from-current has original commit unchanged
+	fromMetaContent, err := os.ReadFile(fromMetaPath)
+	if err != nil {
+		t.Fatalf("read from-current/.skill-meta.yaml: %v", err)
+	}
+	fromMetaStr := string(fromMetaContent)
+	if !strings.Contains(strings.TrimSpace(fromMetaStr), "commit: abc1234") {
+		t.Fatalf("from-current/.skill-meta.yaml should preserve original commit abc1234, got:\n%s", fromMetaStr)
+	}
+}
+
+func TestCheckToIncomingMetaHasNewCommit(t *testing.T) {
+	// Verify that when check stages a pending update, the to-incoming/.skill-meta.yaml
+	// has the new commit SHA in origin.commit, so that applyPendingUpdate can advance it.
+	home := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+
+	stateDB, err := state.Open(home)
+	if err != nil {
+		t.Fatalf("Open state: %v", err)
+	}
+	defer stateDB.Close()
+
+	libraryPath := filepath.Join(home, "library")
+	skillDir := filepath.Join(libraryPath, "pdf")
+	if err := os.MkdirAll(skillDir, 0755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	// Initial SKILL.md and meta at commit abc1234
+	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte("---\nname: pdf\n---\nBody v1\n"), 0644); err != nil {
+		t.Fatalf("write SKILL.md: %v", err)
+	}
+
+	metaContent := `version: 1
+origin:
+  type: github
+  url: https://github.com/user/pdf-skill
+  commit: abc1234
+`
+	if err := os.WriteFile(filepath.Join(skillDir, ".skill-meta.yaml"), []byte(metaContent), 0644); err != nil {
+		t.Fatalf("write meta: %v", err)
+	}
+
+	poller := &fakePoller{
+		responses: map[string]fakeResponse{
+			"user/pdf-skill": {
+				commit: "def5678",
+				etag:   "w/\"etag-1\"",
+			},
+		},
+	}
+
+	oldFetcher := fetcher
+	fetcher = &fakeFetcher{
+		files: map[string][]byte{
+			"user/pdf-skill:def5678:SKILL.md": []byte("---\nname: pdf\n---\nBody v2\n"),
+		},
+	}
+	defer func() { fetcher = oldFetcher }()
+
+	// Check: stage update from abc1234 → def5678
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := runCheckWithPoller(nil, &stdout, &stderr, globalFlags{}, poller)
+	if code != 0 {
+		t.Fatalf("check returned %d, want 0", code)
+	}
+
+	// Verify to-incoming/.skill-meta.yaml has the NEW commit (def5678)
+	// so that when accept runs applyPendingUpdate, it reads this and advances origin.commit
+	toMetaPath := filepath.Join(skillDir, ".update-pending", "to-incoming", ".skill-meta.yaml")
+	toMetaContent, err := os.ReadFile(toMetaPath)
+	if err != nil {
+		t.Fatalf("read to-incoming/.skill-meta.yaml: %v", err)
+	}
+	toMetaStr := string(toMetaContent)
+	if !strings.Contains(toMetaStr, "commit: def5678") {
+		t.Fatalf("to-incoming/.skill-meta.yaml must have new commit def5678 so accept can advance origin, got:\n%s", toMetaStr)
+	}
+}

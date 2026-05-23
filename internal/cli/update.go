@@ -965,28 +965,29 @@ func listPendingUpdates(realStdout io.Writer, stdout io.Writer, stderr io.Writer
 		return ExitOpError
 	}
 
-	if len(updates) == 0 {
-		fmt.Fprintln(stdout, "No pending updates.")
-		return ExitSuccess
-	}
-
-	fmt.Fprintf(stdout, "Pending updates (%d):\n\n", len(updates))
-	for _, u := range updates {
-		fromShort := u.FromVersion
-		toShort := u.ToVersion
-		if len(fromShort) > 7 {
-			fromShort = fromShort[:7]
-		}
-		if len(toShort) > 7 {
-			toShort = toShort[:7]
-		}
-		fmt.Fprintf(stdout, "  %-20s %s → %s   %s\n", u.SkillName, fromShort, toShort, u.Source)
-	}
-
 	if gf.JSON {
+		// Always emit JSON, even for empty list, so consuming scripts get valid output
 		if err := writeJSON(realStdout, updates); err != nil {
 			fmt.Fprintln(stderr, err)
 			return ExitOpError
+		}
+	} else {
+		// Text output: print message and list
+		if len(updates) == 0 {
+			fmt.Fprintln(stdout, "No pending updates.")
+		} else {
+			fmt.Fprintf(stdout, "Pending updates (%d):\n\n", len(updates))
+			for _, u := range updates {
+				fromShort := u.FromVersion
+				toShort := u.ToVersion
+				if len(fromShort) > 7 {
+					fromShort = fromShort[:7]
+				}
+				if len(toShort) > 7 {
+					toShort = toShort[:7]
+				}
+				fmt.Fprintf(stdout, "  %-20s %s → %s   %s\n", u.SkillName, fromShort, toShort, u.Source)
+			}
 		}
 	}
 
