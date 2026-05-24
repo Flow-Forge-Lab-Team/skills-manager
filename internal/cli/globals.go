@@ -260,9 +260,22 @@ Generate or import an advisory AI summary for a pending update. Raw diffs and
 deterministic safety flags remain the source of truth.
 
 Forms:
-  --auto          run the configured provider command
+  --auto          run the configured LLM provider
   --handoff       write a prompt file for an agent fallback
   --from <file>   validate and cache saved agent/provider output
+
+` + globalFlagHelp()
+	case "config":
+		return `skills-manager config <get|set|show> [args]
+
+Configure local, opt-in manager behavior.
+
+Forms:
+  config set llm.provider anthropic|openai
+  config set llm.api_key-env <ENV_VAR_NAME>
+  config set llm.model <model-id>
+  config get <key>
+  config show [llm.usage]
 
 ` + globalFlagHelp()
 	case "seed-catalog":
@@ -360,6 +373,7 @@ Commands:
   show        show details for a single skill
   update      review and accept pending library updates
   summarize   generate or import advisory update summaries
+  config      configure opt-in provider settings and usage accounting
   seed-catalog apply seed taxonomy metadata to the library
   status      show library counts, pending, unregistered, scheduled state
   doctor      diagnose problems; --rebuild-state --rebuild-catalog

@@ -2,8 +2,12 @@ package cli
 
 import (
 	"bytes"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -75,6 +79,68 @@ Local skill content.
 	libraryPath := filepath.Join(home, "library", "local-test-skill")
 	if _, err := os.Stat(libraryPath); err != nil {
 		t.Errorf("library path not created: %v", err)
+	}
+}
+
+func TestAddAutoUsesConfiguredProviderForIngest(t *testing.T) {
+	home := t.TempDir()
+	sourceDir := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+	t.Setenv("ANTHROPIC_API_KEY", "test-key")
+
+	skillMdContent := `---
+name: provider-ingest-skill
+description: Review Go tests with rg
+---
+
+# provider-ingest-skill
+
+Use rg and go test to review code.
+`
+	writeFile(t, filepath.Join(sourceDir, "SKILL.md"), skillMdContent)
+	writeFile(t, filepath.Join(home, "config.yaml"), "version: 1\nllm:\n  provider: \"anthropic\"\n  api_key_env: \"ANTHROPIC_API_KEY\"\n  model: \"claude-3-5-haiku-latest\"\n")
+
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if r.URL.Path != "/v1/messages" {
+			t.Fatalf("provider path = %s", r.URL.Path)
+		}
+		if got := r.Header.Get("x-api-key"); got != "test-key" {
+			t.Fatalf("x-api-key = %q", got)
+		}
+		var req struct {
+			Messages []struct {
+				Content string `json:"content"`
+			} `json:"messages"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		if len(req.Messages) != 1 || !strings.Contains(req.Messages[0].Content, "# skills-ingest") || !strings.Contains(req.Messages[0].Content, "provider-ingest-skill") {
+			t.Fatalf("provider prompt missing bundled ingest instructions or skill:\n%+v", req)
+		}
+		output := `{"categories":["Engineering"],"tags":["go","testing"],"compatibility":{"mode":"portable","harnesses":[],"harness":"","reason":"general coding skill"},"requirements":{"model":{"tool_use":"none"},"tools":[],"mcp_servers":[]},"confidence":{"categories":"high","tags":"high","compatibility":"high","requirements":"high"},"notes":[]}`
+		w.Header().Set("content-type", "application/json")
+		_, _ = w.Write([]byte(`{"content":[{"type":"text","text":` + strconvQuote(output) + `}],"usage":{"input_tokens":20,"output_tokens":10}}`))
+	}))
+	defer server.Close()
+	t.Setenv("SKILLS_MANAGER_ANTHROPIC_BASE_URL", server.URL)
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := Run([]string{"add", sourceDir, "--auto"}, &stdout, &stderr)
+	if code != ExitSuccess {
+		t.Fatalf("Run returned %d, want success\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+	}
+	if requests != 1 {
+		t.Fatalf("provider requests = %d, want 1", requests)
+	}
+	meta := readFile(t, filepath.Join(home, "library", "provider-ingest-skill", ".skill-meta.yaml"))
+	for _, want := range []string{"source: skills-ingest-provider", `- "Engineering"`, `- "go"`} {
+		if !strings.Contains(meta, want) {
+			t.Fatalf("metadata missing %q:\n%s", want, meta)
+		}
 	}
 }
 

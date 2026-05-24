@@ -286,8 +286,13 @@ update_check:
 # LLM (optional — only for auto-summary)
 llm:
   provider: ~                       # null | anthropic | openai
-  api_key: ~                        # prefer $ANTHROPIC_API_KEY / $OPENAI_API_KEY or keychain
+  api_key_env: ~                    # environment variable name, e.g. ANTHROPIC_API_KEY
   model: ~
+  calls: 0
+  input_tokens: 0
+  output_tokens: 0
+  estimated_cost_usd: 0.00000000
+  last_called_at: ~
 
 # Filesystem watcher
 watcher:
