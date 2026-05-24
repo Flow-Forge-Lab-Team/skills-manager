@@ -262,6 +262,21 @@ and model/tool assumptions are available</li>
 </ul>
 <h2 id="cross-machine-commands">Cross-machine commands</h2>
 <h3
+id="skills-manager-init-library---remote-git-url----local-only"><code>skills-manager init-library [--remote &lt;git-url&gt; | --local-only]</code></h3>
+<p>Initialize <code>~/.skills-manager/library/</code> as the canonical
+git-backed skill library. With <code>--remote</code>, the command sets
+<code>origin</code> and pushes the initial <code>main</code> branch.
+With <code>--local-only</code>, it creates the same local repository
+without a remote.</p>
+<pre><code>skills-manager init-library --local-only
+skills-manager init-library --remote git@github.com:you/skills-store.git</code></pre>
+<h3
+id="skills-manager-join-remote"><code>skills-manager join &lt;remote&gt;</code></h3>
+<p>Clone an existing skill library into
+<code>~/.skills-manager/library/</code> on a new machine and register
+that machine in <code>.machines.yaml</code>.</p>
+<pre><code>skills-manager join git@github.com:you/skills-store.git</code></pre>
+<h3
 id="skills-manager-sync-library---push----pull"><code>skills-manager sync-library [--push | --pull]</code></h3>
 <p>Sync the library to/from the configured git remote.</p>
 <pre><code>skills-manager sync-library              # pull (default)
@@ -269,8 +284,8 @@ skills-manager sync-library --push       # push local library changes
 skills-manager sync-library --status     # show diff vs remote</code></pre>
 <h3
 id="skills-manager-machines"><code>skills-manager machines</code></h3>
-<p>List machines connected to the same library remote (read from the
-library's git refs).</p>
+<p>List machines recorded in the shared library's
+<code>.machines.yaml</code>.</p>
 <pre><code>skills-manager machines</code></pre>
 <h2 id="bundled-skill-helpers">Bundled skill helpers</h2>
 <h3

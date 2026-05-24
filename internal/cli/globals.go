@@ -186,6 +186,30 @@ Re-run install for current project config. Refreshes copies after the library
 was updated. Same flags as install.
 
 ` + globalFlagHelp()
+	case "init-library":
+		return `skills-manager init-library [--remote <git-url> | --local-only]
+
+Initialize the canonical skill library as a git repository.
+
+` + globalFlagHelp()
+	case "join":
+		return `skills-manager join <remote>
+
+Clone an existing skill library into the manager home and register this machine.
+
+` + globalFlagHelp()
+	case "sync-library":
+		return `skills-manager sync-library [--pull | --push | --status]
+
+Synchronize the canonical skill library with its git remote. Pull is the default.
+
+` + globalFlagHelp()
+	case "machines":
+		return `skills-manager machines
+
+List machines recorded in the shared library metadata.
+
+` + globalFlagHelp()
 	case "uninstall":
 		return `skills-manager uninstall --project <path> --confirm
 
@@ -367,6 +391,10 @@ Commands:
   check       poll GitHub for new commits on skills
   install     install matching skills into a project
   sync        re-run install to pick up library updates
+  init-library initialize the canonical library git repo
+  join        clone an existing library onto this machine
+  sync-library synchronize the library git repo
+  machines    list machines registered in the library
   uninstall   remove managed skills from a project
   list        list skills in the canonical library
   match       preview ranked skills matching project categories+tags (with --explain --suggest)

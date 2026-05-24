@@ -271,6 +271,27 @@ Validates:
 
 ## Cross-machine commands
 
+### `skills-manager init-library [--remote <git-url> | --local-only]`
+
+Initialize `~/.skills-manager/library/` as the canonical git-backed skill
+library. With `--remote`, the command sets `origin` and pushes the initial
+`main` branch. With `--local-only`, it creates the same local repository without
+a remote.
+
+```
+skills-manager init-library --local-only
+skills-manager init-library --remote git@github.com:you/skills-store.git
+```
+
+### `skills-manager join <remote>`
+
+Clone an existing skill library into `~/.skills-manager/library/` on a new
+machine and register that machine in `.machines.yaml`.
+
+```
+skills-manager join git@github.com:you/skills-store.git
+```
+
 ### `skills-manager sync-library [--push | --pull]`
 
 Sync the library to/from the configured git remote.
@@ -283,7 +304,7 @@ skills-manager sync-library --status     # show diff vs remote
 
 ### `skills-manager machines`
 
-List machines connected to the same library remote (read from the library's git refs).
+List machines recorded in the shared library's `.machines.yaml`.
 
 ```
 skills-manager machines
