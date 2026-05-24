@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"bufio"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -12,9 +11,10 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
+
+	"gopkg.in/yaml.v3"
 )
 
 type installOptions struct {
@@ -34,68 +34,126 @@ type lockProblem struct {
 }
 
 type projectConfig struct {
-	Name           string
-	Categories     []string
-	Tags           []string
-	Harnesses      []string
-	AlwaysInclude  []string
-	NeverInclude   []string
-	PinnedVersions map[string]string
+	Name           string            `yaml:"name,omitempty"`
+	Categories     []string          `yaml:"categories,omitempty"`
+	Tags           []string          `yaml:"tags,omitempty"`
+	Harnesses      []string          `yaml:"harnesses,omitempty"`
+	AlwaysInclude  []string          `yaml:"-"`
+	NeverInclude   []string          `yaml:"-"`
+	PinnedVersions map[string]string `yaml:"-"`
 }
 
 type catalog struct {
-	Skills []catalogSkill `json:"skills"`
+	Version int            `json:"-" yaml:"version"`
+	Skills  []catalogSkill `json:"skills" yaml:"skills"`
 }
 
 type catalogSkill struct {
-	Name          string        `json:"name"`
-	Summary       string        `json:"summary,omitempty"`
-	Categories    []string      `json:"categories,omitempty"`
-	Tags          []string      `json:"tags,omitempty"`
-	Compatibility compatibility `json:"compatibility"`
-	Requirements  requirements  `json:"requirements,omitempty"`
+	Name          string        `json:"name" yaml:"name"`
+	Summary       string        `json:"summary,omitempty" yaml:"summary,omitempty"`
+	Categories    []string      `json:"categories,omitempty" yaml:"categories,omitempty"`
+	Tags          []string      `json:"tags,omitempty" yaml:"tags,omitempty"`
+	Compatibility compatibility `json:"compatibility" yaml:"compatibility,omitempty"`
+	Requirements  requirements  `json:"requirements,omitempty" yaml:"requirements,omitempty"`
 }
 
 type compatibility struct {
-	Mode             string                     `json:"mode,omitempty"`
-	Harness          string                     `json:"harness,omitempty"`
-	Harnesses        []string                   `json:"harnesses,omitempty"`
-	Declared         *compatibilityDeclaration  `json:"declared,omitempty"`
-	Detected         map[string]detectionResult `json:"detected,omitempty"`
-	ExplicitPortable bool                       `json:"explicit_portable,omitempty"`
+	Mode             string                     `json:"mode,omitempty" yaml:"mode,omitempty"`
+	Harness          string                     `json:"harness,omitempty" yaml:"harness,omitempty"`
+	Harnesses        []string                   `json:"harnesses,omitempty" yaml:"harnesses,omitempty"`
+	Declared         *compatibilityDeclaration  `json:"declared,omitempty" yaml:"declared,omitempty"`
+	Detected         map[string]detectionResult `json:"detected,omitempty" yaml:"detected,omitempty"`
+	ExplicitPortable bool                       `json:"explicit_portable,omitempty" yaml:"explicit_portable,omitempty"`
 }
 
 type compatibilityDeclaration struct {
-	Mode      string   `json:"mode,omitempty"`
-	Harness   string   `json:"harness,omitempty"`
-	Harnesses []string `json:"harnesses,omitempty"`
-	Reason    string   `json:"reason,omitempty"`
+	Mode      string   `json:"mode,omitempty" yaml:"mode,omitempty"`
+	Harness   string   `json:"harness,omitempty" yaml:"harness,omitempty"`
+	Harnesses []string `json:"harnesses,omitempty" yaml:"harnesses,omitempty"`
+	Reason    string   `json:"reason,omitempty" yaml:"reason,omitempty"`
 }
 
 type detectionResult struct {
-	Confidence string   `json:"confidence,omitempty"`
-	Reasons    []string `json:"reasons,omitempty"`
+	Confidence string   `json:"confidence,omitempty" yaml:"confidence,omitempty"`
+	Reasons    []string `json:"reasons,omitempty" yaml:"reasons,omitempty"`
 }
 
 type requirements struct {
-	Tools      []toolRequirement `json:"tools,omitempty"`
-	MCPServers []mcpRequirement  `json:"mcp_servers,omitempty"`
-	Model      modelRequirement  `json:"model,omitempty"`
-	Inferred   bool              `json:"inferred,omitempty"`
+	Tools      []toolRequirement `json:"tools,omitempty" yaml:"tools,omitempty"`
+	MCPServers []mcpRequirement  `json:"mcp_servers,omitempty" yaml:"mcp_servers,omitempty"`
+	Model      modelRequirement  `json:"model,omitempty" yaml:"model,omitempty"`
+	Inferred   bool              `json:"inferred,omitempty" yaml:"inferred,omitempty"`
 }
 
 type toolRequirement struct {
-	Name     string `json:"name"`
-	Required bool   `json:"required"`
+	Name     string `json:"name" yaml:"name"`
+	Required bool   `json:"required" yaml:"required"`
 }
 
 type mcpRequirement struct {
-	Name     string `json:"name"`
-	Required bool   `json:"required"`
+	Name     string `json:"name" yaml:"name"`
+	Required bool   `json:"required" yaml:"required"`
 }
 
 type modelRequirement struct {
-	ToolUse string `json:"tool_use,omitempty"`
+	ToolUse string `json:"tool_use,omitempty" yaml:"tool_use,omitempty"`
+}
+
+func (r *toolRequirement) UnmarshalYAML(value *yaml.Node) error {
+	if value.Kind == yaml.ScalarNode {
+		r.Name = value.Value
+		r.Required = true
+		return nil
+	}
+	type plain toolRequirement
+	var out plain
+	if err := value.Decode(&out); err != nil {
+		return err
+	}
+	*r = toolRequirement(out)
+	return nil
+}
+
+func (r *mcpRequirement) UnmarshalYAML(value *yaml.Node) error {
+	if value.Kind == yaml.ScalarNode {
+		r.Name = value.Value
+		r.Required = true
+		return nil
+	}
+	type plain mcpRequirement
+	var out plain
+	if err := value.Decode(&out); err != nil {
+		return err
+	}
+	*r = mcpRequirement(out)
+	return nil
+}
+
+func (p *projectConfig) UnmarshalYAML(value *yaml.Node) error {
+	type projectSkills struct {
+		AlwaysInclude  []string          `yaml:"always_include,omitempty"`
+		NeverInclude   []string          `yaml:"never_include,omitempty"`
+		PinnedVersions map[string]string `yaml:"pinned_versions,omitempty"`
+	}
+	type projectYAML struct {
+		Name       string        `yaml:"name,omitempty"`
+		Categories []string      `yaml:"categories,omitempty"`
+		Tags       []string      `yaml:"tags,omitempty"`
+		Harnesses  []string      `yaml:"harnesses,omitempty"`
+		Skills     projectSkills `yaml:"skills,omitempty"`
+	}
+	var out projectYAML
+	if err := value.Decode(&out); err != nil {
+		return err
+	}
+	p.Name = out.Name
+	p.Categories = out.Categories
+	p.Tags = out.Tags
+	p.Harnesses = out.Harnesses
+	p.AlwaysInclude = out.Skills.AlwaysInclude
+	p.NeverInclude = out.Skills.NeverInclude
+	p.PinnedVersions = out.Skills.PinnedVersions
+	return nil
 }
 
 type installManifest struct {
@@ -116,19 +174,19 @@ type installCandidate struct {
 }
 
 type installLockEntry struct {
-	Name        string
-	Version     string
-	Commit      string
-	Fingerprint string
-	InstalledAt string
-	Harnesses   []string
+	Name        string   `yaml:"name"`
+	Version     string   `yaml:"version,omitempty"`
+	Commit      string   `yaml:"commit,omitempty"`
+	Fingerprint string   `yaml:"fingerprint,omitempty"`
+	InstalledAt string   `yaml:"installed_at,omitempty"`
+	Harnesses   []string `yaml:"harnesses,omitempty"`
 }
 
 type installLock struct {
-	Version     int
-	GeneratedAt string
-	GeneratedBy string
-	Skills      []installLockEntry
+	Version     int                `yaml:"version"`
+	GeneratedAt string             `yaml:"generated_at"`
+	GeneratedBy string             `yaml:"generated_by"`
+	Skills      []installLockEntry `yaml:"skills"`
 }
 
 var harnessProjectPaths = map[string]string{
@@ -982,86 +1040,16 @@ func saveInstallManifest(path string, manifest installManifest, managed map[stri
 }
 
 func readInstallLock(path string) (installLock, error) {
-	lines, err := readLines(path)
+	var lock installLock
+	data, err := os.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return installLock{}, nil
 		}
 		return installLock{}, err
 	}
-	var lock installLock
-	var currentSkill *installLockEntry
-	var section string
-	for i := 0; i < len(lines); i++ {
-		raw := stripComment(lines[i])
-		if strings.TrimSpace(raw) == "" {
-			continue
-		}
-		trimmed := strings.TrimSpace(raw)
-
-		// Handle "skills:" section header
-		if strings.HasPrefix(trimmed, "skills:") {
-			section = "skills"
-			continue
-		}
-
-		// Handle list item "- name: ..." for new skill entry
-		if section == "skills" && strings.HasPrefix(trimmed, "- name:") {
-			if currentSkill != nil {
-				lock.Skills = append(lock.Skills, *currentSkill)
-			}
-			nameValue := strings.TrimPrefix(trimmed, "- name:")
-			currentSkill = &installLockEntry{Name: unquote(strings.TrimSpace(nameValue))}
-			continue
-		}
-
-		// Parse key-value pairs
-		key, value, ok := splitYAMLKey(raw)
-		if !ok {
-			continue
-		}
-
-		if section == "" {
-			// Top-level keys
-			switch key {
-			case "version":
-				if value == "1" {
-					lock.Version = 1
-				}
-			case "generated_at":
-				lock.GeneratedAt = unquote(value)
-			case "generated_by":
-				lock.GeneratedBy = unquote(value)
-			}
-		} else if section == "skills" && currentSkill != nil {
-			// Per-skill keys
-			switch key {
-			case "version":
-				v := unquote(value)
-				if v != "~" {
-					currentSkill.Version = v
-				}
-			case "commit":
-				v := unquote(value)
-				if v != "~" {
-					currentSkill.Commit = v
-				}
-			case "fingerprint":
-				fp := unquote(value)
-				if fp != "~" {
-					currentSkill.Fingerprint = fp
-				}
-			case "installed_at":
-				currentSkill.InstalledAt = unquote(value)
-			case "harnesses":
-				items, next := readYAMLStringList(lines, i, value)
-				i = next
-				currentSkill.Harnesses = items
-			}
-		}
-	}
-	if currentSkill != nil {
-		lock.Skills = append(lock.Skills, *currentSkill)
+	if err := yaml.Unmarshal(data, &lock); err != nil {
+		return installLock{}, err
 	}
 	return lock, nil
 }
@@ -1070,35 +1058,11 @@ func writeInstallLock(path string, lock installLock) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	var buf strings.Builder
-	buf.WriteString("version: 1\n")
-	buf.WriteString(fmt.Sprintf("generated_at: %q\n", lock.GeneratedAt))
-	buf.WriteString(fmt.Sprintf("generated_by: %q\n", lock.GeneratedBy))
-	buf.WriteString("skills:\n")
-	for _, skill := range lock.Skills {
-		buf.WriteString("  - name: " + skill.Name + "\n")
-		if skill.Version != "" {
-			buf.WriteString(fmt.Sprintf("    version: %q\n", skill.Version))
-		} else {
-			buf.WriteString("    version: ~\n")
-		}
-		if skill.Commit != "" {
-			buf.WriteString(fmt.Sprintf("    commit: %q\n", skill.Commit))
-		} else {
-			buf.WriteString("    commit: ~\n")
-		}
-		buf.WriteString(fmt.Sprintf("    fingerprint: %q\n", skill.Fingerprint))
-		buf.WriteString(fmt.Sprintf("    installed_at: %q\n", skill.InstalledAt))
-		if len(skill.Harnesses) > 0 {
-			buf.WriteString("    harnesses:\n")
-			for _, h := range skill.Harnesses {
-				buf.WriteString(fmt.Sprintf("      - %s\n", h))
-			}
-		} else {
-			buf.WriteString("    harnesses: []\n")
-		}
+	lock.Version = 1
+	if lock.Skills == nil {
+		lock.Skills = []installLockEntry{}
 	}
-	return os.WriteFile(path, []byte(buf.String()), 0o644)
+	return writeYAMLFile(path, lock)
 }
 
 // buildInstallLock produces the lock content to write after this run.
@@ -1293,60 +1257,24 @@ func lockEntriesEqual(a, b []installLockEntry) bool {
 }
 
 func readProjectConfig(path string) (projectConfig, error) {
-	lines, err := readLines(path)
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return projectConfig{}, err
 	}
 	var project projectConfig
-	project.PinnedVersions = map[string]string{}
-	var section string
-	var harnessesSeen bool
-	for i := 0; i < len(lines); i++ {
-		key, value, ok := splitYAMLKey(lines[i])
-		if !ok {
-			continue
-		}
-		switch key {
-		case "name":
-			project.Name = unquote(value)
-		case "categories", "tags", "harnesses":
-			items, next := readYAMLStringList(lines, i, value)
-			i = next
-			assignProjectList(&project, key, items)
-			if key == "harnesses" {
-				harnessesSeen = true
-			}
-		case "skills":
-			section = "skills"
-		case "always_include", "never_include":
-			if section != "skills" {
-				continue
-			}
-			items, next := readYAMLStringList(lines, i, value)
-			i = next
-			assignProjectList(&project, key, items)
-		case "pinned_versions":
-			if section != "skills" {
-				continue
-			}
-			baseIndent := indent(lines[i])
-			for next := i + 1; next < len(lines); next++ {
-				line := stripComment(lines[next])
-				if strings.TrimSpace(line) == "" {
-					continue
-				}
-				if indent(line) <= baseIndent {
-					i = next - 1
-					break
-				}
-				k, v, ok2 := splitYAMLKey(line)
-				if ok2 {
-					project.PinnedVersions[unquote(k)] = unquote(v)
-				}
-			}
-		}
+	var raw struct {
+		Harnesses []string `yaml:"harnesses,omitempty"`
 	}
-	if !harnessesSeen {
+	if err := yaml.Unmarshal(data, &raw); err != nil {
+		return projectConfig{}, err
+	}
+	if err := yaml.Unmarshal(data, &project); err != nil {
+		return projectConfig{}, err
+	}
+	if project.PinnedVersions == nil {
+		project.PinnedVersions = map[string]string{}
+	}
+	if raw.Harnesses == nil {
 		project.Harnesses = []string{"claude", "codex", "grok", "antigravity", "gemini", "hermes", "openclaw"}
 	}
 	return project, nil
@@ -1371,337 +1299,15 @@ func assignProjectList(project *projectConfig, key string, items []string) {
 }
 
 func readCatalog(path string) (catalog, error) {
-	lines, err := readLines(path)
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return catalog{}, err
 	}
 	var out catalog
-	var current *catalogSkill
-	var section string
-	var tool *toolRequirement
-	var skillBaseIndent int = -1
-	for i := 0; i < len(lines); i++ {
-		raw := stripComment(lines[i])
-		if strings.TrimSpace(raw) == "" {
-			continue
-		}
-		trimmed := strings.TrimSpace(raw)
-		lineIndent := indent(raw)
-
-		// A leading "- name:" at the same or lower indent as the first skill we saw
-		// is the start of a new top-level catalog skill. This is more robust than
-		// checking section == "" (which can be left non-empty after processing
-		// a skill's requirements/compatibility block).
-		isTopLevelSkillStart := strings.HasPrefix(trimmed, "- name:") &&
-			(skillBaseIndent == -1 || lineIndent <= skillBaseIndent)
-
-		if isTopLevelSkillStart {
-			if current != nil {
-				if tool != nil {
-					current.Requirements.Tools = append(current.Requirements.Tools, *tool)
-				}
-				out.Skills = append(out.Skills, *current)
-			}
-			current = &catalogSkill{Name: unquote(strings.TrimSpace(strings.TrimPrefix(trimmed, "- name:")))}
-			section = ""
-			tool = nil
-			if skillBaseIndent == -1 {
-				skillBaseIndent = lineIndent
-			}
-			continue
-		}
-		if current == nil {
-			continue
-		}
-		key, value, ok := splitYAMLKey(raw)
-		if !ok {
-			continue
-		}
-		switch key {
-		case "summary":
-			current.Summary = unquote(value)
-		case "categories", "tags":
-			items, next := readYAMLStringList(lines, i, value)
-			i = next
-			if key == "categories" {
-				current.Categories = items
-			} else {
-				current.Tags = items
-			}
-		case "compatibility", "requirements":
-			section = key
-		case "mode":
-			if section == "compatibility" {
-				current.Compatibility.Mode = unquote(value)
-			}
-		case "harness":
-			if section == "compatibility" {
-				current.Compatibility.Harness = unquote(value)
-			}
-		case "harnesses":
-			if section == "compatibility" {
-				items, next := readYAMLStringList(lines, i, value)
-				i = next
-				current.Compatibility.Harnesses = items
-			}
-		case "tools":
-			if section == "requirements" || section == "requirements:model" {
-				section = "requirements"
-				if strings.HasPrefix(value, "[") && strings.HasSuffix(value, "]") {
-					current.Requirements.Tools = toolRequirementsFromNames(parseInlineList(value))
-				} else {
-					items, next := readToolRequirements(lines, i)
-					i = next
-					current.Requirements.Tools = items
-				}
-			}
-		case "mcp_servers":
-			if section == "requirements" || section == "requirements:model" {
-				section = "requirements"
-				if strings.HasPrefix(value, "[") && strings.HasSuffix(value, "]") {
-					current.Requirements.MCPServers = mcpRequirementsFromNames(parseInlineList(value))
-				} else {
-					items, next := readMCPServerRequirements(lines, i)
-					i = next
-					current.Requirements.MCPServers = items
-				}
-			}
-		case "model":
-			if section == "requirements" {
-				section = "requirements:model"
-				// Support the documented inline form used in catalog entries:
-				//   model: {tool_use: required}
-				// Previously this dropped the value on the same line.
-				if strings.Contains(value, "tool_use") {
-					parts := strings.SplitN(value, "tool_use:", 2)
-					if len(parts) == 2 {
-						v := strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(parts[1]), "}"))
-						current.Requirements.Model.ToolUse = unquote(v)
-					}
-				}
-			}
-		case "tool_use":
-			if section == "requirements:model" {
-				current.Requirements.Model.ToolUse = unquote(value)
-			}
-		}
-	}
-	if current != nil {
-		if tool != nil {
-			current.Requirements.Tools = append(current.Requirements.Tools, *tool)
-		}
-		out.Skills = append(out.Skills, *current)
+	if err := yaml.Unmarshal(data, &out); err != nil {
+		return catalog{}, err
 	}
 	return out, nil
-}
-
-func readLines(path string) ([]string, error) {
-	file, err := os.Open(path)
-	if err != nil {
-		return nil, err
-	}
-	defer file.Close()
-	var lines []string
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		lines = append(lines, scanner.Text())
-	}
-	return lines, scanner.Err()
-}
-
-func splitYAMLKey(line string) (string, string, bool) {
-	line = stripComment(line)
-	trimmed := strings.TrimSpace(line)
-	if trimmed == "" || strings.HasPrefix(trimmed, "- ") {
-		return "", "", false
-	}
-	parts := strings.SplitN(trimmed, ":", 2)
-	if len(parts) != 2 {
-		return "", "", false
-	}
-	return strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1]), true
-}
-
-func readYAMLStringList(lines []string, index int, inline string) ([]string, int) {
-	if strings.HasPrefix(inline, "[") && strings.HasSuffix(inline, "]") {
-		return parseInlineList(inline), index
-	}
-	var items []string
-	baseIndent := indent(lines[index])
-	for next := index + 1; next < len(lines); next++ {
-		line := stripComment(lines[next])
-		if strings.TrimSpace(line) == "" {
-			continue
-		}
-		if indent(line) <= baseIndent || !strings.HasPrefix(strings.TrimSpace(line), "- ") {
-			return items, next - 1
-		}
-		items = append(items, unquote(strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "- "))))
-	}
-	return items, len(lines) - 1
-}
-
-func readToolRequirements(lines []string, index int) ([]toolRequirement, int) {
-	var tools []toolRequirement
-	baseIndent := indent(lines[index])
-	var current *toolRequirement
-	for next := index + 1; next < len(lines); next++ {
-		line := stripComment(lines[next])
-		if strings.TrimSpace(line) == "" {
-			continue
-		}
-		if indent(line) <= baseIndent {
-			if current != nil {
-				tools = append(tools, *current)
-			}
-			return tools, next - 1
-		}
-		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "- name:") {
-			if current != nil {
-				tools = append(tools, *current)
-			}
-			current = &toolRequirement{Name: unquote(strings.TrimSpace(strings.TrimPrefix(trimmed, "- name:")))}
-			continue
-		}
-		if strings.HasPrefix(trimmed, "- ") {
-			if current != nil {
-				tools = append(tools, *current)
-				current = nil
-			}
-			tools = append(tools, toolRequirement{
-				Name:     unquote(strings.TrimSpace(strings.TrimPrefix(trimmed, "- "))),
-				Required: true,
-			})
-			continue
-		}
-		if current == nil {
-			continue
-		}
-		key, value, ok := splitYAMLKey(line)
-		if ok && key == "required" {
-			current.Required = value == "true"
-		}
-	}
-	if current != nil {
-		tools = append(tools, *current)
-	}
-	return tools, len(lines) - 1
-}
-
-func parseInlineList(value string) []string {
-	value = strings.TrimPrefix(strings.TrimSuffix(value, "]"), "[")
-	if strings.TrimSpace(value) == "" {
-		return nil
-	}
-	var items []string
-	for _, item := range strings.Split(value, ",") {
-		items = append(items, unquote(strings.TrimSpace(item)))
-	}
-	return items
-}
-
-func toolRequirementsFromNames(names []string) []toolRequirement {
-	requirements := make([]toolRequirement, 0, len(names))
-	for _, name := range names {
-		requirements = append(requirements, toolRequirement{Name: name, Required: true})
-	}
-	return requirements
-}
-
-func readMCPServerRequirements(lines []string, index int) ([]mcpRequirement, int) {
-	var servers []mcpRequirement
-	baseIndent := indent(lines[index])
-	var current *mcpRequirement
-	for next := index + 1; next < len(lines); next++ {
-		line := stripComment(lines[next])
-		if strings.TrimSpace(line) == "" {
-			continue
-		}
-		if indent(line) <= baseIndent {
-			if current != nil {
-				servers = append(servers, *current)
-			}
-			return servers, next - 1
-		}
-		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "- name:") {
-			if current != nil {
-				servers = append(servers, *current)
-			}
-			current = &mcpRequirement{Name: unquote(strings.TrimSpace(strings.TrimPrefix(trimmed, "- name:")))}
-			continue
-		}
-		if strings.HasPrefix(trimmed, "- ") {
-			if current != nil {
-				servers = append(servers, *current)
-				current = nil
-			}
-			servers = append(servers, mcpRequirement{
-				Name:     unquote(strings.TrimSpace(strings.TrimPrefix(trimmed, "- "))),
-				Required: true,
-			})
-			continue
-		}
-		if current == nil {
-			continue
-		}
-		key, value, ok := splitYAMLKey(line)
-		if ok && key == "required" {
-			current.Required = value == "true"
-		}
-	}
-	if current != nil {
-		servers = append(servers, *current)
-	}
-	return servers, len(lines) - 1
-}
-
-func mcpRequirementsFromNames(names []string) []mcpRequirement {
-	requirements := make([]mcpRequirement, 0, len(names))
-	for _, name := range names {
-		requirements = append(requirements, mcpRequirement{Name: name, Required: true})
-	}
-	return requirements
-}
-
-func stripComment(line string) string {
-	var quote byte
-	for i := 0; i < len(line); i++ {
-		c := line[i]
-		if quote != 0 {
-			if c == '\\' && quote == '"' && i+1 < len(line) {
-				i++
-				continue
-			}
-			if c == quote {
-				quote = 0
-			}
-			continue
-		}
-		if c == '"' || c == '\'' {
-			quote = c
-			continue
-		}
-		if c == '#' {
-			return line[:i]
-		}
-	}
-	return line
-}
-
-func indent(line string) int {
-	return len(line) - len(strings.TrimLeft(line, " "))
-}
-
-func unquote(value string) string {
-	v := strings.TrimSpace(value)
-	if len(v) >= 2 && v[0] == '"' && v[len(v)-1] == '"' {
-		if unquoted, err := strconv.Unquote(v); err == nil {
-			return unquoted
-		}
-	}
-	return strings.Trim(v, `"'`)
 }
 
 func missingLockedSkills(lock installLock, catalog catalog) []string {

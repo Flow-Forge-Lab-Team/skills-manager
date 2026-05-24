@@ -137,7 +137,7 @@ Use rg and go test to review code.
 		t.Fatalf("provider requests = %d, want 1", requests)
 	}
 	meta := readFile(t, filepath.Join(home, "library", "provider-ingest-skill", ".skill-meta.yaml"))
-	for _, want := range []string{"source: skills-ingest-provider", `- "Engineering"`, `- "go"`} {
+	for _, want := range []string{"source: skills-ingest-provider", `- Engineering`, `- go`} {
 		if !strings.Contains(meta, want) {
 			t.Fatalf("metadata missing %q:\n%s", want, meta)
 		}
