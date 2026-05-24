@@ -191,6 +191,9 @@ func collectProblems(home, libraryPath string, cat catalog) []string {
 	// requirement execution checks
 	reqTools := map[string]bool{}
 	reqMCPs := map[string]bool{}
+	reqCredentials := map[string]credentialRequirement{}
+	reqRuntimes := map[string]bool{}
+	modelToolUseRequired := false
 	for _, s := range cat.Skills {
 		for _, t := range s.Requirements.Tools {
 			if t.Required {
@@ -201,6 +204,17 @@ func collectProblems(home, libraryPath string, cat catalog) []string {
 			if m.Required {
 				reqMCPs[m.Name] = true
 			}
+		}
+		for _, credential := range s.Requirements.Credentials {
+			if credential.Required {
+				reqCredentials[credential.Name] = credential
+			}
+		}
+		for _, runtime := range s.Requirements.Scripts.RequiredRuntimes {
+			reqRuntimes[runtime] = true
+		}
+		if s.Requirements.Model.ToolUse == "required" {
+			modelToolUseRequired = true
 		}
 	}
 	for t := range reqTools {
@@ -214,6 +228,19 @@ func collectProblems(home, libraryPath string, cat catalog) []string {
 		} else if !mcpCheckPasses(m) {
 			problems = append(problems, fmt.Sprintf("missing required MCP %s (configure connector for your harness)", m))
 		}
+	}
+	for name, credential := range reqCredentials {
+		if !credentialAvailable(credential) {
+			problems = append(problems, fmt.Sprintf("missing required credential %s (source: %s)", name, credential.Source))
+		}
+	}
+	for runtime := range reqRuntimes {
+		if _, err := exec.LookPath(runtime); err != nil {
+			problems = append(problems, fmt.Sprintf("missing required script runtime %s", runtime))
+		}
+	}
+	if modelToolUseRequired && os.Getenv("SKILLS_MANAGER_MODEL_TOOL_USE") != "available" {
+		problems = append(problems, "missing required model capability tool_use")
 	}
 
 	// stale state.db — only flag if the derived state is older than the canonical

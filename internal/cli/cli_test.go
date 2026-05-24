@@ -1819,6 +1819,50 @@ skills:
 	}
 }
 
+func TestInstallBlocksMissingCredentialAndRuntimeRequirements(t *testing.T) {
+	home := t.TempDir()
+	project := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+
+	writeFile(t, filepath.Join(project, ".skills", "project.yaml"), `version: 1
+name: demo
+categories: [Engineering]
+harnesses: [claude]
+`)
+	writeFile(t, filepath.Join(home, "library", "catalog.yaml"), `version: 1
+skills:
+  - name: runtime-needer
+    categories: [Engineering]
+    compatibility:
+      mode: portable
+    requirements:
+      scripts:
+        required_runtimes:
+          - definitely-missing-runtime-xyz
+      credentials:
+        - name: MISSING_TOKEN_FOR_TEST
+          source: env
+          required: true
+`)
+	writeFile(t, filepath.Join(home, "library", "runtime-needer", "SKILL.md"), "needs runtime and credential\n")
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := Run([]string{"install", "--project", project}, &stdout, &stderr)
+	if code != 3 {
+		t.Fatalf("Run returned %d, want 3 (blocked)\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "credentials=MISSING_TOKEN_FOR_TEST") {
+		t.Fatalf("expected credential block; stdout:\n%s", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "runtimes=definitely-missing-runtime-xyz") {
+		t.Fatalf("expected runtime block; stdout:\n%s", stdout.String())
+	}
+	if _, err := os.Stat(filepath.Join(project, ".claude", "skills", "runtime-needer")); !os.IsNotExist(err) {
+		t.Fatalf("skill should not be installed when required runtime/credential missing")
+	}
+}
+
 // --- FLO-232 redesign: lock-as-desired-set contract -------------------------
 //
 // The lock is the project's committed desired install set. Partial runs
@@ -2331,6 +2375,13 @@ skills:
       tools:
         - name: definitely-missing-tool-abc123
           required: true
+      scripts:
+        required_runtimes:
+          - definitely-missing-runtime-abc123
+      credentials:
+        - name: MISSING_DOCTOR_TOKEN
+          source: env
+          required: true
 `)
 	writeFile(t, filepath.Join(home, "library", "needs-gh", "SKILL.md"), `---
 name: needs-gh
@@ -2341,6 +2392,13 @@ needs gh
 requirements:
   tools:
     - name: definitely-missing-tool-abc123
+      required: true
+  scripts:
+    required_runtimes:
+      - definitely-missing-runtime-abc123
+  credentials:
+    - name: MISSING_DOCTOR_TOKEN
+      source: env
       required: true
 `)
 
@@ -2365,6 +2423,12 @@ requirements:
 	out := stdout.String() + stderr.String()
 	if !strings.Contains(out, "definitely-missing-tool-abc123") {
 		t.Fatalf("missing tool problem not reported: %s", out)
+	}
+	if !strings.Contains(out, "MISSING_DOCTOR_TOKEN") {
+		t.Fatalf("missing credential problem not reported: %s", out)
+	}
+	if !strings.Contains(out, "definitely-missing-runtime-abc123") {
+		t.Fatalf("missing runtime problem not reported: %s", out)
 	}
 	if !strings.Contains(out, "manifest integrity") {
 		t.Fatalf("manifest problem not reported: %s", out)

@@ -79,24 +79,54 @@ type detectionResult struct {
 }
 
 type requirements struct {
-	Tools      []toolRequirement `json:"tools,omitempty" yaml:"tools,omitempty"`
-	MCPServers []mcpRequirement  `json:"mcp_servers,omitempty" yaml:"mcp_servers,omitempty"`
-	Model      modelRequirement  `json:"model,omitempty" yaml:"model,omitempty"`
-	Inferred   bool              `json:"inferred,omitempty" yaml:"inferred,omitempty"`
+	Tools       []toolRequirement       `json:"tools,omitempty" yaml:"tools,omitempty"`
+	MCPServers  []mcpRequirement        `json:"mcp_servers,omitempty" yaml:"mcp_servers,omitempty"`
+	Credentials []credentialRequirement `json:"credentials,omitempty" yaml:"credentials,omitempty"`
+	Scripts     scriptRequirements      `json:"scripts,omitempty" yaml:"scripts,omitempty"`
+	Model       modelRequirement        `json:"model,omitempty" yaml:"model,omitempty"`
+	Inferred    bool                    `json:"inferred,omitempty" yaml:"inferred,omitempty"`
 }
 
 type toolRequirement struct {
 	Name     string `json:"name" yaml:"name"`
 	Required bool   `json:"required" yaml:"required"`
+	Check    string `json:"check,omitempty" yaml:"check,omitempty"`
 }
 
 type mcpRequirement struct {
-	Name     string `json:"name" yaml:"name"`
-	Required bool   `json:"required" yaml:"required"`
+	Name       string `json:"name" yaml:"name"`
+	Required   bool   `json:"required" yaml:"required"`
+	ConfigHint string `json:"config_hint,omitempty" yaml:"config_hint,omitempty"`
 }
 
 type modelRequirement struct {
-	ToolUse string `json:"tool_use,omitempty" yaml:"tool_use,omitempty"`
+	ToolUse          string `json:"tool_use,omitempty" yaml:"tool_use,omitempty"`
+	MinContextTokens int    `json:"min_context_tokens,omitempty" yaml:"min_context_tokens,omitempty"`
+	Reasoning        string `json:"reasoning,omitempty" yaml:"reasoning,omitempty"`
+	Notes            string `json:"notes,omitempty" yaml:"notes,omitempty"`
+}
+
+type credentialRequirement struct {
+	Name     string `json:"name" yaml:"name"`
+	Source   string `json:"source,omitempty" yaml:"source,omitempty"`
+	Required bool   `json:"required" yaml:"required"`
+}
+
+type scriptRequirements struct {
+	AllowAutoRun     *bool    `json:"allow_auto_run,omitempty" yaml:"allow_auto_run,omitempty"`
+	RequiredRuntimes []string `json:"required_runtimes,omitempty" yaml:"required_runtimes,omitempty"`
+}
+
+func (r requirements) hasExplicitFields() bool {
+	return len(r.Tools) > 0 ||
+		len(r.MCPServers) > 0 ||
+		len(r.Credentials) > 0 ||
+		r.Scripts.AllowAutoRun != nil ||
+		len(r.Scripts.RequiredRuntimes) > 0 ||
+		r.Model.ToolUse != "" ||
+		r.Model.MinContextTokens != 0 ||
+		r.Model.Reasoning != "" ||
+		r.Model.Notes != ""
 }
 
 func (r *toolRequirement) UnmarshalYAML(value *yaml.Node) error {
@@ -126,6 +156,21 @@ func (r *mcpRequirement) UnmarshalYAML(value *yaml.Node) error {
 		return err
 	}
 	*r = mcpRequirement(out)
+	return nil
+}
+
+func (r *credentialRequirement) UnmarshalYAML(value *yaml.Node) error {
+	if value.Kind == yaml.ScalarNode {
+		r.Name = value.Value
+		r.Required = true
+		return nil
+	}
+	type plain credentialRequirement
+	var out plain
+	if err := value.Decode(&out); err != nil {
+		return err
+	}
+	*r = credentialRequirement(out)
 	return nil
 }
 
@@ -484,9 +529,11 @@ func runInstall(args []string, realStdout io.Writer, stderr io.Writer, syncMode 
 		missing := missingRequiredTools(candidate.Skill.Requirements)
 		missingMCP := missingRequiredMCPServers(candidate.Skill.Requirements)
 		missingModel := missingModelCapabilities(candidate.Skill.Requirements)
+		missingCredentials := missingRequiredCredentials(candidate.Skill.Requirements)
+		missingRuntimes := missingRequiredScriptRuntimes(candidate.Skill.Requirements)
 		candidate.Missing = missing
 
-		allMissing := append(append(missing, missingMCP...), missingModel...)
+		allMissing := append(append(append(append(missing, missingMCP...), missingModel...), missingCredentials...), missingRuntimes...)
 		if len(allMissing) > 0 && !opts.allowMissingRequirements {
 			blocked++
 			var parts []string
@@ -498,6 +545,12 @@ func runInstall(args []string, realStdout io.Writer, stderr io.Writer, syncMode 
 			}
 			if len(missingModel) > 0 {
 				parts = append(parts, "model="+strings.Join(missingModel, ","))
+			}
+			if len(missingCredentials) > 0 {
+				parts = append(parts, "credentials="+strings.Join(missingCredentials, ","))
+			}
+			if len(missingRuntimes) > 0 {
+				parts = append(parts, "runtimes="+strings.Join(missingRuntimes, ","))
 			}
 			fmt.Fprintf(stdout, "- %s: blocked, missing required: %s\n", candidate.Skill.Name, strings.Join(parts, ", "))
 			skippedCandidates[candidate.Skill.Name] = true
@@ -514,6 +567,12 @@ func runInstall(args []string, realStdout io.Writer, stderr io.Writer, syncMode 
 			}
 			if len(missingModel) > 0 {
 				parts = append(parts, "model="+strings.Join(missingModel, ","))
+			}
+			if len(missingCredentials) > 0 {
+				parts = append(parts, "credentials="+strings.Join(missingCredentials, ","))
+			}
+			if len(missingRuntimes) > 0 {
+				parts = append(parts, "runtimes="+strings.Join(missingRuntimes, ","))
 			}
 			fmt.Fprintf(stdout, "- %s: warning, installing despite missing required: %s\n", candidate.Skill.Name, strings.Join(parts, ", "))
 		}
@@ -1512,6 +1571,60 @@ func missingModelCapabilities(req requirements) []string {
 		}
 	}
 	return missing
+}
+
+func missingRequiredCredentials(req requirements) []string {
+	var missing []string
+	for _, credential := range req.Credentials {
+		if !credential.Required {
+			continue
+		}
+		if !credentialAvailable(credential) {
+			missing = append(missing, credential.Name)
+		}
+	}
+	sort.Strings(missing)
+	return missing
+}
+
+func credentialAvailable(credential credentialRequirement) bool {
+	switch credential.Source {
+	case "gh":
+		return exec.Command("gh", "auth", "status").Run() == nil
+	case "env":
+		return os.Getenv(credential.Name) != "" || os.Getenv(envRequirementName(credential.Name)) != ""
+	default:
+		envVar := "SKILLS_MANAGER_CREDENTIAL_" + envRequirementName(credential.Name)
+		return os.Getenv(envVar) == "available"
+	}
+}
+
+func missingRequiredScriptRuntimes(req requirements) []string {
+	var missing []string
+	for _, runtime := range req.Scripts.RequiredRuntimes {
+		if _, err := exec.LookPath(runtime); err != nil {
+			missing = append(missing, runtime)
+		}
+	}
+	sort.Strings(missing)
+	return missing
+}
+
+func envRequirementName(name string) string {
+	var out strings.Builder
+	lastUnderscore := false
+	for _, r := range name {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') {
+			out.WriteByte(byte(r))
+			lastUnderscore = false
+			continue
+		}
+		if !lastUnderscore {
+			out.WriteByte('_')
+			lastUnderscore = true
+		}
+	}
+	return strings.ToUpper(strings.Trim(out.String(), "_"))
 }
 
 func validateSkillName(name string) error {

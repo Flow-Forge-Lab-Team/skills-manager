@@ -225,6 +225,8 @@ requirements:
     - name: "github"
       source: "gh"
       required: true
+  custom_review:
+    level: strict
 `)
 	beforeMeta, err := readSkillMeta(filepath.Join(libraryPath, "runtime-heavy", ".skill-meta.yaml"))
 	if err != nil {
@@ -259,6 +261,8 @@ requirements:
 		`required_runtimes: ["node"]`,
 		`credentials:`,
 		`source: "gh"`,
+		`custom_review:`,
+		`level: strict`,
 		`categories:`,
 		`tags:`,
 	} {

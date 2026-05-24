@@ -120,7 +120,7 @@ Use rg and go test to review code.
 		if len(req.Messages) != 1 || !strings.Contains(req.Messages[0].Content, "# skills-ingest") || !strings.Contains(req.Messages[0].Content, "provider-ingest-skill") {
 			t.Fatalf("provider prompt missing bundled ingest instructions or skill:\n%+v", req)
 		}
-		output := `{"categories":["Engineering"],"tags":["go","testing"],"compatibility":{"mode":"portable","harnesses":[],"harness":"","reason":"general coding skill"},"requirements":{"model":{"tool_use":"none"},"tools":[],"mcp_servers":[]},"confidence":{"categories":"high","tags":"high","compatibility":"high","requirements":"high"},"notes":[]}`
+		output := `{"categories":["Engineering"],"tags":["go","testing"],"compatibility":{"mode":"portable","harnesses":[],"harness":"","reason":"general coding skill"},"requirements":{"model":{"tool_use":"none","min_context_tokens":16000,"reasoning":"low","notes":"No tools required"},"tools":[],"mcp_servers":[]},"confidence":{"categories":"high","tags":"high","compatibility":"high","requirements":"high"},"notes":[]}`
 		w.Header().Set("content-type", "application/json")
 		_, _ = w.Write([]byte(`{"content":[{"type":"text","text":` + strconvQuote(output) + `}],"usage":{"input_tokens":20,"output_tokens":10}}`))
 	}))
@@ -137,7 +137,7 @@ Use rg and go test to review code.
 		t.Fatalf("provider requests = %d, want 1", requests)
 	}
 	meta := readFile(t, filepath.Join(home, "library", "provider-ingest-skill", ".skill-meta.yaml"))
-	for _, want := range []string{"source: skills-ingest-provider", `- Engineering`, `- go`} {
+	for _, want := range []string{"source: skills-ingest-provider", `- Engineering`, `- go`, `reasoning: low`, `notes: No tools required`} {
 		if !strings.Contains(meta, want) {
 			t.Fatalf("metadata missing %q:\n%s", want, meta)
 		}

@@ -1998,15 +1998,26 @@ func TestReadCatalog_RoundTripsMCPAndModel(t *testing.T) {
 		Version: 1,
 		Requirements: requirements{
 			Tools: []toolRequirement{
-				{Name: "gh", Required: true},
+				{Name: "gh", Required: true, Check: "gh auth status"},
 				{Name: "jq", Required: false},
 			},
 			MCPServers: []mcpRequirement{
-				{Name: "linear", Required: true},
+				{Name: "linear", Required: true, ConfigHint: "Install the Linear connector"},
 				{Name: "github", Required: false},
 			},
+			Credentials: []credentialRequirement{
+				{Name: "github", Source: "gh", Required: true},
+				{Name: "openai", Source: "env", Required: false},
+			},
+			Scripts: scriptRequirements{
+				AllowAutoRun:     boolPtr(false),
+				RequiredRuntimes: []string{"node", "python3"},
+			},
 			Model: modelRequirement{
-				ToolUse: "required",
+				ToolUse:          "required",
+				MinContextTokens: 32000,
+				Reasoning:        "medium",
+				Notes:            "Needs reliable tool-use planning",
 			},
 		},
 	}); err != nil {
@@ -2049,6 +2060,9 @@ func TestReadCatalog_RoundTripsMCPAndModel(t *testing.T) {
 	if toolMap["jq"] {
 		t.Errorf("jq required = true, want false")
 	}
+	if skill.Requirements.Tools[0].Check != "gh auth status" {
+		t.Errorf("gh check = %q, want gh auth status", skill.Requirements.Tools[0].Check)
+	}
 
 	// Verify mcp_servers round-trip (including per-server required flags)
 	if len(skill.Requirements.MCPServers) != 2 {
@@ -2064,10 +2078,43 @@ func TestReadCatalog_RoundTripsMCPAndModel(t *testing.T) {
 	if mcpMap["github"] {
 		t.Errorf("github required = true, want false")
 	}
+	if skill.Requirements.MCPServers[0].ConfigHint != "Install the Linear connector" {
+		t.Errorf("linear config_hint = %q, want Install the Linear connector", skill.Requirements.MCPServers[0].ConfigHint)
+	}
+
+	if len(skill.Requirements.Credentials) != 2 {
+		t.Errorf("credentials count = %d, want 2", len(skill.Requirements.Credentials))
+	}
+	credentialMap := make(map[string]credentialRequirement)
+	for _, credential := range skill.Requirements.Credentials {
+		credentialMap[credential.Name] = credential
+	}
+	if got := credentialMap["github"]; got.Source != "gh" || !got.Required {
+		t.Errorf("github credential = %+v, want source gh and required", got)
+	}
+	if got := credentialMap["openai"]; got.Source != "env" || got.Required {
+		t.Errorf("openai credential = %+v, want source env and optional", got)
+	}
+
+	if skill.Requirements.Scripts.AllowAutoRun == nil || *skill.Requirements.Scripts.AllowAutoRun {
+		t.Errorf("scripts.allow_auto_run = %v, want false", skill.Requirements.Scripts.AllowAutoRun)
+	}
+	if got := strings.Join(skill.Requirements.Scripts.RequiredRuntimes, ","); got != "node,python3" {
+		t.Errorf("scripts.required_runtimes = %q, want node,python3", got)
+	}
 
 	// Verify model round-trip
 	if skill.Requirements.Model.ToolUse != "required" {
 		t.Errorf("model.tool_use = %q, want %q", skill.Requirements.Model.ToolUse, "required")
+	}
+	if skill.Requirements.Model.MinContextTokens != 32000 {
+		t.Errorf("model.min_context_tokens = %d, want 32000", skill.Requirements.Model.MinContextTokens)
+	}
+	if skill.Requirements.Model.Reasoning != "medium" {
+		t.Errorf("model.reasoning = %q, want medium", skill.Requirements.Model.Reasoning)
+	}
+	if skill.Requirements.Model.Notes != "Needs reliable tool-use planning" {
+		t.Errorf("model.notes = %q, want Needs reliable tool-use planning", skill.Requirements.Model.Notes)
 	}
 }
 
