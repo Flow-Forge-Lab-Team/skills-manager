@@ -26,10 +26,25 @@ func TestSkillMetaCanonicalYAML(t *testing.T) {
 		Compatibility: compatibility{Mode: "portable"},
 		Requirements: requirements{
 			Tools: []toolRequirement{
-				{Name: "git", Required: true},
+				{Name: "git", Required: true, Check: "git --version"},
 				{Name: "jq", Required: false},
 			},
-			Model: modelRequirement{ToolUse: "none"},
+			MCPServers: []mcpRequirement{
+				{Name: "linear", Required: true, ConfigHint: "Install the Linear connector"},
+			},
+			Credentials: []credentialRequirement{
+				{Name: "github", Source: "gh", Required: true},
+			},
+			Scripts: scriptRequirements{
+				AllowAutoRun:     boolPtr(false),
+				RequiredRuntimes: []string{"node"},
+			},
+			Model: modelRequirement{
+				ToolUse:          "none",
+				MinContextTokens: 16000,
+				Reasoning:        "low",
+				Notes:            "Works without tool calls",
+			},
 		},
 		Summary: "Build C# skills",
 	})
@@ -56,10 +71,26 @@ requirements:
     tools:
         - name: git
           required: true
+          check: git --version
         - name: jq
           required: false
+    mcp_servers:
+        - name: linear
+          required: true
+          config_hint: Install the Linear connector
+    credentials:
+        - name: github
+          source: gh
+          required: true
+    scripts:
+        allow_auto_run: false
+        required_runtimes:
+            - node
     model:
         tool_use: none
+        min_context_tokens: 16000
+        reasoning: low
+        notes: Works without tool calls
 summary: Build C# skills
 `)
 }
@@ -80,8 +111,10 @@ func TestCatalogCanonicalYAML(t *testing.T) {
 			Tags:          []string{"c#"},
 			Compatibility: compatibility{Mode: "compatible", Harnesses: []string{"claude", "codex"}},
 			Requirements: requirements{Tools: []toolRequirement{
-				{Name: "gh", Required: true},
+				{Name: "gh", Required: true, Check: "gh auth status"},
 				{Name: "jq", Required: false},
+			}, MCPServers: []mcpRequirement{
+				{Name: "linear", Required: true, ConfigHint: "Install connector"},
 			}},
 		},
 	}})
@@ -105,8 +138,13 @@ skills:
         tools:
             - name: gh
               required: true
+              check: gh auth status
             - name: jq
               required: false
+        mcp_servers:
+            - name: linear
+              required: true
+              config_hint: Install connector
     - name: zeta
       summary: Last
       categories:
@@ -114,6 +152,10 @@ skills:
       compatibility:
         mode: portable
 `)
+}
+
+func boolPtr(value bool) *bool {
+	return &value
 }
 
 func TestInstallLockCanonicalYAML(t *testing.T) {
@@ -192,6 +234,7 @@ skills:
     requirements:
       tools: ["git"]
       mcp_servers: ["filesystem"]
+      credentials: ["github"]
       model: {tool_use: required}
 `), 0o644); err != nil {
 		t.Fatal(err)
@@ -205,5 +248,11 @@ skills:
 	}
 	if !cat.Skills[0].Requirements.Tools[0].Required {
 		t.Fatalf("legacy scalar tool should default to required")
+	}
+	if len(cat.Skills[0].Requirements.Credentials) != 1 || cat.Skills[0].Requirements.Credentials[0].Name != "github" {
+		t.Fatalf("legacy scalar credential was not parsed: %#v", cat.Skills[0].Requirements.Credentials)
+	}
+	if !cat.Skills[0].Requirements.Credentials[0].Required {
+		t.Fatalf("legacy scalar credential should default to required")
 	}
 }

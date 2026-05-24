@@ -176,7 +176,9 @@ func runMatch(args []string, realStdout io.Writer, stderr io.Writer, gf globalFl
 			mt := missingRequiredTools(c.Skill.Requirements)
 			mm := missingRequiredMCPServers(c.Skill.Requirements)
 			md := missingModelCapabilities(c.Skill.Requirements)
-			if len(mt)+len(mm)+len(md) > 0 {
+			mc := missingRequiredCredentials(c.Skill.Requirements)
+			mr := missingRequiredScriptRuntimes(c.Skill.Requirements)
+			if len(mt)+len(mm)+len(md)+len(mc)+len(mr) > 0 {
 				var parts []string
 				if len(mt) > 0 {
 					parts = append(parts, "tools="+strings.Join(mt, ","))
@@ -186,6 +188,12 @@ func runMatch(args []string, realStdout io.Writer, stderr io.Writer, gf globalFl
 				}
 				if len(md) > 0 {
 					parts = append(parts, "model="+strings.Join(md, ","))
+				}
+				if len(mc) > 0 {
+					parts = append(parts, "credentials="+strings.Join(mc, ","))
+				}
+				if len(mr) > 0 {
+					parts = append(parts, "runtimes="+strings.Join(mr, ","))
 				}
 				warnings = append(warnings, "missing required: "+strings.Join(parts, ", "))
 			}

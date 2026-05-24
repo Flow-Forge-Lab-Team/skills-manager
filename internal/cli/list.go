@@ -267,9 +267,7 @@ func runShow(args []string, stdout io.Writer, stderr io.Writer, gf globalFlags) 
 
 		// Render all requirement kinds (tools, MCP servers, model) when any are present.
 		// Previously only Tools were shown, hiding MCP/model requirements (Codex P2).
-		hasReq := len(skill.Requirements.Tools) > 0 ||
-			len(skill.Requirements.MCPServers) > 0 ||
-			skill.Requirements.Model.ToolUse != ""
+		hasReq := skill.Requirements.hasExplicitFields()
 
 		if hasReq {
 			fmt.Fprint(humanOut, "Requirements:\n")
@@ -279,17 +277,51 @@ func runShow(args []string, stdout io.Writer, stderr io.Writer, gf globalFlags) 
 				if tool.Required {
 					status = "required"
 				}
-				fmt.Fprintf(humanOut, "  - tool %s (%s)\n", tool.Name, status)
+				fmt.Fprintf(humanOut, "  - tool %s (%s)", tool.Name, status)
+				if tool.Check != "" {
+					fmt.Fprintf(humanOut, ", check: %s", tool.Check)
+				}
+				fmt.Fprintln(humanOut)
 			}
 			for _, mcp := range skill.Requirements.MCPServers {
 				status := "optional"
 				if mcp.Required {
 					status = "required"
 				}
-				fmt.Fprintf(humanOut, "  - mcp %s (%s)\n", mcp.Name, status)
+				fmt.Fprintf(humanOut, "  - mcp %s (%s)", mcp.Name, status)
+				if mcp.ConfigHint != "" {
+					fmt.Fprintf(humanOut, ", config: %s", mcp.ConfigHint)
+				}
+				fmt.Fprintln(humanOut)
+			}
+			for _, credential := range skill.Requirements.Credentials {
+				status := "optional"
+				if credential.Required {
+					status = "required"
+				}
+				fmt.Fprintf(humanOut, "  - credential %s (%s)", credential.Name, status)
+				if credential.Source != "" {
+					fmt.Fprintf(humanOut, ", source: %s", credential.Source)
+				}
+				fmt.Fprintln(humanOut)
+			}
+			if skill.Requirements.Scripts.AllowAutoRun != nil {
+				fmt.Fprintf(humanOut, "  - scripts allow_auto_run: %t\n", *skill.Requirements.Scripts.AllowAutoRun)
+			}
+			if len(skill.Requirements.Scripts.RequiredRuntimes) > 0 {
+				fmt.Fprintf(humanOut, "  - scripts required_runtimes: %s\n", strings.Join(skill.Requirements.Scripts.RequiredRuntimes, ", "))
 			}
 			if skill.Requirements.Model.ToolUse != "" {
 				fmt.Fprintf(humanOut, "  - model tool_use: %s\n", skill.Requirements.Model.ToolUse)
+			}
+			if skill.Requirements.Model.MinContextTokens != 0 {
+				fmt.Fprintf(humanOut, "  - model min_context_tokens: %d\n", skill.Requirements.Model.MinContextTokens)
+			}
+			if skill.Requirements.Model.Reasoning != "" {
+				fmt.Fprintf(humanOut, "  - model reasoning: %s\n", skill.Requirements.Model.Reasoning)
+			}
+			if skill.Requirements.Model.Notes != "" {
+				fmt.Fprintf(humanOut, "  - model notes: %s\n", skill.Requirements.Model.Notes)
 			}
 		}
 

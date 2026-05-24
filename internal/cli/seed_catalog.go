@@ -369,7 +369,13 @@ func sidecarHasUnmodeledRequirements(path string) bool {
 			continue
 		}
 		switch key {
-		case "scripts", "credentials", "check", "config_hint", "source", "required_runtimes", "allow_auto_run", "min_context_tokens", "reasoning", "notes":
+		case "requirements", "model", "tool_use", "min_context_tokens", "reasoning", "notes",
+			"tools", "name", "required", "check",
+			"mcp_servers", "config_hint",
+			"scripts", "allow_auto_run", "required_runtimes",
+			"credentials", "source", "inferred":
+			continue
+		default:
 			return true
 		}
 	}

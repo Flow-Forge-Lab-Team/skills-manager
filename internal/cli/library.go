@@ -458,9 +458,7 @@ func rebuildCatalogFromLibrary(libraryPath string) (catalog, error) {
 
 		// Infer requirements only if marked as inferred or all requirement fields are empty.
 		// If Inferred=false and any field is populated, preserve the explicit requirements.
-		hasExplicitRequirements := len(meta.Requirements.Tools) > 0 ||
-			len(meta.Requirements.MCPServers) > 0 ||
-			meta.Requirements.Model.ToolUse != ""
+		hasExplicitRequirements := meta.Requirements.hasExplicitFields()
 		// If the sidecar already existed and has no modeled requirement fields,
 		// it may contain unmodeled explicit requirements (scripts, credentials, etc.).
 		// In that case, do not overwrite with inference.

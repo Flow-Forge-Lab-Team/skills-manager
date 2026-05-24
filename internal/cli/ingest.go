@@ -62,6 +62,15 @@ type ingestOutput struct {
 			Required   bool   `json:"required"`
 			ConfigHint string `json:"config_hint,omitempty"`
 		} `json:"mcp_servers"`
+		Credentials []struct {
+			Name     string `json:"name"`
+			Source   string `json:"source,omitempty"`
+			Required bool   `json:"required"`
+		} `json:"credentials,omitempty"`
+		Scripts struct {
+			AllowAutoRun     *bool    `json:"allow_auto_run,omitempty"`
+			RequiredRuntimes []string `json:"required_runtimes,omitempty"`
+		} `json:"scripts,omitempty"`
 		Model struct {
 			ToolUse          string `json:"tool_use"`
 			MinContextTokens int    `json:"min_context_tokens,omitempty"`
@@ -218,14 +227,22 @@ func ingestFromSource(src ingestSource, opts ingestOptions, home string, out io.
 		// Map requirements for auto-missing checks + later meta
 		reqs = requirements{Inferred: false}
 		for _, t := range fromOut.Requirements.Tools {
-			reqs.Tools = append(reqs.Tools, toolRequirement{Name: t.Name, Required: t.Required})
+			reqs.Tools = append(reqs.Tools, toolRequirement{Name: t.Name, Required: t.Required, Check: t.Check})
 		}
 		for _, m := range fromOut.Requirements.MCPServers {
-			reqs.MCPServers = append(reqs.MCPServers, mcpRequirement{Name: m.Name, Required: m.Required})
+			reqs.MCPServers = append(reqs.MCPServers, mcpRequirement{Name: m.Name, Required: m.Required, ConfigHint: m.ConfigHint})
 		}
+		for _, c := range fromOut.Requirements.Credentials {
+			reqs.Credentials = append(reqs.Credentials, credentialRequirement{Name: c.Name, Source: c.Source, Required: c.Required})
+		}
+		reqs.Scripts.AllowAutoRun = fromOut.Requirements.Scripts.AllowAutoRun
+		reqs.Scripts.RequiredRuntimes = fromOut.Requirements.Scripts.RequiredRuntimes
 		if tu := fromOut.Requirements.Model.ToolUse; tu != "" {
 			reqs.Model.ToolUse = tu
 		}
+		reqs.Model.MinContextTokens = fromOut.Requirements.Model.MinContextTokens
+		reqs.Model.Reasoning = fromOut.Requirements.Model.Reasoning
+		reqs.Model.Notes = fromOut.Requirements.Model.Notes
 		categorizationSource = "ingest-handoff"
 		// compatResults remains nil (handled in meta block using fromOut)
 	} else if opts.auto && llmProviderConfigured(home) {
@@ -251,14 +268,22 @@ func ingestFromSource(src ingestSource, opts ingestOptions, home string, out io.
 		confidence = fromOut.Confidence.Categories
 		reqs = requirements{Inferred: false}
 		for _, t := range fromOut.Requirements.Tools {
-			reqs.Tools = append(reqs.Tools, toolRequirement{Name: t.Name, Required: t.Required})
+			reqs.Tools = append(reqs.Tools, toolRequirement{Name: t.Name, Required: t.Required, Check: t.Check})
 		}
 		for _, m := range fromOut.Requirements.MCPServers {
-			reqs.MCPServers = append(reqs.MCPServers, mcpRequirement{Name: m.Name, Required: m.Required})
+			reqs.MCPServers = append(reqs.MCPServers, mcpRequirement{Name: m.Name, Required: m.Required, ConfigHint: m.ConfigHint})
 		}
+		for _, c := range fromOut.Requirements.Credentials {
+			reqs.Credentials = append(reqs.Credentials, credentialRequirement{Name: c.Name, Source: c.Source, Required: c.Required})
+		}
+		reqs.Scripts.AllowAutoRun = fromOut.Requirements.Scripts.AllowAutoRun
+		reqs.Scripts.RequiredRuntimes = fromOut.Requirements.Scripts.RequiredRuntimes
 		if tu := fromOut.Requirements.Model.ToolUse; tu != "" {
 			reqs.Model.ToolUse = tu
 		}
+		reqs.Model.MinContextTokens = fromOut.Requirements.Model.MinContextTokens
+		reqs.Model.Reasoning = fromOut.Requirements.Model.Reasoning
+		reqs.Model.Notes = fromOut.Requirements.Model.Notes
 		categorizationSource = "skills-ingest-provider"
 	} else {
 		detectors, _ := loadDetectors()
@@ -295,7 +320,9 @@ func ingestFromSource(src ingestSource, opts ingestOptions, home string, out io.
 		missing := missingRequiredTools(reqs)
 		missingMCP := missingRequiredMCPServers(reqs)
 		missingModel := missingModelCapabilities(reqs)
-		allMissing := append(append(missing, missingMCP...), missingModel...)
+		missingCredentials := missingRequiredCredentials(reqs)
+		missingRuntimes := missingRequiredScriptRuntimes(reqs)
+		allMissing := append(append(append(append(missing, missingMCP...), missingModel...), missingCredentials...), missingRuntimes...)
 
 		if len(allMissing) > 0 {
 			var parts []string
@@ -307,6 +334,12 @@ func ingestFromSource(src ingestSource, opts ingestOptions, home string, out io.
 			}
 			if len(missingModel) > 0 {
 				parts = append(parts, "model="+strings.Join(missingModel, ","))
+			}
+			if len(missingCredentials) > 0 {
+				parts = append(parts, "credentials="+strings.Join(missingCredentials, ","))
+			}
+			if len(missingRuntimes) > 0 {
+				parts = append(parts, "runtimes="+strings.Join(missingRuntimes, ","))
 			}
 			return ingestResult{
 				Name:    decl.name,
