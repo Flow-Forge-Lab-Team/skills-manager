@@ -10,26 +10,27 @@ import (
 	"strings"
 
 	"github.com/Flow-Forge-Lab-Team/skills-manager/detectors"
+	"gopkg.in/yaml.v3"
 )
 
 type compatibilityDetector struct {
-	ID         string   `json:"id,omitempty"`
-	Harness    string   `json:"harness,omitempty"`
-	Confidence string   `json:"confidence,omitempty"`
-	Patterns   []string `json:"patterns,omitempty"`
+	ID         string   `json:"id,omitempty" yaml:"id,omitempty"`
+	Harness    string   `json:"harness,omitempty" yaml:"harness,omitempty"`
+	Confidence string   `json:"confidence,omitempty" yaml:"confidence,omitempty"`
+	Patterns   []string `json:"patterns,omitempty" yaml:"patterns,omitempty"`
 }
 
 type requirementDetector struct {
-	ID          string              `json:"id,omitempty"`
-	Requirement detectorRequirement `json:"requirement,omitempty"`
-	Confidence  string              `json:"confidence,omitempty"`
-	Patterns    []string            `json:"patterns,omitempty"`
+	ID          string              `json:"id,omitempty" yaml:"id,omitempty"`
+	Requirement detectorRequirement `json:"requirement,omitempty" yaml:"requirement,omitempty"`
+	Confidence  string              `json:"confidence,omitempty" yaml:"confidence,omitempty"`
+	Patterns    []string            `json:"patterns,omitempty" yaml:"patterns,omitempty"`
 }
 
 type detectorRequirement struct {
-	Kind     string `json:"kind,omitempty"`
-	Name     string `json:"name,omitempty"`
-	Required bool   `json:"required,omitempty"`
+	Kind     string `json:"kind,omitempty" yaml:"kind,omitempty"`
+	Name     string `json:"name,omitempty" yaml:"name,omitempty"`
+	Required bool   `json:"required,omitempty" yaml:"required,omitempty"`
 }
 
 type detectorSet struct {
@@ -115,19 +116,19 @@ func loadDetectors() (detectorSet, error) {
 }
 
 func readCompatibilityDetectors(path string) ([]compatibilityDetector, error) {
-	lines, err := readLines(path)
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
-	return parseCompatibilityDetectors(lines)
+	return parseCompatibilityDetectors(data)
 }
 
 func readRequirementDetectors(path string) ([]requirementDetector, error) {
-	lines, err := readLines(path)
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
-	return parseRequirementDetectors(lines)
+	return parseRequirementDetectors(data)
 }
 
 func detectCompatibility(detectors detectorSet, skillBody string) map[string]detectionResult {
@@ -315,18 +316,6 @@ func readSkillBody(path string) (string, error) {
 	return text, nil
 }
 
-// --- Embed support for built-in detectors (fixes Codex P2: detectors not available in installed binary) ---
-
-// readEmbeddedYAML is the embed equivalent of readLines.
-func readEmbeddedYAML(path string) ([]string, error) {
-	data, err := fs.ReadFile(detectors.FS, path)
-	if err != nil {
-		return nil, err
-	}
-	text := strings.ReplaceAll(string(data), "\r\n", "\n")
-	return strings.Split(text, "\n"), nil
-}
-
 func loadEmbeddedDetectors(set *detectorSet) {
 	// compatibility (paths are relative to the embedded FS root)
 	if entries, err := fs.ReadDir(detectors.FS, "compatibility"); err == nil {
@@ -353,155 +342,38 @@ func loadEmbeddedDetectors(set *detectorSet) {
 }
 
 func readCompatibilityDetectorsFromEmbed(path string) ([]compatibilityDetector, error) {
-	lines, err := readEmbeddedYAML(path)
+	data, err := detectors.FS.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
-	return parseCompatibilityDetectors(lines)
+	return parseCompatibilityDetectors(data)
 }
 
 func readRequirementDetectorsFromEmbed(path string) ([]requirementDetector, error) {
-	lines, err := readEmbeddedYAML(path)
+	data, err := detectors.FS.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
-	return parseRequirementDetectors(lines)
+	return parseRequirementDetectors(data)
 }
 
 // parse* functions are the extracted parsing logic so both FS and embed paths can share it.
-func parseCompatibilityDetectors(lines []string) ([]compatibilityDetector, error) {
-	var detectors []compatibilityDetector
-
-	for i := 0; i < len(lines); i++ {
-		raw := stripComment(lines[i])
-		if strings.TrimSpace(raw) == "" {
-			continue
-		}
-
-		key, _, ok := splitYAMLKey(raw)
-		if !ok {
-			continue
-		}
-
-		if key == "detectors" {
-			for i = i + 1; i < len(lines); i++ {
-				raw = stripComment(lines[i])
-				trimmed := strings.TrimSpace(raw)
-				if trimmed == "" {
-					continue
-				}
-				if strings.HasPrefix(trimmed, "- id:") {
-					det := compatibilityDetector{}
-					det.ID = unquote(strings.TrimSpace(strings.TrimPrefix(trimmed, "- id:")))
-					for i = i + 1; i < len(lines); i++ {
-						raw = stripComment(lines[i])
-						trimmed = strings.TrimSpace(raw)
-						if trimmed == "" {
-							continue
-						}
-						if strings.HasPrefix(trimmed, "- ") {
-							i--
-							break
-						}
-						key, val, ok := splitYAMLKey(raw)
-						if !ok {
-							if !strings.HasPrefix(raw, "  ") {
-								i--
-								break
-							}
-							continue
-						}
-						switch key {
-						case "harness":
-							det.Harness = unquote(val)
-						case "confidence":
-							det.Confidence = unquote(val)
-						case "patterns":
-							items, next := readYAMLStringList(lines, i, val)
-							i = next
-							det.Patterns = items
-						}
-					}
-					detectors = append(detectors, det)
-				}
-			}
-			break
-		}
+func parseCompatibilityDetectors(data []byte) ([]compatibilityDetector, error) {
+	var doc struct {
+		Detectors []compatibilityDetector `yaml:"detectors"`
 	}
-	return detectors, nil
+	if err := yaml.Unmarshal(data, &doc); err != nil {
+		return nil, err
+	}
+	return doc.Detectors, nil
 }
 
-func parseRequirementDetectors(lines []string) ([]requirementDetector, error) {
-	var detectors []requirementDetector
-
-	for i := 0; i < len(lines); i++ {
-		raw := stripComment(lines[i])
-		if strings.TrimSpace(raw) == "" {
-			continue
-		}
-
-		key, _, ok := splitYAMLKey(raw)
-		if !ok {
-			continue
-		}
-
-		if key == "detectors" {
-			for i = i + 1; i < len(lines); i++ {
-				raw = stripComment(lines[i])
-				trimmed := strings.TrimSpace(raw)
-				if trimmed == "" {
-					continue
-				}
-				if strings.HasPrefix(trimmed, "- id:") {
-					det := requirementDetector{}
-					det.ID = unquote(strings.TrimSpace(strings.TrimPrefix(trimmed, "- id:")))
-					var section2 string
-					for i = i + 1; i < len(lines); i++ {
-						raw = stripComment(lines[i])
-						trimmed = strings.TrimSpace(raw)
-						if trimmed == "" {
-							continue
-						}
-						if strings.HasPrefix(trimmed, "- ") {
-							i--
-							break
-						}
-						key, val, ok := splitYAMLKey(raw)
-						if !ok {
-							if !strings.HasPrefix(raw, "  ") {
-								i--
-								break
-							}
-							continue
-						}
-						switch key {
-						case "requirement":
-							section2 = "requirement"
-						case "confidence":
-							det.Confidence = unquote(val)
-						case "patterns":
-							items, next := readYAMLStringList(lines, i, val)
-							i = next
-							det.Patterns = items
-						case "kind":
-							if section2 == "requirement" {
-								det.Requirement.Kind = unquote(val)
-							}
-						case "name":
-							if section2 == "requirement" {
-								det.Requirement.Name = unquote(val)
-							}
-						case "required":
-							if section2 == "requirement" {
-								det.Requirement.Required = val == "true"
-							}
-						}
-					}
-					detectors = append(detectors, det)
-				}
-			}
-			break
-		}
+func parseRequirementDetectors(data []byte) ([]requirementDetector, error) {
+	var doc struct {
+		Detectors []requirementDetector `yaml:"detectors"`
 	}
-	return detectors, nil
+	if err := yaml.Unmarshal(data, &doc); err != nil {
+		return nil, err
+	}
+	return doc.Detectors, nil
 }
