@@ -3,6 +3,8 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -406,7 +408,6 @@ func TestSummarizeDoesNotBadgeNegatedSafetyFlags(t *testing.T) {
 func TestSummarizeAutoWithoutProviderFailsClearly(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("SKILLS_MANAGER_HOME", home)
-	t.Setenv("SKILLS_MANAGER_LLM_COMMAND", "")
 	root := filepath.Join(home, "library", "notes", ".update-pending")
 	writeFile(t, filepath.Join(root, "from-current", "SKILL.md"), "---\nname: notes\n---\nOld\n")
 	writeFile(t, filepath.Join(root, "to-incoming", "SKILL.md"), "---\nname: notes\n---\nNew\n")
@@ -417,23 +418,46 @@ func TestSummarizeAutoWithoutProviderFailsClearly(t *testing.T) {
 	if code != ExitOpError {
 		t.Fatalf("Run returned %d, want op error\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
 	}
-	if !strings.Contains(stderr.String(), "no provider command configured") || !strings.Contains(stderr.String(), "--handoff") {
+	if !strings.Contains(stderr.String(), "no LLM provider configured") || !strings.Contains(stderr.String(), "--handoff") {
 		t.Fatalf("stderr missing provider guidance:\n%s", stderr.String())
 	}
 }
 
-func TestSummarizeAutoRunsConfiguredProviderCommand(t *testing.T) {
+func TestSummarizeAutoRunsConfiguredOpenAIProviderAndRecordsUsage(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("SKILLS_MANAGER_HOME", home)
 	root := filepath.Join(home, "library", "notes", ".update-pending")
 	writeFile(t, filepath.Join(root, "from-current", "SKILL.md"), "---\nname: notes\n---\nOld\n")
 	writeFile(t, filepath.Join(root, "to-incoming", "SKILL.md"), "---\nname: notes\n---\nNew\n")
-	provider := filepath.Join(t.TempDir(), "provider.sh")
-	writeFile(t, provider, "#!/bin/sh\ncat >/dev/null\nif [ \"$1\" != \"--label\" ] || [ \"$2\" != \"two words\" ]; then echo bad args >&2; exit 7; fi\nprintf '%s' '"+validSummary("notes", "none", "no", "no", "no")+"'\n")
-	if err := os.Chmod(provider, 0755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("SKILLS_MANAGER_LLM_COMMAND", provider+" --label 'two words'")
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if r.URL.Path != "/v1/chat/completions" {
+			t.Fatalf("provider path = %s", r.URL.Path)
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer test-key" {
+			t.Fatalf("authorization header = %q", got)
+		}
+		var body struct {
+			Model    string `json:"model"`
+			Messages []struct {
+				Role    string `json:"role"`
+				Content string `json:"content"`
+			} `json:"messages"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		if body.Model != "gpt-4o-mini" || len(body.Messages) != 1 || !strings.Contains(body.Messages[0].Content, "Raw diff follows") {
+			t.Fatalf("unexpected provider request: %+v", body)
+		}
+		w.Header().Set("content-type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":` + strconvQuote(validSummary("notes", "none", "no", "no", "no")) + `}}],"usage":{"prompt_tokens":12,"completion_tokens":8}}`))
+	}))
+	defer server.Close()
+	t.Setenv("SKILLS_MANAGER_OPENAI_BASE_URL", server.URL)
+	t.Setenv("OPENAI_API_KEY", "test-key")
+	writeFile(t, filepath.Join(home, "config.yaml"), "version: 1\nllm:\n  provider: \"openai\"\n  api_key_env: \"OPENAI_API_KEY\"\n  model: \"gpt-4o-mini\"\n")
 
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
@@ -444,7 +468,26 @@ func TestSummarizeAutoRunsConfiguredProviderCommand(t *testing.T) {
 	if !strings.Contains(stdout.String(), "Summary saved to ") {
 		t.Fatalf("stdout missing summary path:\n%s", stdout.String())
 	}
+	if requests != 1 {
+		t.Fatalf("provider requests = %d, want 1", requests)
+	}
 	assertFileContent(t, filepath.Join(home, "summaries", "notes-from-current-to-to-incoming.md"), validSummary("notes", "none", "no", "no", "no"))
+
+	stdout.Reset()
+	stderr.Reset()
+	if code := Run([]string{"config", "show", "llm.usage"}, &stdout, &stderr); code != ExitSuccess {
+		t.Fatalf("config show llm.usage = %d\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+	}
+	for _, want := range []string{"calls: 1", "input_tokens: 12", "output_tokens: 8"} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Fatalf("usage missing %q:\n%s", want, stdout.String())
+		}
+	}
+}
+
+func strconvQuote(value string) string {
+	data, _ := json.Marshal(value)
+	return string(data)
 }
 
 func validSummary(skill, flags, descriptionChanged, requirementsChanged, hostile string) string {

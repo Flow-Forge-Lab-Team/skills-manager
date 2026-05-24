@@ -234,8 +234,9 @@ id="skills-manager-summarize-skill"><code>skills-manager summarize &lt;skill&gt;
 <pre><code>skills-manager summarize pdf --auto      # call configured LLM provider
 skills-manager summarize pdf --handoff   # write prompt file for an agent fallback
 skills-manager summarize pdf --from &lt;file&gt;   # apply the agent&#39;s saved output</code></pre>
-<p>Raw diff and safety flags remain visible even when a summary
-exists.</p>
+<p>Raw diff and safety flags remain visible even when a summary exists.
+<code>--auto</code> requires <code>llm.provider</code>,
+<code>llm.api_key-env</code>, and <code>llm.model</code> to be set.</p>
 <h2 id="status-and-inspection">Status and inspection</h2>
 <h3 id="skills-manager-status"><code>skills-manager status</code></h3>
 <p>What's the state of things?</p>
@@ -313,15 +314,19 @@ flow.</p>
 id="skills-manager-config-get-key"><code>skills-manager config get &lt;key&gt;</code></h3>
 <pre><code>skills-manager config get mode
 skills-manager config get llm.provider
-skills-manager config get llm.api_key-env</code></pre>
+skills-manager config get llm.api_key-env
+skills-manager config get llm.model</code></pre>
 <h3
 id="skills-manager-config-set-key-value"><code>skills-manager config set &lt;key&gt; &lt;value&gt;</code></h3>
 <pre><code>skills-manager config set mode symlink
 skills-manager config set llm.provider anthropic
-skills-manager config set llm.api_key-env ANTHROPIC_API_KEY</code></pre>
+skills-manager config set llm.api_key-env ANTHROPIC_API_KEY
+skills-manager config set llm.model claude-3-5-haiku-latest</code></pre>
 <h3
 id="skills-manager-config-show"><code>skills-manager config show</code></h3>
 <p>Print full config (with sensitive values masked).</p>
+<pre><code>skills-manager config show
+skills-manager config show llm.usage</code></pre>
 <h2 id="web-ui">Web UI</h2>
 <h3
 id="skills-manager-serve---port-n"><code>skills-manager serve [--port &lt;n&gt;]</code></h3>

@@ -69,6 +69,8 @@ func Run(args []string, stdout io.Writer, stderr io.Writer) int {
 		code = runUpdate(cmdArgs, stdout, stderr, gf)
 	case "summarize":
 		code = runSummarize(cmdArgs, stdout, stderr, gf)
+	case "config":
+		code = runConfig(cmdArgs, stdout, stderr, gf)
 	case "seed-catalog":
 		code = runSeedCatalog(cmdArgs, stdout, stderr, gf)
 	case "status":

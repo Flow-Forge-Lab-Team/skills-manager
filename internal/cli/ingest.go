@@ -179,6 +179,7 @@ func ingestFromSource(src ingestSource, opts ingestOptions, home string, out io.
 	var compatResults map[string]detectionResult
 	var reqs requirements
 	var fromOut *ingestOutput
+	categorizationSource := "ingest"
 
 	if opts.handoff {
 		promptPath, err := writeIngestHandoffPrompt(decl.name, src.label, src.raw, skillBodyStr)
@@ -225,7 +226,40 @@ func ingestFromSource(src ingestSource, opts ingestOptions, home string, out io.
 		if tu := fromOut.Requirements.Model.ToolUse; tu != "" {
 			reqs.Model.ToolUse = tu
 		}
+		categorizationSource = "ingest-handoff"
 		// compatResults remains nil (handled in meta block using fromOut)
+	} else if opts.auto && llmProviderConfigured(home) {
+		prompt := buildIngestPrompt(decl.name, src.label, src.raw, skillBodyStr)
+		output, err := runConfiguredLLMProvider(home, prompt)
+		if err != nil {
+			return ingestResult{
+				Name:    decl.name,
+				Skipped: true,
+				Reason:  "provider ingest failed: " + err.Error(),
+			}
+		}
+		fromOut, err = parseIngestOutput([]byte(output), "provider output")
+		if err != nil {
+			return ingestResult{
+				Name:    decl.name,
+				Skipped: true,
+				Reason:  err.Error(),
+			}
+		}
+		cats = fromOut.Categories
+		tags = fromOut.Tags
+		confidence = fromOut.Confidence.Categories
+		reqs = requirements{Inferred: false}
+		for _, t := range fromOut.Requirements.Tools {
+			reqs.Tools = append(reqs.Tools, toolRequirement{Name: t.Name, Required: t.Required})
+		}
+		for _, m := range fromOut.Requirements.MCPServers {
+			reqs.MCPServers = append(reqs.MCPServers, mcpRequirement{Name: m.Name, Required: m.Required})
+		}
+		if tu := fromOut.Requirements.Model.ToolUse; tu != "" {
+			reqs.Model.ToolUse = tu
+		}
+		categorizationSource = "skills-ingest-provider"
 	} else {
 		detectors, _ := loadDetectors()
 		compatResults = detectCompatibility(detectors, skillBodyStr)
@@ -353,11 +387,7 @@ func ingestFromSource(src ingestSource, opts ingestOptions, home string, out io.
 	}
 
 	meta.Categorization.Confidence = confidence
-	if fromOut != nil {
-		meta.Categorization.Source = "ingest-handoff"
-	} else {
-		meta.Categorization.Source = "ingest"
-	}
+	meta.Categorization.Source = categorizationSource
 	meta.Categorization.CategorizedAt = time.Now().UTC().Format(time.RFC3339)
 
 	// Set origin
@@ -535,9 +565,13 @@ func loadIngestOutput(path string) (*ingestOutput, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read --from file: %w", err)
 	}
+	return parseIngestOutput(b, "--from")
+}
+
+func parseIngestOutput(b []byte, label string) (*ingestOutput, error) {
 	var out ingestOutput
 	if err := json.Unmarshal(b, &out); err != nil {
-		return nil, fmt.Errorf("parse JSON from --from: %w", err)
+		return nil, fmt.Errorf("parse JSON from %s: %w", label, err)
 	}
 
 	// Basic validation (no external schema lib; mirrors key constraints from schemas/ingest-output.json)
@@ -603,8 +637,16 @@ func writeIngestHandoffPrompt(name, label, rawSource, skillContent string) (stri
 	}
 	promptPath := filepath.Join(tmpBase, fmt.Sprintf("ingest-%s-prompt.md", safe))
 
+	prompt := buildIngestPrompt(name, label, rawSource, skillContent)
+	if err := os.WriteFile(promptPath, []byte(prompt), 0644); err != nil {
+		return "", fmt.Errorf("write prompt file: %w", err)
+	}
+	return promptPath, nil
+}
+
+func buildIngestPrompt(name, label, rawSource, skillContent string) string {
 	// Static instructions distilled from the skills-ingest SKILL.md + schema + taxonomy rules.
-	// This makes the prompt file runnable in any agent without requiring the user to also paste the bundled skill.
+	// This makes the prompt runnable by a configured provider or an external agent.
 	instructions := `You are an expert librarian for the skills-manager project. Your job is to analyze a new skill (provided as a SKILL.md file) and produce a high-quality, honest structured categorization.
 
 ## Output Requirements
@@ -652,8 +694,11 @@ Requirements: be conservative; only required:true when the skill clearly cannot 
 Confidence: be honest; low is acceptable and preferred to overconfidence. Reflect low confidence in notes.
 
 Analyze the SKILL.md that follows these instructions. Output the JSON now.`
+	if bundled := readBundledSkillMarkdown("skills-ingest"); bundled != "" {
+		instructions = bundled
+	}
 
-	prompt := fmt.Sprintf(`# skills-manager ingest handoff for %s
+	return fmt.Sprintf(`# skills-manager ingest handoff for %s
 
 **Source:** %s
 **Label:** %s
@@ -661,7 +706,7 @@ Analyze the SKILL.md that follows these instructions. Output the JSON now.`
 
 ---
 
-**LLM / Agent Instructions:**
+**Bundled skills-ingest SKILL.md:**
 
 %s
 
@@ -675,9 +720,4 @@ Analyze the SKILL.md that follows these instructions. Output the JSON now.`
 
 Now output ONLY the JSON described above for the target skill.
 `, name, rawSource, label, time.Now().UTC().Format(time.RFC3339), instructions, skillContent)
-
-	if err := os.WriteFile(promptPath, []byte(prompt), 0644); err != nil {
-		return "", fmt.Errorf("write prompt file: %w", err)
-	}
-	return promptPath, nil
 }

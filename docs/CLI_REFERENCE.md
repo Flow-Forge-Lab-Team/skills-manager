@@ -232,6 +232,7 @@ skills-manager summarize pdf --from <file>   # apply the agent's saved output
 ```
 
 Raw diff and safety flags remain visible even when a summary exists.
+`--auto` requires `llm.provider`, `llm.api_key-env`, and `llm.model` to be set.
 
 ## Status and inspection
 
@@ -353,6 +354,7 @@ Watches harness skill directories; on new SKILL.md, triggers ingest flow.
 skills-manager config get mode
 skills-manager config get llm.provider
 skills-manager config get llm.api_key-env
+skills-manager config get llm.model
 ```
 
 ### `skills-manager config set <key> <value>`
@@ -361,11 +363,17 @@ skills-manager config get llm.api_key-env
 skills-manager config set mode symlink
 skills-manager config set llm.provider anthropic
 skills-manager config set llm.api_key-env ANTHROPIC_API_KEY
+skills-manager config set llm.model claude-3-5-haiku-latest
 ```
 
 ### `skills-manager config show`
 
 Print full config (with sensitive values masked).
+
+```
+skills-manager config show
+skills-manager config show llm.usage
+```
 
 ## Web UI
 

@@ -140,6 +140,7 @@ Two paths:
 ```
 $ skills-manager config set llm.provider anthropic
 $ skills-manager config set llm.api_key-env ANTHROPIC_API_KEY
+$ skills-manager config set llm.model claude-3-5-haiku-latest
 
 $ skills-manager summarize pdf --auto
 ✓ Calling Anthropic API (Sonnet)...
