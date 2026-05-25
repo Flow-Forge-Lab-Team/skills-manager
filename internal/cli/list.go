@@ -324,6 +324,7 @@ func runShow(args []string, stdout io.Writer, stderr io.Writer, gf globalFlags) 
 				fmt.Fprintf(humanOut, "  - model notes: %s\n", skill.Requirements.Model.Notes)
 			}
 		}
+		fmt.Fprintln(humanOut, "Deeper analysis: skills-manager compat-check " + skillName + " (--auto for LLM)")
 
 		if meta.Origin.Type != "" {
 			fmt.Fprintf(humanOut, "Origin: %s\n", meta.Origin.Type)

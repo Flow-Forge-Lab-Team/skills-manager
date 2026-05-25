@@ -302,6 +302,18 @@ Forms:
   config show [llm.usage]
 
 ` + globalFlagHelp()
+	case "compat-check":
+		return `skills-manager compat-check <skill> [--to <h1,h2,...>] (--auto | --handoff | --from <file>)
+
+Deeper (LLM) compatibility + execution requirements analysis beyond static detectors.
+
+Forms:
+  --auto          run the configured LLM provider
+  --handoff       write a prompt file for an agent fallback
+  --from <file>   validate and use saved agent/provider output
+  --to <list>     comma-separated target harnesses (default: common set)
+
+` + globalFlagHelp()
 	case "seed-catalog":
 		return `skills-manager seed-catalog --from <remap-results.json> [--dry-run]
 
