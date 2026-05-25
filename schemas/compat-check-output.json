@@ -1,0 +1,101 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "skills-compat-check Output",
+  "type": "object",
+  "required": ["skill", "assessments", "recommendation", "requirements"],
+  "additionalProperties": false,
+  "properties": {
+    "skill": {
+      "type": "string"
+    },
+    "assessments": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["compatible", "confidence", "notes"],
+        "additionalProperties": false,
+        "properties": {
+          "compatible": {
+            "type": "boolean"
+          },
+          "confidence": {
+            "type": "string",
+            "enum": ["high", "medium", "low"]
+          },
+          "notes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "recommendation": {
+      "type": "string"
+    },
+    "requirements": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "model": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "tool_use": { "type": "string", "enum": ["required", "optional", "none"] },
+            "min_context_tokens": { "type": "integer" },
+            "reasoning": { "type": "string" },
+            "notes": { "type": "string" }
+          }
+        },
+        "tools": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name"],
+            "additionalProperties": false,
+            "properties": {
+              "name": { "type": "string" },
+              "required": { "type": "boolean" },
+              "check": { "type": "string" }
+            }
+          }
+        },
+        "mcp_servers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name"],
+            "additionalProperties": false,
+            "properties": {
+              "name": { "type": "string" },
+              "required": { "type": "boolean" },
+              "config_hint": { "type": "string" }
+            }
+          }
+        },
+        "credentials": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name"],
+            "additionalProperties": false,
+            "properties": {
+              "name": { "type": "string" },
+              "source": { "type": "string" },
+              "required": { "type": "boolean" }
+            }
+          }
+        },
+        "scripts": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "allow_auto_run": { "type": "boolean" },
+            "required_runtimes": { "type": "array", "items": { "type": "string" } }
+          }
+        }
+      }
+    }
+  }
+}

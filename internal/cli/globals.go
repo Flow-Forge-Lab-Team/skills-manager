@@ -302,6 +302,18 @@ Forms:
   config show [llm.usage]
 
 ` + globalFlagHelp()
+	case "compat-check":
+		return `skills-manager compat-check <skill> [--to <h1,h2,...>] (--auto | --handoff | --from <file>)
+
+Deeper (LLM) compatibility + execution requirements analysis beyond static detectors.
+
+Forms:
+  --auto          run the configured LLM provider
+  --handoff       write a prompt file for an agent fallback
+  --from <file>   validate and use saved agent/provider output
+  --to <list>     comma-separated target harnesses (default: common set)
+
+` + globalFlagHelp()
 	case "seed-catalog":
 		return `skills-manager seed-catalog --from <remap-results.json> [--dry-run]
 
@@ -389,6 +401,7 @@ Commands:
   scan        discover skills in harness directories
   new         create a new skill
   check       poll GitHub for new commits on skills
+  compat-check  deeper LLM compatibility + requirements analysis
   install     install matching skills into a project
   sync        re-run install to pick up library updates
   init-library initialize the canonical library git repo

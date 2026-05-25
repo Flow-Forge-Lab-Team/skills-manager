@@ -53,6 +53,8 @@ func Run(args []string, stdout io.Writer, stderr io.Writer) int {
 	switch cmd {
 	case "check":
 		code = runCheck(cmdArgs, stdout, stderr, gf)
+	case "compat-check":
+		code = runCompatCheck(cmdArgs, stdout, stderr, gf)
 	case "install":
 		code = runInstall(cmdArgs, stdout, stderr, false, gf)
 	case "sync":
