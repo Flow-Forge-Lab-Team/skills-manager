@@ -18,8 +18,8 @@ type compatCheckResult struct {
 }
 
 type compatCheckOutput struct {
-	Skill          string `json:"skill"`
-	Assessments    map[string]struct {
+	Skill       string `json:"skill"`
+	Assessments map[string]struct {
 		Compatible bool     `json:"compatible"`
 		Confidence string   `json:"confidence"`
 		Notes      []string `json:"notes"`
