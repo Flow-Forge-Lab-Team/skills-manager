@@ -216,15 +216,7 @@ func pendingUpdateDiff(pending pendingUpdatePaths) (string, error) {
 }
 
 func writeSummaryHandoffPrompt(skill, prompt string) (string, error) {
-	dir := filepath.Join(os.TempDir(), "skills-manager")
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return "", err
-	}
-	path := filepath.Join(dir, sanitizeFilePart(skill)+"-summary-prompt.md")
-	if err := os.WriteFile(path, []byte(prompt), 0644); err != nil {
-		return "", err
-	}
-	return path, nil
+	return writeHandoffPrompt(sanitizeFilePart(skill)+"-summary-prompt.md", prompt)
 }
 
 func runConfiguredSummaryProvider(prompt string) (string, error) {

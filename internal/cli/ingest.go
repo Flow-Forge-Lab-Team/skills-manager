@@ -655,10 +655,6 @@ func parseIngestOutput(b []byte, label string) (*ingestOutput, error) {
 // paste/attach to any LLM session. It includes instructions for running skills-ingest
 // plus the exact SKILL.md content of the *target* skill being added.
 func writeIngestHandoffPrompt(name, label, rawSource, skillContent string) (string, error) {
-	tmpBase := filepath.Join(os.TempDir(), "skills-manager")
-	if err := os.MkdirAll(tmpBase, 0755); err != nil {
-		return "", fmt.Errorf("create prompt dir: %w", err)
-	}
 	safe := strings.Map(func(r rune) rune {
 		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' {
 			return r
@@ -668,13 +664,8 @@ func writeIngestHandoffPrompt(name, label, rawSource, skillContent string) (stri
 	if safe == "" {
 		safe = "skill"
 	}
-	promptPath := filepath.Join(tmpBase, fmt.Sprintf("ingest-%s-prompt.md", safe))
-
 	prompt := buildIngestPrompt(name, label, rawSource, skillContent)
-	if err := os.WriteFile(promptPath, []byte(prompt), 0644); err != nil {
-		return "", fmt.Errorf("write prompt file: %w", err)
-	}
-	return promptPath, nil
+	return writeHandoffPrompt("ingest-"+safe+"-prompt.md", prompt)
 }
 
 func buildIngestPrompt(name, label, rawSource, skillContent string) string {
