@@ -263,7 +263,23 @@ func writeCompatCheckHandoffPrompt(skill, prompt string) (string, error) {
 	return path, nil
 }
 
+func requiredKeys(raw map[string]json.RawMessage, schema string, keys ...string) error {
+	for _, k := range keys {
+		if _, ok := raw[k]; !ok {
+			return fmt.Errorf("%s: required (per %s)", k, schema)
+		}
+	}
+	return nil
+}
+
 func parseCompatCheckOutput(b []byte, label string) (*compatCheckOutput, error) {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(b, &raw); err != nil {
+		return nil, fmt.Errorf("parse JSON from %s: %w (see schemas/compat-check-output.json)", label, err)
+	}
+	if err := requiredKeys(raw, "schemas/compat-check-output.json", "skill", "assessments", "recommendation", "requirements"); err != nil {
+		return nil, err
+	}
 	var out compatCheckOutput
 	if err := json.Unmarshal(b, &out); err != nil {
 		return nil, fmt.Errorf("parse JSON from %s: %w (see schemas/compat-check-output.json)", label, err)
@@ -281,6 +297,18 @@ func parseCompatCheckOutput(b []byte, label string) (*compatCheckOutput, error) 
 		// For stronger future enforcement a raw-message or pointer approach can be used.
 		if a.Confidence == "" {
 			return nil, fmt.Errorf("assessments.%s: confidence is required", h)
+		}
+	}
+	var assessRaw map[string]json.RawMessage
+	json.Unmarshal(raw["assessments"], &assessRaw)
+	for h, v := range assessRaw {
+		var it map[string]json.RawMessage
+		json.Unmarshal(v, &it)
+		if _, ok := it["compatible"]; !ok {
+			return nil, fmt.Errorf("assessments.%s: compatible is required", h)
+		}
+		if _, ok := it["notes"]; !ok {
+			return nil, fmt.Errorf("assessments.%s: notes is required", h)
 		}
 	}
 	if len(out.Requirements.Model.ToolUse) == 0 && len(out.Requirements.Tools) == 0 && len(out.Requirements.MCPServers) == 0 {
@@ -318,7 +346,7 @@ func printCompatCheckResult(realStdout, stdout, stderr io.Writer, gf globalFlags
 	sort.Strings(hs)
 	for _, h := range hs {
 		a := parsed.Assessments[h]
-		fmt.Fprintf(humanOut, "  %s: compatible=%v (confidence=%s)\n", h, a.Compatible, a.Confidence)
+		fmt.Fprintf(humanOut, "  %s: compatible=%t (confidence=%s)\n", h, a.Compatible, a.Confidence)
 		for _, n := range a.Notes {
 			fmt.Fprintf(humanOut, "    - %s\n", n)
 		}
@@ -332,21 +360,21 @@ func printCompatCheckResult(realStdout, stdout, stderr io.Writer, gf globalFlags
 		fmt.Fprintf(humanOut, "  model: tool_use=%s reasoning=%s notes=%s\n", m.ToolUse, m.Reasoning, m.Notes)
 	}
 	for _, t := range parsed.Requirements.Tools {
-		fmt.Fprintf(humanOut, "  tool %s (required=%v", t.Name, t.Required)
+		fmt.Fprintf(humanOut, "  tool %s (required=%t", t.Name, t.Required)
 		if t.Check != "" {
 			fmt.Fprintf(humanOut, ", check: %s", t.Check)
 		}
 		fmt.Fprintln(humanOut, ")")
 	}
 	for _, mcp := range parsed.Requirements.MCPServers {
-		fmt.Fprintf(humanOut, "  mcp %s (required=%v", mcp.Name, mcp.Required)
+		fmt.Fprintf(humanOut, "  mcp %s (required=%t", mcp.Name, mcp.Required)
 		if mcp.ConfigHint != "" {
 			fmt.Fprintf(humanOut, ", config: %s", mcp.ConfigHint)
 		}
 		fmt.Fprintln(humanOut, ")")
 	}
 	for _, c := range parsed.Requirements.Credentials {
-		fmt.Fprintf(humanOut, "  credential %s (required=%v)\n", c.Name, c.Required)
+		fmt.Fprintf(humanOut, "  credential %s (required=%t)\n", c.Name, c.Required)
 	}
 	if parsed.Requirements.Scripts.AllowAutoRun != nil {
 		fmt.Fprintf(humanOut, "  scripts allow_auto_run: %t\n", *parsed.Requirements.Scripts.AllowAutoRun)

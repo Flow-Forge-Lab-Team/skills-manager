@@ -602,6 +602,15 @@ func loadIngestOutput(path string) (*ingestOutput, error) {
 }
 
 func parseIngestOutput(b []byte, label string) (*ingestOutput, error) {
+	// Strict top-level key presence (addresses lenient unmarshal of partial/malformed per schema)
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(b, &raw); err != nil {
+		return nil, fmt.Errorf("parse JSON from %s: %w", label, err)
+	}
+	if err := requiredKeys(raw, "schemas/ingest-output.json", "categories", "tags", "compatibility", "requirements", "confidence"); err != nil {
+		return nil, err
+	}
+
 	var out ingestOutput
 	if err := json.Unmarshal(b, &out); err != nil {
 		return nil, fmt.Errorf("parse JSON from %s: %w", label, err)
