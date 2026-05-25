@@ -401,6 +401,7 @@ Commands:
   scan        discover skills in harness directories
   new         create a new skill
   check       poll GitHub for new commits on skills
+  compat-check  deeper LLM compatibility + requirements analysis
   install     install matching skills into a project
   sync        re-run install to pick up library updates
   init-library initialize the canonical library git repo

@@ -169,6 +169,14 @@ func runCompatCheck(args []string, realStdout io.Writer, stderr io.Writer, gf gl
 			fmt.Fprintf(stderr, "validate compat-check output: %v\n", err)
 			return ExitUsageError
 		}
+		if parsed.Skill != skill {
+			fmt.Fprintf(stderr, "skill name mismatch: requested %q but --from output has %q (see schemas/compat-check-output.json)\n", skill, parsed.Skill)
+			return ExitUsageError
+		}
+		if len(parsed.Assessments) == 0 {
+			fmt.Fprintf(stderr, "assessments: at least one harness required (per schema)\n")
+			return ExitUsageError
+		}
 		return printCompatCheckResult(realStdout, stdout, stderr, gf, parsed, mode)
 	case "auto":
 		if !llmProviderConfigured(home) {
@@ -183,6 +191,14 @@ func runCompatCheck(args []string, realStdout io.Writer, stderr io.Writer, gf gl
 		parsed, err := parseCompatCheckOutput([]byte(output), "provider output")
 		if err != nil {
 			fmt.Fprintf(stderr, "validate provider output: %v\n", err)
+			return ExitUsageError
+		}
+		if parsed.Skill != skill {
+			fmt.Fprintf(stderr, "skill name mismatch: requested %q but provider output has %q (see schemas/compat-check-output.json)\n", skill, parsed.Skill)
+			return ExitUsageError
+		}
+		if len(parsed.Assessments) == 0 {
+			fmt.Fprintf(stderr, "assessments: at least one harness required (per schema)\n")
 			return ExitUsageError
 		}
 		return printCompatCheckResult(realStdout, stdout, stderr, gf, parsed, mode)
