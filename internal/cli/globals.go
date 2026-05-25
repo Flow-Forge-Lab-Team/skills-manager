@@ -19,6 +19,21 @@ func stdinIsTTY() bool {
 	return (info.Mode() & os.ModeCharDevice) != 0
 }
 
+// writeHandoffPrompt centralizes the (currently duplicated) pattern for writing
+// LLM handoff prompts under $TMP/skills-manager. Future improvements (better
+// perms, temp dir choice, cleanup) can be made in one place.
+func writeHandoffPrompt(filename, content string) (string, error) {
+	dir := filepath.Join(os.TempDir(), "skills-manager")
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return "", err
+	}
+	path := filepath.Join(dir, filename)
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		return "", err
+	}
+	return path, nil
+}
+
 // Exit code conventions (see docs/CLI_REFERENCE.md).
 const (
 	ExitSuccess    = 0
