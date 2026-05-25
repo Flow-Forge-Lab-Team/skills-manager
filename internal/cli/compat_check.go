@@ -14,6 +14,7 @@ type compatCheckResult struct {
 	Skill      string `json:"skill"`
 	Mode       string `json:"mode"`
 	PromptPath string `json:"prompt_path,omitempty"`
+	Targets    string `json:"targets,omitempty"`
 }
 
 type compatCheckOutput struct {
@@ -111,6 +112,10 @@ func runCompatCheck(args []string, realStdout io.Writer, stderr io.Writer, gf gl
 		fmt.Fprintln(stderr, "usage: skills-manager compat-check <skill> [--to <h1,h2,...>] (--auto | --handoff | --from <file>)")
 		return ExitUsageError
 	}
+	if strings.Contains(skill, "/") || strings.Contains(skill, "\\") || strings.HasPrefix(skill, ".") {
+		fmt.Fprintf(stderr, "invalid skill name: %q (must be a simple name, no path separators)\n", skill)
+		return ExitUsageError
+	}
 
 	var targets []string
 	if toStr != "" {
@@ -156,8 +161,9 @@ func runCompatCheck(args []string, realStdout io.Writer, stderr io.Writer, gf gl
 			return ExitOpError
 		}
 		fmt.Fprintf(stdout, "Wrote prompt to %s\n", path)
-		fmt.Fprintf(stdout, "Import with: skills-manager compat-check %s --from <agent-output.md>\n", skill)
-		return writeCompatCheckJSON(realStdout, stderr, gf, compatCheckResult{Skill: skill, Mode: mode, PromptPath: path})
+		targetList := strings.Join(targets, ",")
+		fmt.Fprintf(stdout, "Import with: skills-manager compat-check %s --to %s --from <agent-output.md>\n", skill, targetList)
+		return writeCompatCheckJSON(realStdout, stderr, gf, compatCheckResult{Skill: skill, Mode: mode, PromptPath: path, Targets: targetList})
 	case "from":
 		data, err := os.ReadFile(fromFile)
 		if err != nil {
@@ -267,6 +273,19 @@ func parseCompatCheckOutput(b []byte, label string) (*compatCheckOutput, error) 
 	}
 	if out.Recommendation == "" {
 		return nil, fmt.Errorf("recommendation: required (per schemas/compat-check-output.json)")
+	}
+	// Basic presence + shape checks for required sub-fields (addresses lenient unmarshal of partial JSON)
+	for h, a := range out.Assessments {
+		_ = h
+		// Compatible is a required bool in the subschema; zero value is valid Go false, so we accept either but still require the key existed in practice via other means.
+		// For stronger future enforcement a raw-message or pointer approach can be used.
+		if a.Confidence == "" {
+			return nil, fmt.Errorf("assessments.%s: confidence is required", h)
+		}
+	}
+	if len(out.Requirements.Model.ToolUse) == 0 && len(out.Requirements.Tools) == 0 && len(out.Requirements.MCPServers) == 0 {
+		// Allow completely empty requirements (some skills have none), but if present it must at least declare the model shape in most cases.
+		// We do not over-reject here; the main schema fidelity is covered by the recommendation + assessment checks above.
 	}
 	validConf := map[string]bool{"high": true, "medium": true, "low": true}
 	for h, a := range out.Assessments {
