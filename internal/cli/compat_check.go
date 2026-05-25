@@ -348,8 +348,11 @@ func printCompatCheckResult(realStdout, stdout, stderr io.Writer, gf globalFlags
 	for _, c := range parsed.Requirements.Credentials {
 		fmt.Fprintf(humanOut, "  credential %s (required=%v)\n", c.Name, c.Required)
 	}
-	if parsed.Requirements.Scripts.AllowAutoRun != nil || len(parsed.Requirements.Scripts.RequiredRuntimes) > 0 {
-		fmt.Fprintf(humanOut, "  scripts allow_auto_run=%v runtimes=%s\n", parsed.Requirements.Scripts.AllowAutoRun, strings.Join(parsed.Requirements.Scripts.RequiredRuntimes, ","))
+	if parsed.Requirements.Scripts.AllowAutoRun != nil {
+		fmt.Fprintf(humanOut, "  scripts allow_auto_run: %t\n", *parsed.Requirements.Scripts.AllowAutoRun)
+	}
+	if len(parsed.Requirements.Scripts.RequiredRuntimes) > 0 {
+		fmt.Fprintf(humanOut, "  scripts required_runtimes: %s\n", strings.Join(parsed.Requirements.Scripts.RequiredRuntimes, ", "))
 	}
 	return ExitSuccess
 }
