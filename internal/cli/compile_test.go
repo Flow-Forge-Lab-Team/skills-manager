@@ -385,8 +385,10 @@ func TestCompileCopilotPerFileAndSingleFile(t *testing.T) {
 		}
 		return fm
 	}
-	if got := readFM("react-rule")["applyTo"]; got == nil || !strings.Contains(got.(string), "*.tsx") {
-		t.Fatalf("react-rule applyTo = %v, want a tsx glob", got)
+	// react infers a multi-glob applyTo; it must be a comma-separated list with
+	// no spaces (a space would make the next pattern unmatchable in Copilot).
+	if got := readFM("react-rule")["applyTo"]; got != "**/*.jsx,**/*.tsx" {
+		t.Fatalf("react-rule applyTo = %q, want \"**/*.jsx,**/*.tsx\" (comma-separated, no spaces)", got)
 	}
 	if got := readFM("always-rule")["applyTo"]; got != "**" {
 		t.Fatalf("always-rule applyTo = %v, want **", got)
