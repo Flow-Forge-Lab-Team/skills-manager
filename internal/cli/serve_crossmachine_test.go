@@ -173,4 +173,42 @@ func TestServeSettingsGetAndPatch(t *testing.T) {
 		t.Fatalf("invalid mode patch = %d, want 400", rb.StatusCode)
 	}
 	rb.Body.Close()
+
+	// Set a provider, then verify a partially-invalid multi-field PATCH does
+	// not persist the valid field (atomic) and that clearing the provider works.
+	patch := func(jsonBody string) int {
+		req, _ := http.NewRequest(http.MethodPatch, ts.URL+"/api/v1/settings", strings.NewReader(jsonBody))
+		req.Header.Set("X-Skills-Manager-Token", sess)
+		r, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		r.Body.Close()
+		return r.StatusCode
+	}
+	get := func() triageSettings {
+		resp, _ := http.Get(ts.URL + "/api/v1/settings")
+		var v triageSettings
+		json.NewDecoder(resp.Body).Decode(&v)
+		resp.Body.Close()
+		return v
+	}
+	if code := patch(`{"llm_provider":"anthropic"}`); code != http.StatusOK {
+		t.Fatalf("set provider = %d, want 200", code)
+	}
+	// Partially-invalid PATCH: llm_provider valid, frequency invalid → 400 and
+	// the provider change must NOT have been persisted.
+	if code := patch(`{"llm_provider":"openai","update_frequency_hours":0}`); code != http.StatusBadRequest {
+		t.Fatalf("partial-invalid patch = %d, want 400", code)
+	}
+	if got := get(); got.LLMProvider != "anthropic" {
+		t.Fatalf("provider = %q after failed atomic patch, want unchanged anthropic", got.LLMProvider)
+	}
+	// Clearing the provider with an explicit empty value persists.
+	if code := patch(`{"llm_provider":""}`); code != http.StatusOK {
+		t.Fatalf("clear provider = %d, want 200", code)
+	}
+	if got := get(); got.LLMProvider != "" {
+		t.Fatalf("provider = %q after clear, want empty", got.LLMProvider)
+	}
 }

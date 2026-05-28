@@ -12,7 +12,6 @@ import (
 	"net/http"
 	"os"
 	"path"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -444,16 +443,9 @@ func (s *serveServer) handleSettings(w http.ResponseWriter, r *http.Request) {
 			writeAPIError(w, http.StatusBadRequest, fmt.Errorf("invalid JSON body: %w", err))
 			return
 		}
-		// Apply each provided field through the same `config set` path the CLI
-		// uses, so validation stays in one place.
-		updates := body.configSetArgs()
-		for _, kv := range updates {
-			args := []string{"--json", "--non-interactive", "--quiet", "config", "set", kv[0], kv[1]}
-			var outBuf, errBuf bytes.Buffer
-			if code := s.runCLIInHome(args, &outBuf, &errBuf); code != ExitSuccess {
-				writeAPIError(w, http.StatusBadRequest, fmt.Errorf("%s: %s", kv[0], strings.TrimSpace(errBuf.String())))
-				return
-			}
+		if err := s.applySettings(body); err != nil {
+			writeAPIError(w, http.StatusBadRequest, err)
+			return
 		}
 		view, err := loadTriageSettings(s.home)
 		if err != nil {
@@ -476,24 +468,41 @@ type triageSettingsUpdate struct {
 	UpdateFrequencyHours *int    `json:"update_frequency_hours,omitempty"`
 }
 
-func (u triageSettingsUpdate) configSetArgs() [][2]string {
-	var out [][2]string
-	if u.Mode != nil {
-		out = append(out, [2]string{"mode", *u.Mode})
+// applySettings validates every provided field and writes the config exactly
+// once, so a later validation error never leaves an earlier field persisted.
+// Empty LLM fields clear the value (e.g. provider "(none)").
+func (s *serveServer) applySettings(body triageSettingsUpdate) error {
+	s.runMu.Lock()
+	defer s.runMu.Unlock()
+	cfg, err := loadManagerConfig(s.home)
+	if err != nil {
+		return err
 	}
-	if u.LLMProvider != nil {
-		out = append(out, [2]string{"llm.provider", *u.LLMProvider})
+	if body.Mode != nil {
+		if err := setConfigValue(&cfg, "mode", *body.Mode); err != nil {
+			return err
+		}
 	}
-	if u.LLMModel != nil {
-		out = append(out, [2]string{"llm.model", *u.LLMModel})
+	if body.LLMProvider != nil {
+		provider := strings.ToLower(strings.TrimSpace(*body.LLMProvider))
+		if provider != "" && provider != "anthropic" && provider != "openai" {
+			return fmt.Errorf("llm.provider must be anthropic or openai")
+		}
+		cfg.LLM.Provider = provider
 	}
-	if u.LLMAPIKeyEnv != nil {
-		out = append(out, [2]string{"llm.api_key_env", *u.LLMAPIKeyEnv})
+	if body.LLMModel != nil {
+		cfg.LLM.Model = strings.TrimSpace(*body.LLMModel)
 	}
-	if u.UpdateFrequencyHours != nil {
-		out = append(out, [2]string{"update.frequency_hours", strconv.Itoa(*u.UpdateFrequencyHours)})
+	if body.LLMAPIKeyEnv != nil {
+		cfg.LLM.APIKeyEnv = strings.TrimSpace(*body.LLMAPIKeyEnv)
 	}
-	return out
+	if body.UpdateFrequencyHours != nil {
+		if *body.UpdateFrequencyHours < 1 {
+			return fmt.Errorf("update.frequency_hours must be a positive integer")
+		}
+		cfg.Update.FrequencyHours = *body.UpdateFrequencyHours
+	}
+	return saveManagerConfig(s.home, cfg)
 }
 
 var serveAllowedCLI = map[string]bool{

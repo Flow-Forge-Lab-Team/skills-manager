@@ -870,10 +870,15 @@ async function renderSettings(content) {
     saveBtn.disabled = true;
     try {
       await ensureSession();
-      const body = { mode: draft.mode, update_frequency_hours: draft.update_frequency_hours };
-      if (draft.llm_provider) body.llm_provider = draft.llm_provider;
-      if (draft.llm_model) body.llm_model = draft.llm_model;
-      if (draft.llm_api_key_env) body.llm_api_key_env = draft.llm_api_key_env;
+      // Always send LLM fields (including empties) so clearing a provider /
+      // model / key env var actually persists rather than being dropped.
+      const body = {
+        mode: draft.mode,
+        update_frequency_hours: draft.update_frequency_hours,
+        llm_provider: draft.llm_provider,
+        llm_model: draft.llm_model,
+        llm_api_key_env: draft.llm_api_key_env,
+      };
       const res = await fetch("/api/v1/settings", {
         method: "PATCH",
         headers: { "Content-Type": "application/json", "X-Skills-Manager-Token": sessionToken },
