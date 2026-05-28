@@ -402,7 +402,12 @@ func (s *serveServer) handleSync(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Action string `json:"action"`
 	}
-	_ = json.NewDecoder(r.Body).Decode(&body)
+	// Reject malformed JSON so a bad body can't silently fall through to a
+	// mutating pull. An empty body (io.EOF) is allowed and defaults to pull.
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil && err != io.EOF {
+		writeAPIError(w, http.StatusBadRequest, fmt.Errorf("invalid JSON body: %w", err))
+		return
+	}
 	var flag string
 	switch body.Action {
 	case "pull", "":

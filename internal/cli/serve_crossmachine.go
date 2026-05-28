@@ -55,6 +55,15 @@ func loadTriageCrossMachine(home string) (triageCrossMachine, error) {
 
 	machines, err := readMachines(filepath.Join(library, ".machines.yaml"))
 	if err == nil {
+		// Drift is measured against what *this* machine last synced to, not the
+		// literal HEAD. sync-library records each machine's last_commit and then
+		// makes a follow-up "Update machine sync status" commit, so HEAD is one
+		// commit ahead of every recorded last_commit — comparing to HEAD would
+		// mark even the just-synced current machine as diverged.
+		baseline := out.HeadCommit
+		if cur, ok := machines.Machines[out.CurrentMachine]; ok && cur.LastCommit != "" {
+			baseline = cur.LastCommit
+		}
 		names := make([]string, 0, len(machines.Machines))
 		for name := range machines.Machines {
 			names = append(names, name)
@@ -67,7 +76,7 @@ func loadTriageCrossMachine(home string) (triageCrossMachine, error) {
 				LastSynced: entry.LastSynced,
 				LastCommit: entry.LastCommit,
 				Current:    name == out.CurrentMachine,
-				Drift:      machineDrift(entry.LastCommit, out.HeadCommit),
+				Drift:      machineDrift(entry.LastCommit, baseline),
 			})
 		}
 	}

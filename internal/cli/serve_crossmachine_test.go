@@ -76,6 +76,14 @@ machines:
 	if _, ok := names["beta"]; !ok {
 		t.Fatalf("beta missing from machines: %+v", cm.Machines)
 	}
+	// Drift is measured against this machine's recorded commit (alpha=abc123),
+	// not HEAD — so alpha is in-sync and beta (def456) is diverged.
+	if names["alpha"].Drift != "in-sync" {
+		t.Fatalf("alpha drift = %q, want in-sync", names["alpha"].Drift)
+	}
+	if names["beta"].Drift != "diverged" {
+		t.Fatalf("beta drift = %q, want diverged", names["beta"].Drift)
+	}
 	// "absent" is locked by proj-a but not in the catalog → flagged missing.
 	var foundMissing bool
 	for _, m := range cm.MissingLockedSkills {
@@ -88,6 +96,26 @@ machines:
 	}
 	if !foundMissing {
 		t.Fatalf("expected proj-a to flag missing locked skill 'absent': %+v", cm.MissingLockedSkills)
+	}
+}
+
+func TestServeSyncRejectsMalformedBody(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+	srv := newServeServer(home)
+	ts := httptest.NewServer(srv)
+	defer ts.Close()
+
+	sess := serveSessionToken(t, ts.URL)
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/v1/sync", strings.NewReader(`{not valid json`))
+	req.Header.Set("X-Skills-Manager-Token", sess)
+	r, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Body.Close()
+	if r.StatusCode != http.StatusBadRequest {
+		t.Fatalf("malformed sync body = %d, want 400 (must not fall through to a pull)", r.StatusCode)
 	}
 }
 
