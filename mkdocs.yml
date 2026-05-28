@@ -1,0 +1,50 @@
+site_name: skills-manager
+site_description: Local-first CLI for managing AI agent skills across the harnesses you actually use
+site_url: https://flow-forge-lab-team.github.io/skills-manager/
+repo_url: https://github.com/Flow-Forge-Lab-Team/skills-manager
+repo_name: Flow-Forge-Lab-Team/skills-manager
+docs_dir: docs
+
+theme:
+  name: material
+  palette:
+    - scheme: default
+      primary: indigo
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - scheme: slate
+      primary: indigo
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+  features:
+    - navigation.sections
+    - navigation.top
+    - content.code.copy
+
+nav:
+  - Home: INDEX.md
+  - Tutorial (5 min): TUTORIAL.md
+  - Vision: VISION.md
+  - Architecture: ARCHITECTURE.md
+  - Roadmap: ROADMAP.md
+  - Reference:
+      - CLI: CLI_REFERENCE.md
+      - Data model: DATA_MODEL.md
+      - Taxonomy: TAXONOMY.md
+      - Compatibility: COMPATIBILITY.md
+  - Flows:
+      - Ingest: INGEST_FLOW.md
+      - Updates: UPDATE_FLOW.md
+      - Cross-machine: CROSS_MACHINE.md
+      - Scheduling: SCHEDULING.md
+      - Usage tracking: USAGE_TRACKING.md
+  - Bundled skills: BUNDLED_SKILLS.md
+
+markdown_extensions:
+  - admonition
+  - pymdownx.highlight
+  - pymdownx.superfences
+  - toc:
+      permalink: true

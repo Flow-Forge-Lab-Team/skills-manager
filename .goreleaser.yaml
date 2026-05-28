@@ -1,0 +1,82 @@
+version: 2
+
+project_name: skills-manager
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: skills-manager
+    main: ./cmd/skills-manager
+    binary: skills-manager
+    env:
+      - CGO_ENABLED=0
+    ldflags:
+      - -s -w
+      - -X github.com/Flow-Forge-Lab-Team/skills-manager/internal/cli.Version={{.Version}}
+    goos:
+      - darwin
+      - linux
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ignore:
+      - goos: windows
+        goarch: arm64
+
+archives:
+  - id: default
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    files:
+      - README.md
+      - LICENSE
+      - CHANGELOG.md
+
+checksum:
+  name_template: "checksums.txt"
+
+# Signed releases: GoReleaser signs the checksums file with cosign when
+# COSIGN_KEY / COSIGN_PASSWORD are present in the release environment.
+signs:
+  - cmd: cosign
+    artifacts: checksum
+    args:
+      - "sign-blob"
+      - "--key=env://COSIGN_KEY"
+      - "--output-signature=${signature}"
+      - "${artifact}"
+      - "--yes"
+
+# Homebrew tap formula is generated on release; the tap repo must exist and a
+# token with write access provided as HOMEBREW_TAP_GITHUB_TOKEN.
+brews:
+  - name: skills-manager
+    repository:
+      owner: Flow-Forge-Lab-Team
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    homepage: "https://github.com/Flow-Forge-Lab-Team/skills-manager"
+    description: "Local-first CLI for managing AI agent skills across harnesses"
+    license: "MIT"
+    skip_upload: auto
+
+changelog:
+  use: github
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+
+release:
+  github:
+    owner: Flow-Forge-Lab-Team
+    name: skills-manager
+  draft: true
+  prerelease: auto

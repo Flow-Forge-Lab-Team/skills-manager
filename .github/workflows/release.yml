@@ -1,0 +1,38 @@
+name: Release
+
+# Runs only when a version tag is pushed (e.g. v1.0.0). Nothing publishes on
+# normal pushes or PRs. Uses only repository secrets and the built-in token —
+# no untrusted event input is referenced in any run step.
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  goreleaser:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+      - name: Run GoReleaser
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          version: "~> v2"
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Optional secrets enable extras when present:
+          #   COSIGN_KEY / COSIGN_PASSWORD → signed checksums
+          #   HOMEBREW_TAP_GITHUB_TOKEN    → Homebrew tap formula
+          COSIGN_KEY: ${{ secrets.COSIGN_KEY }}
+          COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
+          HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}

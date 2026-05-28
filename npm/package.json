@@ -1,0 +1,33 @@
+{
+  "name": "@flowforgelab/skills-manager",
+  "version": "0.0.0",
+  "description": "Local-first CLI for managing AI agent skills across the harnesses you actually use",
+  "license": "MIT",
+  "homepage": "https://github.com/Flow-Forge-Lab-Team/skills-manager",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Flow-Forge-Lab-Team/skills-manager.git"
+  },
+  "bin": {
+    "skills-manager": "bin/skills-manager.js"
+  },
+  "scripts": {
+    "postinstall": "node scripts/download.js"
+  },
+  "files": [
+    "bin/skills-manager.js",
+    "scripts/download.js"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "os": [
+    "darwin",
+    "linux",
+    "win32"
+  ],
+  "cpu": [
+    "x64",
+    "arm64"
+  ]
+}

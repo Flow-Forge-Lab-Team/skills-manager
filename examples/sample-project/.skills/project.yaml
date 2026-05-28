@@ -1,0 +1,5 @@
+version: 1
+name: sample-project
+categories: [Engineering]
+tags: [typescript, react, nextjs]
+harnesses: [claude, codex, cursor]
