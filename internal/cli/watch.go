@@ -324,6 +324,7 @@ func watchSearchPaths(home, pathsOverride string) []string {
 			filepath.Join(userHome, ".grok", "skills"),
 			filepath.Join(userHome, ".hermes", "skills"),
 			filepath.Join(userHome, ".openclaw", "skills"),
+			filepath.Join(userHome, ".gemini", "skills"),
 			filepath.Join(userHome, ".gemini", "antigravity", "skills"),
 		} {
 			if _, err := os.Stat(p); err == nil {
