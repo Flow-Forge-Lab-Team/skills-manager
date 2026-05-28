@@ -520,9 +520,21 @@ Flags:
 
 ` + globalFlagHelp()
 	case "new":
-		return `skills-manager new <name>
+		return `skills-manager new <name> [--guided [--auto | --handoff | --apply <file>]]
 
-Create a new skill and open it in $EDITOR. Name must be 3-64 alphanumeric chars + dashes.
+Create a new skill. Name must be 3-64 alphanumeric chars + dashes.
+
+Default opens the new SKILL.md in $EDITOR. Guided authoring uses the
+skills-author bundled skill to produce a complete SKILL.md (activation-safe
+description, compatibility, requirements):
+
+  --guided          guided authoring (handoff by default)
+  --auto            run the configured LLM provider to draft the skill
+  --handoff         write an authoring prompt for a manual agent
+  --apply <file>    import an agent-produced SKILL.md draft
+
+Guided drafts are validated (name match, activation-safe description, valid
+frontmatter, no hostile instructions) before ingest.
 
 ` + globalFlagHelp()
 	case "init":
