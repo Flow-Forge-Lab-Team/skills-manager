@@ -131,6 +131,13 @@ func runCheckWithPoller(args []string, stdout io.Writer, stderr io.Writer, gf gl
 			continue
 		}
 
+		// Pinned skills are frozen at a version: do not stage updates past it.
+		if meta.Pinned != "" {
+			fmt.Fprintf(outWriter, "%s: skipped (pinned to %s)\n", skillName, meta.Pinned)
+			results = append(results, checkResult{Skill: skillName, Status: "pinned"})
+			continue
+		}
+
 		// Check if we should skip due to 24h lazy rule
 		if !forceCheck {
 			poll, err := stateDB.GetSkillPoll(skillName)

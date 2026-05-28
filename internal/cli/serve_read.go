@@ -99,9 +99,44 @@ type triageDependencyWarning struct {
 }
 
 type triageMatrix struct {
-	Skills   []string            `json:"skills"`
-	Projects []string            `json:"projects"`
-	Cells    map[string][]string `json:"cells"` // projectSlug -> skill names installed
+	Skills    []string                     `json:"skills"`
+	Projects  []string                     `json:"projects"`
+	Cells     map[string][]string          `json:"cells"`      // projectSlug -> skill names installed
+	Usage     map[string]map[string]int    `json:"usage"`      // projectSlug -> skill -> invocation count
+	SkillInfo map[string]triageMatrixSkill `json:"skill_info"` // skill -> metadata for color-by / filters
+}
+
+// triageMatrixSkill carries the per-skill metadata the Matrix view uses for its
+// color-by toggles (usage / recency / compatibility / requirements) and filters
+// (category / tag / harness / missing dependency / safety flag).
+type triageMatrixSkill struct {
+	Categories         []string `json:"categories,omitempty"`
+	Tags               []string `json:"tags,omitempty"`
+	Harnesses          []string `json:"harnesses,omitempty"`
+	CompatibilityLabel string   `json:"compatibility"`
+	RequirementsStatus string   `json:"requirements"`
+	UsageTotal         int      `json:"usage_total"`
+	LastActivity       string   `json:"last_activity,omitempty"`
+	MissingDeps        bool     `json:"missing_deps"`
+	SafetyFlag         bool     `json:"safety_flag"`
+	Hostile            bool     `json:"hostile"`
+}
+
+// triageUpdateView is the enriched per-update payload for the Updates triage
+// view. Deterministic safety flags and the raw diff (fetched separately) are
+// authoritative; summary badges/status are advisory only.
+type triageUpdateView struct {
+	SkillName        string           `json:"skill_name"`
+	FromVersion      string           `json:"from_version"`
+	ToVersion        string           `json:"to_version"`
+	Source           string           `json:"source"`
+	DetectedAt       string           `json:"detected_at,omitempty"`
+	SummaryStatus    string           `json:"summary_status,omitempty"`
+	SummaryBadges    []string         `json:"summary_badges"`
+	SafetyFlags      []safetyFlagJSON `json:"safety_flags"`
+	Blocking         bool             `json:"blocking"`
+	Hostile          bool             `json:"hostile"`
+	AffectedProjects []string         `json:"affected_projects"`
 }
 
 func loadTriageCatalog(home string) (catalog, string, error) {
@@ -451,30 +486,73 @@ func loadTriageProjectDetail(home, slug string) (triageProjectDetail, error) {
 	return detail, nil
 }
 
-func loadTriageUpdates(home string) ([]pendingUpdateView, error) {
+func loadTriageUpdates(home string) ([]triageUpdateView, error) {
 	stateDB, err := state.Open(home)
 	if err != nil {
 		return nil, err
 	}
-	defer stateDB.Close()
-
 	updates, err := stateDB.ListPendingUpdates()
+	stateDB.Close()
 	if err != nil {
 		return nil, err
 	}
 	libraryPath := filepath.Join(home, "library")
-	view := make([]pendingUpdateView, 0, len(updates))
+	view := make([]triageUpdateView, 0, len(updates))
 	for _, u := range updates {
-		view = append(view, pendingUpdateView{
-			PendingUpdate: u,
-			SummaryBadges: readPendingSummaryBadges(filepath.Join(libraryPath, u.SkillName, ".update-pending")),
-		})
+		pendingRoot := filepath.Join(libraryPath, u.SkillName, ".update-pending")
+		badges := readPendingSummaryBadges(pendingRoot)
+		uv := triageUpdateView{
+			SkillName:        u.SkillName,
+			FromVersion:      u.FromVersion,
+			ToVersion:        u.ToVersion,
+			Source:           u.Source,
+			DetectedAt:       u.DetectedAt,
+			SummaryStatus:    u.SummaryStatus,
+			SummaryBadges:    badges,
+			SafetyFlags:      []safetyFlagJSON{},
+			AffectedProjects: installedProjectSlugs(home, u.SkillName),
+		}
+		// Deterministic safety flags from the staged snapshots are authoritative.
+		if pending, err := findPendingUpdate(u.SkillName, pendingRoot); err == nil {
+			if report, err := computeSafetyReport(u.SkillName, pending.From, pending.To); err == nil {
+				uv.SafetyFlags = safetyReportJSON(report).Flags
+				uv.Blocking = hasBlockingFlags(report)
+			}
+		}
+		uv.Hostile = updateIsHostile(uv.SummaryStatus, badges, uv.SafetyFlags)
+		if uv.SummaryBadges == nil {
+			uv.SummaryBadges = []string{}
+		}
+		if uv.AffectedProjects == nil {
+			uv.AffectedProjects = []string{}
+		}
+		view = append(view, uv)
 	}
 	return view, nil
 }
 
+// updateIsHostile reports whether deterministic flags or advisory signals
+// indicate prompt-injection / hostile review instructions, which the UI must
+// surface prominently and which can never be cleared by an AI summary.
+func updateIsHostile(summaryStatus string, badges []string, flags []safetyFlagJSON) bool {
+	if summaryStatus == "tainted" {
+		return true
+	}
+	for _, b := range badges {
+		if b == "hostile-instructions" || b == "suspicious-instructions" {
+			return true
+		}
+	}
+	for _, f := range flags {
+		if f.Name == "suspicious-instructions" {
+			return true
+		}
+	}
+	return false
+}
+
 func loadTriageMatrix(home string) (triageMatrix, error) {
-	skills, err := loadTriageSkillNames(home)
+	cat, _, err := loadTriageCatalog(home)
 	if err != nil {
 		return triageMatrix{}, err
 	}
@@ -484,31 +562,75 @@ func loadTriageMatrix(home string) (triageMatrix, error) {
 	}
 
 	m := triageMatrix{
-		Skills:   make([]string, 0, len(skills)),
-		Projects: make([]string, 0, len(projects)),
-		Cells:    map[string][]string{},
-	}
-	for _, s := range skills {
-		m.Skills = append(m.Skills, s)
+		Skills:    make([]string, 0, len(cat.Skills)),
+		Projects:  make([]string, 0, len(projects)),
+		Cells:     map[string][]string{},
+		Usage:     map[string]map[string]int{},
+		SkillInfo: map[string]triageMatrixSkill{},
 	}
 	for _, p := range projects {
 		m.Projects = append(m.Projects, p.Slug)
 		m.Cells[p.Slug] = append([]string(nil), p.Skills...)
+		m.Usage[p.Slug] = map[string]int{}
 	}
-	return m, nil
-}
 
-func loadTriageSkillNames(home string) ([]string, error) {
-	cat, _, err := loadTriageCatalog(home)
-	if err != nil {
-		return nil, err
+	// Per-skill×project usage counts and per-skill totals / last activity.
+	usageTotals := map[string]int{}
+	lastActivity := map[string]string{}
+	if db, err := state.Open(home); err == nil {
+		if cells, err := db.UsageMatrix(); err == nil {
+			for _, c := range cells {
+				usageTotals[c.SkillName] += c.Count
+				if _, ok := m.Usage[c.ProjectSlug]; ok {
+					m.Usage[c.ProjectSlug][c.SkillName] += c.Count
+				}
+			}
+		}
+		rows, qErr := db.Query(`SELECT skill_name, MAX(invoked_at) FROM invocations GROUP BY skill_name`)
+		if qErr == nil {
+			for rows.Next() {
+				var name, at string
+				if rows.Scan(&name, &at) == nil {
+					lastActivity[name] = at
+				}
+			}
+			rows.Close()
+		}
+		db.Close()
 	}
-	names := make([]string, 0, len(cat.Skills))
+
+	// Skills with a pending update carrying a safety / hostile flag.
+	safety := map[string]bool{}
+	hostile := map[string]bool{}
+	if updates, err := loadTriageUpdates(home); err == nil {
+		for _, u := range updates {
+			if len(u.SafetyFlags) > 0 || u.Blocking {
+				safety[u.SkillName] = true
+			}
+			if u.Hostile {
+				hostile[u.SkillName] = true
+			}
+		}
+	}
+
+	allHarnesses := []string{"claude", "codex", "grok", "antigravity", "gemini", "hermes", "openclaw"}
 	for _, skill := range cat.Skills {
-		names = append(names, skill.Name)
+		m.Skills = append(m.Skills, skill.Name)
+		m.SkillInfo[skill.Name] = triageMatrixSkill{
+			Categories:         skill.Categories,
+			Tags:               skill.Tags,
+			Harnesses:          compatibleHarnesses(skill.Compatibility, allHarnesses),
+			CompatibilityLabel: compatibilityLabel(skill.Compatibility),
+			RequirementsStatus: requirementsStatus(skill.Requirements),
+			UsageTotal:         usageTotals[skill.Name],
+			LastActivity:       lastActivity[skill.Name],
+			MissingDeps:        len(dependencyWarningStrings(skill)) > 0,
+			SafetyFlag:         safety[skill.Name],
+			Hostile:            hostile[skill.Name],
+		}
 	}
-	sort.Strings(names)
-	return names, nil
+	sort.Strings(m.Skills)
+	return m, nil
 }
 
 func loadTriageUpdateDiff(home, skill string) (string, error) {

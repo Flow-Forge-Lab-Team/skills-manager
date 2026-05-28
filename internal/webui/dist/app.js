@@ -49,6 +49,18 @@ async function runCLI(args) {
   });
 }
 
+async function updateAction(skill, action, body) {
+  await ensureSession();
+  return api("/api/v1/updates/" + encodeURIComponent(skill) + "/" + action, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Skills-Manager-Token": sessionToken,
+    },
+    body: JSON.stringify(body || {}),
+  });
+}
+
 function el(tag, attrs, children) {
   const n = document.createElement(tag);
   if (attrs) {
@@ -384,26 +396,96 @@ async function renderUpdates(content) {
     content.appendChild(el("p", { className: "muted", text: "No pending updates." }));
     return;
   }
-  updates.forEach((u) => {
-    const card = el("div", { className: "stat" });
-    card.style.marginBottom = "12px";
-    card.appendChild(el("div", { className: "value", text: u.skill_name }));
-    const from = (u.from_version || "").slice(0, 7);
-    const to = (u.to_version || "").slice(0, 7);
-    card.appendChild(el("p", { className: "muted", text: from + " → " + to + " · " + (u.source || "") }));
-    const diffBtn = el("button", { className: "btn", text: "View diff" });
-    diffBtn.onclick = async () => {
-      try {
-        const diff = await api("/api/v1/updates/" + encodeURIComponent(u.skill_name) + "/diff");
-        content.querySelectorAll("pre.diff").forEach((n) => n.remove());
-        card.appendChild(el("pre", { className: "diff", text: diff || "(no changes)" }));
-      } catch (e) {
-        alert(e.message);
+  updates.forEach((u) => content.appendChild(renderUpdateCard(u)));
+}
+
+function renderUpdateCard(u) {
+  const card = el("section", { className: "panel update-card" });
+  card.appendChild(el("div", { className: "panel-title", text: u.skill_name }));
+  const from = (u.from_version || "").slice(0, 7);
+  const to = (u.to_version || "").slice(0, 7);
+  card.appendChild(el("p", { className: "muted", text: from + " → " + to + " · " + (u.source || "") }));
+
+  // Hostile / prompt-injection prominence: deterministic, never cleared by AI.
+  if (u.hostile) {
+    card.appendChild(el("div", { className: "safety-banner", text: "⚠ Hostile review instructions / prompt-injection detected — review the raw diff. An AI summary cannot clear this." }));
+  }
+
+  // Deterministic safety flags (authoritative).
+  const flags = u.safety_flags || [];
+  const flagRow = el("div", null);
+  if (flags.length) {
+    flags.forEach((f) => flagRow.appendChild(badge((f.blocking ? "⛔ " : "") + f.name, f.blocking ? "danger" : "warn")));
+  } else {
+    flagRow.appendChild(badge("no deterministic safety flags", "ok"));
+  }
+  card.appendChild(flagRow);
+
+  // Advisory AI summary panel — clearly marked advisory, cannot clear flags.
+  const adv = el("div", null);
+  if ((u.summary_badges || []).length || u.summary_status) {
+    if (u.summary_status) adv.appendChild(badge("summary: " + u.summary_status, u.summary_status === "tainted" ? "danger" : "advisory"));
+    (u.summary_badges || []).forEach((b) => adv.appendChild(badge(b, "advisory")));
+    adv.appendChild(el("div", { className: "advisory-note", text: "AI summary is advisory only and does not override deterministic safety flags." }));
+  }
+  card.appendChild(adv);
+
+  // Affected projects preview.
+  const affected = u.affected_projects || [];
+  card.appendChild(el("p", { className: "muted", text: affected.length ? "Affects " + affected.length + " project(s): " + affected.join(", ") : "Not installed in any project." }));
+
+  // Actions.
+  const actions = el("div", { className: "update-actions" });
+  const diffBtn = el("button", { className: "btn", text: "View raw diff" });
+  diffBtn.onclick = async () => {
+    try {
+      const diff = await api("/api/v1/updates/" + encodeURIComponent(u.skill_name) + "/diff");
+      card.querySelectorAll("pre.diff").forEach((n) => n.remove());
+      card.appendChild(el("pre", { className: "diff", text: diff || "(no changes)" }));
+    } catch (e) { alert(e.message); }
+  };
+  actions.appendChild(diffBtn);
+
+  const summaryBtn = el("button", { className: "btn", text: "Generate summary" });
+  summaryBtn.onclick = async () => {
+    summaryBtn.disabled = true;
+    try {
+      const res = await updateAction(u.skill_name, "summary", { mode: "auto" });
+      if (res.exit_code === 0) { alert("Advisory summary generated. Reload to view badges."); render(); return; }
+      // Provider unavailable → handoff fallback.
+      if (confirm("No configured summary provider succeeded. Write a handoff prompt instead?")) {
+        const ho = await updateAction(u.skill_name, "summary", { mode: "handoff" });
+        alert(ho.exit_code === 0 ? "Handoff prompt written. Import the agent output with: skills-manager summarize " + u.skill_name + " --from <file>" : (ho.stderr || "handoff failed"));
       }
-    };
-    card.appendChild(diffBtn);
-    content.appendChild(card);
-  });
+    } catch (e) { alert(e.message); }
+    finally { summaryBtn.disabled = false; }
+  };
+  actions.appendChild(summaryBtn);
+
+  const affectedNote = affected.length ? "\nThis affects " + affected.length + " installed project(s): " + affected.join(", ") + "." : "";
+  const acceptBtn = el("button", { className: "btn confirm", text: "Accept" });
+  acceptBtn.onclick = () => confirmUpdateAction(u.skill_name, "accept", "Accept the update for " + u.skill_name + "?" + (u.blocking ? "\n\nThis update has BLOCKING safety flags. Accepting is a manual override." : "") + affectedNote);
+  actions.appendChild(acceptBtn);
+
+  const rejectBtn = el("button", { className: "btn danger", text: "Reject" });
+  rejectBtn.onclick = () => confirmUpdateAction(u.skill_name, "reject", "Reject and discard the pending update for " + u.skill_name + "?" + affectedNote);
+  actions.appendChild(rejectBtn);
+
+  const pinBtn = el("button", { className: "btn", text: "Pin" });
+  pinBtn.onclick = () => confirmUpdateAction(u.skill_name, "pin", "Pin " + u.skill_name + " at its current version and reject this update?" + affectedNote);
+  actions.appendChild(pinBtn);
+
+  card.appendChild(actions);
+  return card;
+}
+
+async function confirmUpdateAction(skill, action, message) {
+  if (!confirm(message)) return;
+  try {
+    const res = await updateAction(skill, action, {});
+    if (res.exit_code !== 0) { alert(res.stderr || res.stdout || (action + " failed")); return; }
+    render();
+  } catch (e) { alert(e.message); }
 }
 
 async function renderProjects(content) {
@@ -489,12 +571,74 @@ function renderCandidatePanel(content, title, candidates) {
   content.appendChild(panel);
 }
 
+let matrixState = { colorBy: "install", category: "", tag: "", harness: "", filter: "" };
+
+function heatClass(count) {
+  if (count <= 0) return "";
+  if (count >= 20) return "heat-4";
+  if (count >= 8) return "heat-3";
+  if (count >= 3) return "heat-2";
+  return "heat-1";
+}
+
+function daysSince(ts) {
+  if (!ts) return Infinity;
+  const t = Date.parse(ts);
+  if (isNaN(t)) return Infinity;
+  return (Date.now() - t) / 86400000;
+}
+
+function recencyHeat(ts) {
+  const d = daysSince(ts);
+  if (d === Infinity) return "";
+  if (d <= 1) return "heat-4";
+  if (d <= 7) return "heat-3";
+  if (d <= 30) return "heat-2";
+  return "heat-1";
+}
+
 async function renderMatrix(content) {
   const t0 = performance.now();
   const m = await api("/api/v1/matrix");
   const ms = Math.round(performance.now() - t0);
+  const info = m.skill_info || {};
+  const usage = m.usage || {};
+  const installed = m.cells || {};
+
+  // Collect filter option values.
+  const cats = new Set(), tags = new Set(), harnesses = new Set();
+  m.skills.forEach((s) => {
+    (info[s] && info[s].categories || []).forEach((c) => cats.add(c));
+    (info[s] && info[s].tags || []).forEach((t) => tags.add(t));
+    (info[s] && info[s].harnesses || []).forEach((h) => harnesses.add(h));
+  });
+
+  function skillPasses(skill) {
+    const i = info[skill] || {};
+    if (matrixState.category && !(i.categories || []).includes(matrixState.category)) return false;
+    if (matrixState.tag && !(i.tags || []).includes(matrixState.tag)) return false;
+    if (matrixState.harness && !(i.harnesses || []).includes(matrixState.harness)) return false;
+    if (matrixState.filter === "missing-deps" && !i.missing_deps) return false;
+    if (matrixState.filter === "safety-flag" && !i.safety_flag) return false;
+    return true;
+  }
+
+  const toolbar = el("div", { className: "toolbar" });
+  toolbar.appendChild(field("Color by", selectControlPreset("Color by", matrixState.colorBy,
+    [["install", "Install state"], ["usage", "Usage count"], ["recency", "Recency"], ["compatibility", "Compatibility"], ["requirements", "Requirements"]],
+    (v) => { matrixState.colorBy = v || "install"; render(); })));
+  toolbar.appendChild(field("Category", selectControl("All categories", matrixState.category, [...cats].sort(), (v) => { matrixState.category = v; render(); })));
+  toolbar.appendChild(field("Tag", selectControl("All tags", matrixState.tag, [...tags].sort(), (v) => { matrixState.tag = v; render(); })));
+  toolbar.appendChild(field("Harness", selectControl("All harnesses", matrixState.harness, [...harnesses].sort(), (v) => { matrixState.harness = v; render(); })));
+  toolbar.appendChild(field("Flag", selectControlPreset("No flag filter", matrixState.filter,
+    [["", "No filter"], ["missing-deps", "Missing dependency"], ["safety-flag", "Pending safety flag"]],
+    (v) => { matrixState.filter = v; render(); })));
+  content.appendChild(toolbar);
+
+  const visibleSkills = m.skills.filter(skillPasses);
   document.getElementById("page-subtitle").textContent =
-    m.skills.length + " skills × " + m.projects.length + " projects · loaded in " + ms + "ms";
+    visibleSkills.length + "/" + m.skills.length + " skills × " + m.projects.length + " projects · colored by " + matrixState.colorBy + " · loaded in " + ms + "ms";
+
   const wrap = el("div", { className: "matrix-wrap" });
   const table = el("table");
   const headRow = [el("th", { text: "Skill" })];
@@ -503,18 +647,53 @@ async function renderMatrix(content) {
   thead.appendChild(el("tr", null, headRow));
   table.appendChild(thead);
   const tbody = el("tbody");
-  const installed = m.cells || {};
-  m.skills.forEach((skill) => {
-    const row = [el("td", { text: skill })];
+
+  visibleSkills.forEach((skill) => {
+    const i = info[skill] || {};
+    const skillCell = el("td", null, [
+      el("span", { text: skill }),
+    ]);
+    if (i.hostile) skillCell.appendChild(badge("hostile", "danger"));
+    else if (i.safety_flag) skillCell.appendChild(badge("flag", "warn"));
+    if (i.missing_deps) skillCell.appendChild(badge("deps", "warn"));
+    const row = [skillCell];
     m.projects.forEach((proj) => {
       const hits = (installed[proj] || []).includes(skill);
-      row.push(el("td", { className: hits ? "installed" : "", text: hits ? "●" : "" }));
+      const count = (usage[proj] || {})[skill] || 0;
+      let cls = "", text = "";
+      switch (matrixState.colorBy) {
+        case "usage":
+          cls = heatClass(count); text = count ? String(count) : "";
+          break;
+        case "recency":
+          cls = hits ? recencyHeat(i.last_activity) : ""; text = hits ? "●" : "";
+          break;
+        case "compatibility":
+          cls = hits ? "installed" : ""; text = hits ? (i.compatibility || "").slice(0, 3) : "";
+          break;
+        case "requirements":
+          cls = hits ? "installed" : ""; text = hits ? (i.requirements || "").slice(0, 3) : "";
+          break;
+        default:
+          cls = hits ? "installed" : ""; text = hits ? "●" : "";
+      }
+      row.push(el("td", { className: cls, text, title: hits ? skill + " in " + proj + " · usage " + count : "" }));
     });
     tbody.appendChild(el("tr", null, row));
   });
   table.appendChild(tbody);
   wrap.appendChild(table);
   content.appendChild(wrap);
+}
+
+// selectControlPreset is like selectControl but takes [value,label] pairs and
+// keeps the current selection rather than prepending an empty option.
+function selectControlPreset(label, value, options, onChange) {
+  const select = el("select", { "aria-label": label });
+  options.forEach(([val, lbl]) => select.appendChild(el("option", { value: val, text: lbl })));
+  select.value = value || "";
+  select.addEventListener("change", () => onChange(select.value));
+  return select;
 }
 
 async function render() {

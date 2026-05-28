@@ -279,6 +279,10 @@ Flags:
 		return `skills-manager update [flags]
        skills-manager update --safety <skill>
        skills-manager update --diff <skill>
+       skills-manager update --accept <skill>
+       skills-manager update --reject <skill>
+       skills-manager update --pin <skill> [version]
+       skills-manager update --unpin <skill>
        skills-manager update --accept-all-safe
 
 Review and accept pending library updates staged under
@@ -288,6 +292,12 @@ Forms:
   (no args)           list all pending updates
   --diff <skill>      print unified diff between from.md and to.md
   --safety <skill>    print a safety report for one pending update
+  --accept <skill>    apply one pending update (manual override; still refuses
+                      if the live skill diverged from the staged base)
+  --reject <skill>    discard one pending update (recorded as rejected)
+  --pin <skill> [ver] freeze a skill at a version and reject any pending update;
+                      defaults to the pending update's incoming version
+  --unpin <skill>     remove a version pin so updates resume
   --accept-all-safe   apply every pending update that has no blocking flags;
                       refuses (exit 4) if any update is blocked
 
