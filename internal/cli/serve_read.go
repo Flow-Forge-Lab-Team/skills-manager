@@ -11,13 +11,13 @@ import (
 )
 
 type triageOverview struct {
-	LibrarySkills  int                    `json:"library_skills"`
-	Projects       int                    `json:"projects"`
-	PendingUpdates int                    `json:"pending_updates"`
-	Unregistered   int                    `json:"unregistered"`
-	ScheduledCheck string                 `json:"scheduled_check"`
-	Home           string                 `json:"home"`
-	GeneratedAt    string                 `json:"generated_at"`
+	LibrarySkills  int    `json:"library_skills"`
+	Projects       int    `json:"projects"`
+	PendingUpdates int    `json:"pending_updates"`
+	Unregistered   int    `json:"unregistered"`
+	ScheduledCheck string `json:"scheduled_check"`
+	Home           string `json:"home"`
+	GeneratedAt    string `json:"generated_at"`
 }
 
 type triageSkill struct {
@@ -140,14 +140,14 @@ func loadTriageSkillDetail(home, name string) (map[string]interface{}, error) {
 	}
 
 	return map[string]interface{}{
-		"name":          skill.Name,
-		"summary":       skill.Summary,
-		"categories":    skill.Categories,
-		"tags":          skill.Tags,
-		"compatibility": skill.Compatibility,
-		"requirements":  skill.Requirements,
-		"origin":        meta.Origin,
-		"fingerprint":   fingerprintOut,
+		"name":           skill.Name,
+		"summary":        skill.Summary,
+		"categories":     skill.Categories,
+		"tags":           skill.Tags,
+		"compatibility":  skill.Compatibility,
+		"requirements":   skill.Requirements,
+		"origin":         meta.Origin,
+		"fingerprint":    fingerprintOut,
 		"categorization": meta.Categorization,
 	}, nil
 }

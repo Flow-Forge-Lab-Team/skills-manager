@@ -408,6 +408,37 @@ skills-manager serve --port 8000
 skills-manager serve --host 0.0.0.0      # for Tailscale / cross-device access
 ```
 
+## Usage tracking
+
+### `skills-manager usage [matrix]`
+
+Show recorded skill usage aggregated by skill × project × harness × count.
+
+```
+skills-manager usage                     # human-readable matrix
+skills-manager --json usage              # structured matrix for the UI
+```
+
+### `skills-manager usage receiver [--port <n>] [--host <addr>]`
+
+Run a small OTLP/HTTP log receiver (default `127.0.0.1:4318`) that ingests
+Claude Code telemetry at `/v1/logs` and records skill activations. Skill names
+require Claude Code to run with `OTEL_LOG_TOOL_DETAILS=1`. OTEL events carry no
+project, so the project dimension is filled by the hook below.
+
+### `skills-manager usage hook [--print-config]`
+
+Reads a PreToolUse hook payload on stdin and records one invocation when the
+hooked tool is the `Skill` tool, attributing the project from the hook's `cwd`.
+Best-effort: it always exits 0 so it can never block a tool call. Use
+`--print-config` to print the `settings.json` hook snippet.
+
+### `skills-manager usage setup`
+
+Print step-by-step OTEL receiver and PreToolUse hook setup instructions.
+
+See [USAGE_TRACKING.md](USAGE_TRACKING.md) for the full picture.
+
 ## Catch-all
 
 ### `skills-manager help [<command>]`
