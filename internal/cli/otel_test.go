@@ -11,8 +11,8 @@ import (
 
 // sampleOTLPLogs is a representative OTLP/JSON logs export carrying a mix of
 // Claude Code events: two Skill tool_result events, a non-Skill tool_result
-// (ignored), a forward-compatible skill_activated event, and a Skill event
-// whose skill name is buried in tool_parameters JSON.
+// (ignored), a non-tool_result event (ignored — only tool_result is canonical),
+// and a Skill event whose skill name is buried in tool_parameters JSON.
 const sampleOTLPLogs = `{
   "resourceLogs": [
     {
@@ -48,9 +48,8 @@ const sampleOTLPLogs = `{
             },
             {
               "attributes": [
-                {"key": "event.name", "value": {"stringValue": "skill_activated"}},
-                {"key": "skill_name", "value": {"stringValue": "debugging"}},
-                {"key": "invocation_trigger", "value": {"stringValue": "proactive"}}
+                {"key": "event.name", "value": {"stringValue": "api_request"}},
+                {"key": "skill.name", "value": {"stringValue": "debugging"}}
               ]
             },
             {
@@ -73,8 +72,8 @@ func TestParseOTLPSkillInvocations(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(invs) != 4 {
-		t.Fatalf("got %d invocations, want 4: %+v", len(invs), invs)
+	if len(invs) != 3 {
+		t.Fatalf("got %d invocations, want 3: %+v", len(invs), invs)
 	}
 
 	// First record keeps its explicit ISO timestamp and defaults harness/trigger.
@@ -83,13 +82,15 @@ func TestParseOTLPSkillInvocations(t *testing.T) {
 		invs[0].Source != "otel" {
 		t.Fatalf("invs[0] = %+v", invs[0])
 	}
-	// skill_activated event honors the explicit trigger.
-	if invs[2].SkillName != "debugging" || invs[2].Trigger != "proactive" {
-		t.Fatalf("invs[2] = %+v, want debugging/proactive", invs[2])
+	// The non-tool_result event (api_request) is ignored.
+	for _, inv := range invs {
+		if inv.SkillName == "debugging" {
+			t.Fatalf("debugging should be ignored (only tool_result is canonical): %+v", invs)
+		}
 	}
 	// Skill name dug out of tool_parameters JSON; subagent => nested trigger.
-	if invs[3].SkillName != "verification" || invs[3].Trigger != "nested" {
-		t.Fatalf("invs[3] = %+v, want verification/nested", invs[3])
+	if invs[2].SkillName != "verification" || invs[2].Trigger != "nested" {
+		t.Fatalf("invs[2] = %+v, want verification/nested", invs[2])
 	}
 	// OTEL cannot attribute a project.
 	for i, inv := range invs {
@@ -146,12 +147,13 @@ func TestOTELReceiverEndToEnd(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Expect: brainstorming x2 (one cell, count 2), debugging x1, verification x1.
+	// Expect: brainstorming x2 (one cell, count 2), verification x1. The
+	// non-tool_result event contributes nothing.
 	counts := map[string]int{}
 	for _, c := range cells {
 		counts[c.SkillName] += c.Count
 	}
-	if counts["brainstorming"] != 2 || counts["debugging"] != 1 || counts["verification"] != 1 {
+	if counts["brainstorming"] != 2 || counts["verification"] != 1 || counts["debugging"] != 0 {
 		t.Fatalf("counts = %+v", counts)
 	}
 }

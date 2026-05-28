@@ -70,12 +70,12 @@ func (v otlpAnyValue) asString() string {
 }
 
 // parseOTLPSkillInvocations walks an OTLP/JSON logs export and returns the
-// skill activations it can derive. Two event shapes are recognized:
-//
-//   - claude_code.tool_result with tool_name="Skill" — the real signal emitted
-//     by current Claude Code (requires OTEL_LOG_TOOL_DETAILS=1 for skill_name).
-//   - claude_code.skill_activated — a forward-compatible event name in case
-//     Claude Code adds a dedicated skill activation event later.
+// skill activations it can derive from claude_code.tool_result events with
+// tool_name="Skill" — the canonical signal emitted by Claude Code (skill_name
+// requires OTEL_LOG_TOOL_DETAILS=1). tool_result is the single source of truth
+// per activation: other Skill-tagged events (e.g. tool_decision) share its
+// tool_use_id, so recognizing only tool_result avoids double-counting one
+// activation from two event shapes.
 //
 // Project attribution is not available from OTEL standard attributes, so
 // ProjectSlug is left empty; the PreToolUse hook fallback supplies it.
@@ -110,23 +110,21 @@ func parseOTLPSkillInvocations(data []byte) ([]state.Invocation, error) {
 func skillInvocationFromEvent(rec otlpLogRecord, attrs map[string]string) (state.Invocation, bool) {
 	event := eventName(rec, attrs)
 
-	var skill string
 	switch event {
-	case "skill_activated", "claude_code.skill_activated":
-		skill = firstNonEmpty(attrs["skill_name"], attrs["skill.name"])
-	case "tool_result", "claude_code.tool_result", "tool_decision", "claude_code.tool_decision":
-		if !strings.EqualFold(attrs["tool_name"], "Skill") {
-			return state.Invocation{}, false
-		}
-		skill = firstNonEmpty(
-			attrs["skill_name"],
-			attrs["skill.name"],
-			jsonField(attrs["tool_parameters"], "skill_name", "skill", "name"),
-			jsonField(attrs["tool_input"], "skill_name", "skill", "name"),
-		)
+	case "tool_result", "claude_code.tool_result":
+		// recognized below
 	default:
 		return state.Invocation{}, false
 	}
+	if !strings.EqualFold(attrs["tool_name"], "Skill") {
+		return state.Invocation{}, false
+	}
+	skill := firstNonEmpty(
+		attrs["skill_name"],
+		attrs["skill.name"],
+		jsonField(attrs["tool_parameters"], "skill_name", "skill", "name"),
+		jsonField(attrs["tool_input"], "skill_name", "skill", "name"),
+	)
 	if skill == "" {
 		return state.Invocation{}, false
 	}

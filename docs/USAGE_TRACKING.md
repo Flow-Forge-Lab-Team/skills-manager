@@ -32,8 +32,8 @@ OTEL row for the same activation is ignored. Rows without a `tool_use_id`
 > OTEL event with an `invocation_trigger` attribute. Claude Code does not emit
 > that event. Skill activation is instead observable on the real
 > `claude_code.tool_result` event (`tool_name="Skill"`, with `skill_name` in the
-> tool parameters when `OTEL_LOG_TOOL_DETAILS=1`). The receiver parses that real
-> event and also accepts a `skill_activated` event name for forward-compatibility.
+> tool parameters when `OTEL_LOG_TOOL_DETAILS=1`), which the receiver parses as
+> the single canonical signal per activation.
 
 ## OTEL receiver
 
