@@ -154,9 +154,17 @@ func projectCompileSkills(projectPath string, cat catalog, harness string) ([]st
 		return nil, fmt.Errorf("read install lock: %w", err)
 	}
 	if len(lock.Skills) > 0 {
-		names := make([]string, 0, len(lock.Skills))
+		// A lock can include skills installed only for other harnesses (e.g.
+		// exclusive:claude). Only compile those compatible with this harness.
+		compatByName := map[string]compatibility{}
+		for _, s := range cat.Skills {
+			compatByName[s.Name] = s.Compatibility
+		}
+		var names []string
 		for _, e := range lock.Skills {
-			names = append(names, e.Name)
+			if len(compatibleHarnesses(compatByName[e.Name], []string{harness})) > 0 {
+				names = append(names, e.Name)
+			}
 		}
 		return names, nil
 	}

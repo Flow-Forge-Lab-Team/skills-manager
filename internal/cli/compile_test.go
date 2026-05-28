@@ -153,6 +153,36 @@ func TestCompileHarnessesForProject(t *testing.T) {
 	}
 }
 
+func TestCompileCursorFiltersLockByCompatibility(t *testing.T) {
+	// A lock can contain skills installed only for another harness; those must
+	// not be compiled to Cursor rules.
+	home := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+	libraryPath := filepath.Join(home, "library")
+	writeFile(t, filepath.Join(libraryPath, "portable-skill", "SKILL.md"), "---\nname: portable-skill\ndescription: p\n---\nbody\n")
+	writeFile(t, filepath.Join(libraryPath, "claude-skill", "SKILL.md"), "---\nname: claude-skill\ndescription: c\n---\nbody\n")
+	cat := catalog{Version: 1, Skills: []catalogSkill{
+		{Name: "portable-skill", Tags: []string{"go"}},
+		{Name: "claude-skill", Tags: []string{"go"}, Compatibility: compatibility{Mode: "exclusive", Harness: "claude"}},
+	}}
+	if err := writeCatalog(filepath.Join(libraryPath, "catalog.yaml"), cat); err != nil {
+		t.Fatal(err)
+	}
+	projectPath := filepath.Join(home, "proj")
+	writeFile(t, filepath.Join(projectPath, ".skills", "installed.lock"), "version: 1\nskills:\n  - name: portable-skill\n  - name: claude-skill\n")
+
+	written, err := compileForHarness(home, projectPath, "cursor")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(written) != 1 {
+		t.Fatalf("compiled %d rules, want 1 (claude-skill excluded): %v", len(written), written)
+	}
+	if _, err := os.Stat(filepath.Join(projectPath, ".cursor", "rules", "claude-skill.mdc")); !os.IsNotExist(err) {
+		t.Fatal("exclusive:claude skill must not be compiled to a Cursor rule")
+	}
+}
+
 func TestCompileCursorOnlyProjectUsesMatch(t *testing.T) {
 	// A cursor-only project records nothing in installed.lock (cursor has no
 	// copy target), so the compiler must fall back to the project match.
