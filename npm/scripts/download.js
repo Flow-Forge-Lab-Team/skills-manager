@@ -8,7 +8,6 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const https = require("https");
-const zlib = require("zlib");
 const { execFileSync } = require("child_process");
 
 const REPO = "Flow-Forge-Lab-Team/skills-manager";
@@ -65,19 +64,33 @@ async function main() {
   process.stdout.write(`skills-manager: downloading ${base}/${asset}\n`);
   await download(`${base}/${asset}`, archivePath);
 
-  // Extract just the binary. tar.gz via zlib + tar is heavy; shell out to the
-  // platform's tar/unzip which is universally available on the supported OSes.
-  if (ext === "tar.gz") {
-    execFileSync("tar", ["-xzf", archivePath, "-C", binDir]);
-  } else {
-    execFileSync("unzip", ["-o", archivePath, "-d", binDir]);
-  }
+  extract(archivePath, ext, binDir);
   fs.rmSync(archivePath, { force: true });
   const binPath = path.join(binDir, `skills-manager${exe}`);
   if (!fs.existsSync(binPath)) throw new Error("binary not found after extraction");
   fs.chmodSync(binPath, 0o755);
   process.stdout.write(`skills-manager: installed ${binPath}\n`);
-  void zlib; // reserved for a future pure-JS extraction path
+}
+
+// extract unpacks the archive into binDir. tar.gz uses tar (present on macOS,
+// Linux, and Windows 10+). zip (Windows) uses PowerShell Expand-Archive, which
+// is built into Windows 10+, falling back to bsdtar.
+function extract(archivePath, ext, binDir) {
+  if (ext === "tar.gz") {
+    execFileSync("tar", ["-xzf", archivePath, "-C", binDir]);
+    return;
+  }
+  const ps = (p) => "'" + String(p).replace(/'/g, "''") + "'";
+  try {
+    execFileSync(
+      "powershell",
+      ["-NoProfile", "-NonInteractive", "-Command",
+        `Expand-Archive -Path ${ps(archivePath)} -DestinationPath ${ps(binDir)} -Force`],
+      { stdio: "ignore" }
+    );
+  } catch (_) {
+    execFileSync("tar", ["-xf", archivePath, "-C", binDir]); // bsdtar handles zip on modern Windows
+  }
 }
 
 main().catch((err) => {
