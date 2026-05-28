@@ -57,7 +57,7 @@ func runStatus(args []string, stdout io.Writer, stderr io.Writer, gf globalFlags
 	var unregCount int
 	db.QueryRow("SELECT COUNT(*) FROM detected WHERE action IS NULL OR action = '' OR action = 'pending'").Scan(&unregCount)
 
-	sched := checkScheduledState(db)
+	sched := formatScheduledCheckStatus(db, home)
 
 	if gf.JSON {
 		out := map[string]interface{}{

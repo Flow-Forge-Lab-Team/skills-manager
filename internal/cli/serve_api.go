@@ -88,7 +88,7 @@ func (s *serveServer) handleSkills(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	skills, err := loadTriageSkills(s.home)
+	skills, err := loadTriageSkillList(s.home, r.URL.Query())
 	if err != nil {
 		writeAPIError(w, http.StatusInternalServerError, err)
 		return
