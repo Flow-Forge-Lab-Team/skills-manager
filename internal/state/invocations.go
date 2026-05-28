@@ -1,6 +1,7 @@
 package state
 
 import (
+	"database/sql"
 	"fmt"
 	"time"
 )
@@ -11,77 +12,80 @@ type Invocation struct {
 	SkillName   string
 	ProjectSlug string // empty when the source cannot attribute a project (e.g. OTEL)
 	Harness     string
-	Trigger     string // user-initiated | proactive | nested
+	Trigger     string // user-initiated | proactive | nested; empty when unknown
 	InvokedAt   string // RFC3339 timestamp; defaulted to now when empty
 	Source      string // otel | hook | watcher | manual
-	ToolUseID   string // correlation id shared by the OTEL event and the hook; dedupes the two feeds
+	ToolUseID   string // correlation id shared by the OTEL tool_result event and the hook
 }
 
-// RecordInvocation inserts a single invocation row. An empty InvokedAt is
-// defaulted to the current UTC time so callers ingesting events without a
-// timestamp still produce ordered rows. A row whose ToolUseID was already
-// recorded is ignored (the two feeds share the id), so enabling both the OTEL
-// receiver and the PreToolUse hook does not double-count an activation.
-func (db *DB) RecordInvocation(inv Invocation) error {
+// insertInvocationSQL inserts one invocation, merging on tool_use_id when the
+// same activation is reported by more than one feed. The hook supplies the
+// project, OTEL supplies the trigger, and the merge fills whichever field the
+// existing row is missing — so enabling both feeds enriches a single row rather
+// than double-counting it. The conflict target matches the partial unique index
+// from migration 0003, so rows without a tool_use_id always insert fresh.
+const insertInvocationSQL = `
+	INSERT INTO invocations (skill_name, project_slug, harness, trigger, invoked_at, source, tool_use_id)
+	VALUES (?, ?, ?, ?, ?, ?, ?)
+	ON CONFLICT (tool_use_id) WHERE tool_use_id IS NOT NULL AND tool_use_id != ''
+	DO UPDATE SET
+		project_slug = CASE WHEN excluded.project_slug != '' THEN excluded.project_slug ELSE invocations.project_slug END,
+		trigger      = CASE WHEN excluded.trigger      != '' THEN excluded.trigger      ELSE invocations.trigger      END,
+		harness      = CASE WHEN invocations.harness    =  '' THEN excluded.harness       ELSE invocations.harness      END,
+		source       = CASE WHEN instr(invocations.source, excluded.source) = 0
+		                    THEN trim(invocations.source || '+' || excluded.source, '+')
+		                    ELSE invocations.source END
+`
+
+type execer interface {
+	Exec(query string, args ...any) (sql.Result, error)
+}
+
+func recordOne(e execer, inv Invocation) error {
 	if inv.SkillName == "" {
 		return fmt.Errorf("record invocation: skill name required")
 	}
 	if inv.InvokedAt == "" {
 		inv.InvokedAt = time.Now().UTC().Format(time.RFC3339)
 	}
-	_, err := db.Exec(`
-		INSERT OR IGNORE INTO invocations (skill_name, project_slug, harness, trigger, invoked_at, source, tool_use_id)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
-	`, inv.SkillName, inv.ProjectSlug, inv.Harness, inv.Trigger, inv.InvokedAt, inv.Source, inv.ToolUseID)
-	if err != nil {
+	if _, err := e.Exec(insertInvocationSQL,
+		inv.SkillName, inv.ProjectSlug, inv.Harness, inv.Trigger, inv.InvokedAt, inv.Source, inv.ToolUseID); err != nil {
 		return fmt.Errorf("record invocation: %w", err)
 	}
 	return nil
 }
 
-// RecordInvocations inserts a batch of invocations in a single transaction.
+// RecordInvocation records a single invocation, merging on tool_use_id (see
+// insertInvocationSQL). An empty InvokedAt is defaulted to the current UTC time.
+func (db *DB) RecordInvocation(inv Invocation) error {
+	return recordOne(db, inv)
+}
+
+// RecordInvocations records a batch of invocations in a single transaction.
 // Records with an empty SkillName are skipped rather than aborting the batch,
 // so a malformed event in an OTEL payload does not discard the valid ones.
-// Returns the number of rows written.
+// Returns the number of records processed (an upsert that merges into an
+// existing row still counts as processed).
 func (db *DB) RecordInvocations(invs []Invocation) (int, error) {
 	tx, err := db.Begin()
 	if err != nil {
 		return 0, fmt.Errorf("record invocations: begin: %w", err)
 	}
-	stmt, err := tx.Prepare(`
-		INSERT OR IGNORE INTO invocations (skill_name, project_slug, harness, trigger, invoked_at, source, tool_use_id)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
-	`)
-	if err != nil {
-		tx.Rollback()
-		return 0, fmt.Errorf("record invocations: prepare: %w", err)
-	}
-	defer stmt.Close()
-
-	written := 0
-	now := time.Now().UTC().Format(time.RFC3339)
+	processed := 0
 	for _, inv := range invs {
 		if inv.SkillName == "" {
 			continue
 		}
-		invokedAt := inv.InvokedAt
-		if invokedAt == "" {
-			invokedAt = now
-		}
-		res, err := stmt.Exec(inv.SkillName, inv.ProjectSlug, inv.Harness, inv.Trigger, invokedAt, inv.Source, inv.ToolUseID)
-		if err != nil {
+		if err := recordOne(tx, inv); err != nil {
 			tx.Rollback()
-			return 0, fmt.Errorf("record invocations: exec: %w", err)
+			return 0, err
 		}
-		// A row deduped against an existing tool_use_id affects 0 rows.
-		if n, err := res.RowsAffected(); err == nil && n > 0 {
-			written++
-		}
+		processed++
 	}
 	if err := tx.Commit(); err != nil {
 		return 0, fmt.Errorf("record invocations: commit: %w", err)
 	}
-	return written, nil
+	return processed, nil
 }
 
 // UsageCell is one aggregated bucket of the usage matrix: a count of

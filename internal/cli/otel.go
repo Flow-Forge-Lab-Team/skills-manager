@@ -72,20 +72,34 @@ func (v otlpAnyValue) asString() string {
 // parseOTLPSkillInvocations walks an OTLP/JSON logs export and returns the
 // skill activations it can derive from claude_code.tool_result events with
 // tool_name="Skill" — the canonical signal emitted by Claude Code (skill_name
-// requires OTEL_LOG_TOOL_DETAILS=1). tool_result is the single source of truth
-// per activation: other Skill-tagged events (e.g. tool_decision) share its
-// tool_use_id, so recognizing only tool_result avoids double-counting one
-// activation from two event shapes.
+// requires OTEL_LOG_TOOL_DETAILS=1).
+//
+// claude_code.skill_activated is the canonical event: it fires for both Skill
+// tool calls and /-command invocations and carries the real invocation_trigger
+// taxonomy. It has no tool_use_id, so to let the project-attributing PreToolUse
+// hook enrich it, each skill_activated is bridged to the corresponding Skill
+// tool_result (they share prompt.id + skill name) and adopts its tool_use_id.
+// The matching tool_result is then not emitted on its own, so a single Skill
+// tool activation is counted once. A skill_activated with no tool_result
+// (a /-command) is counted on its own with no tool_use_id. A tool_result with
+// no skill_activated (e.g. OTEL_LOG_TOOL_DETAILS disabled on the activation) is
+// still counted so usage is not lost.
 //
 // Project attribution is not available from OTEL standard attributes, so
-// ProjectSlug is left empty; the PreToolUse hook fallback supplies it.
+// ProjectSlug is left empty; the PreToolUse hook supplies it via the shared
+// tool_use_id.
 func parseOTLPSkillInvocations(data []byte) ([]state.Invocation, error) {
 	var payload otlpLogsPayload
 	if err := json.Unmarshal(data, &payload); err != nil {
 		return nil, fmt.Errorf("parse otlp logs: %w", err)
 	}
 
-	var invs []state.Invocation
+	type otelEvent struct {
+		event string
+		attrs map[string]string
+		rec   otlpLogRecord
+	}
+	var events []otelEvent
 	for _, rl := range payload.ResourceLogs {
 		resourceAttrs := attrMap(rl.Resource.Attributes)
 		for _, sl := range rl.ScopeLogs {
@@ -98,45 +112,105 @@ func parseOTLPSkillInvocations(data []byte) ([]state.Invocation, error) {
 						attrs[k] = v
 					}
 				}
-				if inv, ok := skillInvocationFromEvent(rec, attrs); ok {
-					invs = append(invs, inv)
-				}
+				events = append(events, otelEvent{event: eventName(rec, attrs), attrs: attrs, rec: rec})
 			}
+		}
+	}
+
+	// First pass: index Skill tool_result tool_use_ids by (prompt.id, skill) so
+	// a skill_activated can adopt the id of its corresponding tool call.
+	tuidByPromptSkill := map[string]string{}
+	for _, e := range events {
+		if !isToolResult(e.event) || !strings.EqualFold(e.attrs["tool_name"], "Skill") {
+			continue
+		}
+		skill := toolResultSkill(e.attrs)
+		tuid := e.attrs["tool_use_id"]
+		if skill == "" || tuid == "" {
+			continue
+		}
+		tuidByPromptSkill[bridgeKey(e.attrs["prompt.id"], skill)] = tuid
+	}
+
+	var invs []state.Invocation
+	adopted := map[string]bool{} // tool_use_ids represented by a skill_activated row
+	for _, e := range events {
+		switch {
+		case isSkillActivated(e.event):
+			skill := firstNonEmpty(e.attrs["skill.name"], e.attrs["skill_name"])
+			if skill == "" {
+				continue
+			}
+			tuid := tuidByPromptSkill[bridgeKey(e.attrs["prompt.id"], skill)]
+			if tuid != "" {
+				adopted[tuid] = true
+			}
+			invs = append(invs, state.Invocation{
+				SkillName: skill,
+				Harness:   firstNonEmpty(e.attrs["harness"], "claude"),
+				Trigger:   mapTrigger(e.attrs["invocation_trigger"]),
+				InvokedAt: deriveTimestamp(e.rec, e.attrs),
+				Source:    "otel",
+				ToolUseID: tuid,
+			})
+		case isToolResult(e.event) && strings.EqualFold(e.attrs["tool_name"], "Skill"):
+			skill := toolResultSkill(e.attrs)
+			tuid := e.attrs["tool_use_id"]
+			if skill == "" {
+				continue
+			}
+			// Skip if a skill_activated already represents this activation.
+			if tuid != "" && adopted[tuid] {
+				continue
+			}
+			invs = append(invs, state.Invocation{
+				SkillName: skill,
+				Harness:   firstNonEmpty(e.attrs["harness"], "claude"),
+				Trigger:   "", // tool_result carries no trigger
+				InvokedAt: deriveTimestamp(e.rec, e.attrs),
+				Source:    "otel",
+				ToolUseID: tuid,
+			})
 		}
 	}
 	return invs, nil
 }
 
-func skillInvocationFromEvent(rec otlpLogRecord, attrs map[string]string) (state.Invocation, bool) {
-	event := eventName(rec, attrs)
+func isSkillActivated(event string) bool {
+	return event == "skill_activated" || event == "claude_code.skill_activated"
+}
 
-	switch event {
-	case "tool_result", "claude_code.tool_result":
-		// recognized below
-	default:
-		return state.Invocation{}, false
-	}
-	if !strings.EqualFold(attrs["tool_name"], "Skill") {
-		return state.Invocation{}, false
-	}
-	skill := firstNonEmpty(
+func isToolResult(event string) bool {
+	return event == "tool_result" || event == "claude_code.tool_result"
+}
+
+func toolResultSkill(attrs map[string]string) string {
+	return firstNonEmpty(
 		attrs["skill_name"],
 		attrs["skill.name"],
 		jsonField(attrs["tool_parameters"], "skill_name", "skill", "name"),
 		jsonField(attrs["tool_input"], "skill_name", "skill", "name"),
 	)
-	if skill == "" {
-		return state.Invocation{}, false
-	}
+}
 
-	return state.Invocation{
-		SkillName: skill,
-		Harness:   firstNonEmpty(attrs["harness"], "claude"),
-		Trigger:   deriveTrigger(attrs),
-		InvokedAt: deriveTimestamp(rec, attrs),
-		Source:    "otel",
-		ToolUseID: attrs["tool_use_id"],
-	}, true
+func bridgeKey(promptID, skill string) string {
+	return promptID + "\x00" + skill
+}
+
+// mapTrigger normalizes Claude Code's invocation_trigger values
+// (user-slash | claude-proactive | nested-skill) to the invocations table
+// taxonomy (user-initiated | proactive | nested). Unknown values pass through.
+func mapTrigger(trigger string) string {
+	switch trigger {
+	case "user-slash":
+		return "user-initiated"
+	case "claude-proactive":
+		return "proactive"
+	case "nested-skill":
+		return "nested"
+	default:
+		return trigger
+	}
 }
 
 // eventName resolves the logical event name from the OTLP eventName field, the
@@ -149,20 +223,6 @@ func eventName(rec otlpLogRecord, attrs map[string]string) string {
 		return n
 	}
 	return rec.Body.asString()
-}
-
-// deriveTrigger maps available attributes to the invocation trigger taxonomy.
-// Claude Code does not emit an explicit trigger today, so we honor an explicit
-// attribute when present and otherwise infer "nested" for subagent-issued
-// events, defaulting to "user-initiated".
-func deriveTrigger(attrs map[string]string) string {
-	if t := firstNonEmpty(attrs["invocation_trigger"], attrs["trigger"]); t != "" {
-		return t
-	}
-	if firstNonEmpty(attrs["agent.name"], attrs["agent_id"], attrs["subagent_type"]) != "" {
-		return "nested"
-	}
-	return "user-initiated"
 }
 
 // deriveTimestamp prefers the ISO-8601 event.timestamp attribute, falling back

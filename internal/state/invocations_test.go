@@ -46,41 +46,44 @@ func TestRecordInvocationAndMatrix(t *testing.T) {
 	}
 }
 
-func TestRecordInvocationDedupesByToolUseID(t *testing.T) {
+func TestRecordInvocationMergesByToolUseID(t *testing.T) {
 	db, err := Open(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer db.Close()
 
-	// The PreToolUse hook fires first (project-attributed)...
+	// The PreToolUse hook fires first (project, no trigger)...
 	if err := db.RecordInvocation(Invocation{
 		SkillName: "brainstorming", ProjectSlug: "proj-a", Harness: "claude",
-		Trigger: "user-initiated", Source: "hook", ToolUseID: "toolu_123",
+		Source: "hook", ToolUseID: "toolu_123",
 	}); err != nil {
 		t.Fatal(err)
 	}
-	// ...then the OTEL tool_result arrives for the same activation (no project).
-	written, err := db.RecordInvocations([]Invocation{
-		{SkillName: "brainstorming", Harness: "claude", Trigger: "user-initiated", Source: "otel", ToolUseID: "toolu_123"},
-	})
-	if err != nil {
+	// ...then the OTEL row arrives for the same activation (trigger, no project).
+	if _, err := db.RecordInvocations([]Invocation{
+		{SkillName: "brainstorming", Harness: "claude", Trigger: "proactive", Source: "otel", ToolUseID: "toolu_123"},
+	}); err != nil {
 		t.Fatal(err)
-	}
-	if written != 0 {
-		t.Fatalf("written = %d, want 0 (deduped against existing tool_use_id)", written)
 	}
 
 	cells, err := db.UsageMatrix()
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Exactly one cell, and it keeps the project-attributed hook row.
+	// One merged cell, keeping the project from the hook.
 	if len(cells) != 1 {
-		t.Fatalf("cells = %+v, want 1 (deduped)", cells)
+		t.Fatalf("cells = %+v, want 1 (merged)", cells)
 	}
 	if cells[0].ProjectSlug != "proj-a" || cells[0].Count != 1 {
 		t.Fatalf("cell = %+v, want proj-a count 1", cells[0])
+	}
+	var trigger string
+	if err := db.QueryRow(`SELECT trigger FROM invocations`).Scan(&trigger); err != nil {
+		t.Fatal(err)
+	}
+	if trigger != "proactive" {
+		t.Fatalf("trigger = %q, want proactive (enriched from OTEL)", trigger)
 	}
 }
 

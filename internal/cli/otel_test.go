@@ -9,55 +9,58 @@ import (
 	"github.com/Flow-Forge-Lab-Team/skills-manager/internal/state"
 )
 
-// sampleOTLPLogs is a representative OTLP/JSON logs export carrying a mix of
-// Claude Code events: two Skill tool_result events, a non-Skill tool_result
-// (ignored), a non-tool_result event (ignored — only tool_result is canonical),
-// and a Skill event whose skill name is buried in tool_parameters JSON.
+// sampleOTLPLogs exercises the three OTEL shapes the receiver must handle:
+//   - a skill_activated (user-slash) plus its matching Skill tool_result sharing
+//     prompt.id "p1" + skill "brainstorming" → counted once, tool_use_id adopted.
+//   - a skill_activated (claude-proactive) for a /-command "debugging" with no
+//     tool_result → counted once, no tool_use_id.
+//   - a Skill tool_result "verification" with no skill_activated → counted once.
+//   - a non-Skill tool_result (Bash) → ignored.
 const sampleOTLPLogs = `{
   "resourceLogs": [
     {
-      "resource": {
-        "attributes": [
-          {"key": "terminal.type", "value": {"stringValue": "iTerm.app"}}
-        ]
-      },
+      "resource": {"attributes": [{"key": "terminal.type", "value": {"stringValue": "iTerm.app"}}]},
       "scopeLogs": [
         {
           "logRecords": [
             {
-              "timeUnixNano": "1747000000000000000",
               "attributes": [
-                {"key": "event.name", "value": {"stringValue": "tool_result"}},
-                {"key": "tool_name", "value": {"stringValue": "Skill"}},
-                {"key": "skill_name", "value": {"stringValue": "brainstorming"}},
+                {"key": "event.name", "value": {"stringValue": "skill_activated"}},
+                {"key": "prompt.id", "value": {"stringValue": "p1"}},
+                {"key": "skill.name", "value": {"stringValue": "brainstorming"}},
+                {"key": "invocation_trigger", "value": {"stringValue": "user-slash"}},
                 {"key": "event.timestamp", "value": {"stringValue": "2026-05-12T09:00:00Z"}}
               ]
             },
             {
               "attributes": [
                 {"key": "event.name", "value": {"stringValue": "tool_result"}},
+                {"key": "prompt.id", "value": {"stringValue": "p1"}},
                 {"key": "tool_name", "value": {"stringValue": "Skill"}},
-                {"key": "skill_name", "value": {"stringValue": "brainstorming"}}
+                {"key": "skill_name", "value": {"stringValue": "brainstorming"}},
+                {"key": "tool_use_id", "value": {"stringValue": "toolu_1"}}
+              ]
+            },
+            {
+              "attributes": [
+                {"key": "event.name", "value": {"stringValue": "skill_activated"}},
+                {"key": "prompt.id", "value": {"stringValue": "p2"}},
+                {"key": "skill.name", "value": {"stringValue": "debugging"}},
+                {"key": "invocation_trigger", "value": {"stringValue": "claude-proactive"}}
+              ]
+            },
+            {
+              "attributes": [
+                {"key": "event.name", "value": {"stringValue": "tool_result"}},
+                {"key": "tool_name", "value": {"stringValue": "Skill"}},
+                {"key": "tool_parameters", "value": {"stringValue": "{\"skill_name\":\"verification\"}"}},
+                {"key": "tool_use_id", "value": {"stringValue": "toolu_3"}}
               ]
             },
             {
               "attributes": [
                 {"key": "event.name", "value": {"stringValue": "tool_result"}},
                 {"key": "tool_name", "value": {"stringValue": "Bash"}}
-              ]
-            },
-            {
-              "attributes": [
-                {"key": "event.name", "value": {"stringValue": "api_request"}},
-                {"key": "skill.name", "value": {"stringValue": "debugging"}}
-              ]
-            },
-            {
-              "attributes": [
-                {"key": "event.name", "value": {"stringValue": "tool_result"}},
-                {"key": "tool_name", "value": {"stringValue": "Skill"}},
-                {"key": "agent.name", "value": {"stringValue": "code-reviewer"}},
-                {"key": "tool_parameters", "value": {"stringValue": "{\"skill_name\":\"verification\"}"}}
               ]
             }
           ]
@@ -66,6 +69,15 @@ const sampleOTLPLogs = `{
     }
   ]
 }`
+
+func findInv(invs []state.Invocation, skill string) (state.Invocation, bool) {
+	for _, inv := range invs {
+		if inv.SkillName == skill {
+			return inv, true
+		}
+	}
+	return state.Invocation{}, false
+}
 
 func TestParseOTLPSkillInvocations(t *testing.T) {
 	invs, err := parseOTLPSkillInvocations([]byte(sampleOTLPLogs))
@@ -76,39 +88,45 @@ func TestParseOTLPSkillInvocations(t *testing.T) {
 		t.Fatalf("got %d invocations, want 3: %+v", len(invs), invs)
 	}
 
-	// First record keeps its explicit ISO timestamp and defaults harness/trigger.
-	if invs[0].SkillName != "brainstorming" || invs[0].Harness != "claude" ||
-		invs[0].Trigger != "user-initiated" || invs[0].InvokedAt != "2026-05-12T09:00:00Z" ||
-		invs[0].Source != "otel" {
-		t.Fatalf("invs[0] = %+v", invs[0])
+	// skill_activated bridged to its tool_result: counted once, adopts tool_use_id,
+	// maps user-slash -> user-initiated, keeps its timestamp and default harness.
+	b, ok := findInv(invs, "brainstorming")
+	if !ok || b.ToolUseID != "toolu_1" || b.Trigger != "user-initiated" ||
+		b.InvokedAt != "2026-05-12T09:00:00Z" || b.Harness != "claude" || b.Source != "otel" {
+		t.Fatalf("brainstorming = %+v", b)
 	}
-	// The non-tool_result event (api_request) is ignored.
-	for _, inv := range invs {
-		if inv.SkillName == "debugging" {
-			t.Fatalf("debugging should be ignored (only tool_result is canonical): %+v", invs)
-		}
+	// /-command: skill_activated only, no tool_use_id, claude-proactive -> proactive.
+	d, ok := findInv(invs, "debugging")
+	if !ok || d.ToolUseID != "" || d.Trigger != "proactive" {
+		t.Fatalf("debugging = %+v", d)
 	}
-	// Skill name dug out of tool_parameters JSON; subagent => nested trigger.
-	if invs[2].SkillName != "verification" || invs[2].Trigger != "nested" {
-		t.Fatalf("invs[2] = %+v, want verification/nested", invs[2])
+	// tool_result with no skill_activated: still counted, no trigger.
+	v, ok := findInv(invs, "verification")
+	if !ok || v.ToolUseID != "toolu_3" || v.Trigger != "" {
+		t.Fatalf("verification = %+v", v)
 	}
 	// OTEL cannot attribute a project.
-	for i, inv := range invs {
+	for _, inv := range invs {
 		if inv.ProjectSlug != "" {
-			t.Fatalf("invs[%d] has project %q, want empty for OTEL source", i, inv.ProjectSlug)
+			t.Fatalf("inv %q has project %q, want empty for OTEL", inv.SkillName, inv.ProjectSlug)
 		}
 	}
 }
 
-func TestParseOTLPDerivesTimestampFromNanos(t *testing.T) {
+func TestParseOTLPNoDoubleCountForBridgedActivation(t *testing.T) {
 	invs, err := parseOTLPSkillInvocations([]byte(sampleOTLPLogs))
 	if err != nil {
 		t.Fatal(err)
 	}
-	// invs[0] came from timeUnixNano-less? No: first has event.timestamp.
-	// The second record has no timestamp at all -> empty, defaulted on write.
-	if invs[1].InvokedAt != "" {
-		t.Fatalf("invs[1].InvokedAt = %q, want empty (defaulted at write time)", invs[1].InvokedAt)
+	// brainstorming has both a skill_activated and a tool_result; it must appear once.
+	n := 0
+	for _, inv := range invs {
+		if inv.SkillName == "brainstorming" {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Fatalf("brainstorming appeared %d times, want 1 (bridged, not double-counted)", n)
 	}
 }
 
@@ -147,14 +165,75 @@ func TestOTELReceiverEndToEnd(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Expect: brainstorming x2 (one cell, count 2), verification x1. The
-	// non-tool_result event contributes nothing.
 	counts := map[string]int{}
 	for _, c := range cells {
 		counts[c.SkillName] += c.Count
 	}
-	if counts["brainstorming"] != 2 || counts["verification"] != 1 || counts["debugging"] != 0 {
+	if counts["brainstorming"] != 1 || counts["debugging"] != 1 || counts["verification"] != 1 {
 		t.Fatalf("counts = %+v", counts)
+	}
+}
+
+// TestUsageEnrichmentBothFeeds verifies the "hook primary + OTEL enrich" model:
+// the hook supplies the project, OTEL skill_activated supplies the trigger, and
+// the shared tool_use_id merges them into a single counted row — regardless of
+// which feed arrives first.
+func TestUsageEnrichmentBothFeeds(t *testing.T) {
+	cases := []struct {
+		name      string
+		hookFirst bool
+	}{
+		{"hook-then-otel", true},
+		{"otel-then-hook", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			db, err := state.Open(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer db.Close()
+
+			hook := state.Invocation{SkillName: "brainstorming", ProjectSlug: "proj-a", Harness: "claude", Source: "hook", ToolUseID: "toolu_X"}
+			otel := state.Invocation{SkillName: "brainstorming", Harness: "claude", Trigger: "proactive", Source: "otel", ToolUseID: "toolu_X"}
+
+			if tc.hookFirst {
+				if err := db.RecordInvocation(hook); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := db.RecordInvocations([]state.Invocation{otel}); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				if _, err := db.RecordInvocations([]state.Invocation{otel}); err != nil {
+					t.Fatal(err)
+				}
+				if err := db.RecordInvocation(hook); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			cells, err := db.UsageMatrix()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(cells) != 1 {
+				t.Fatalf("cells = %+v, want 1 merged row", cells)
+			}
+			if cells[0].ProjectSlug != "proj-a" || cells[0].Count != 1 {
+				t.Fatalf("cell = %+v, want proj-a count 1", cells[0])
+			}
+			var project, trigger, source string
+			if err := db.QueryRow(`SELECT project_slug, trigger, source FROM invocations`).Scan(&project, &trigger, &source); err != nil {
+				t.Fatal(err)
+			}
+			if project != "proj-a" || trigger != "proactive" {
+				t.Fatalf("merged row project=%q trigger=%q, want proj-a/proactive", project, trigger)
+			}
+			if !strings.Contains(source, "hook") || !strings.Contains(source, "otel") {
+				t.Fatalf("merged source = %q, want both feeds", source)
+			}
+		})
 	}
 }
 

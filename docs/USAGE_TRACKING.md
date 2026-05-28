@@ -14,26 +14,35 @@ There is no daemon. Usage is fed by two opt-in sources, either or both:
 | Claude Code OTEL | `skills-manager usage receiver` | No (OTEL carries no cwd) | Claude Code |
 | PreToolUse hook | `skills-manager usage hook` | Yes (from the hook `cwd`) | Claude Code |
 
-The OTEL receiver gives low-friction, cross-session capture but cannot say
-*which project* a skill ran in. The PreToolUse hook fills that gap: it runs in
-the project directory and sees the working directory, so it attributes the
-project slug. Run both for the most complete matrix.
+The two feeds are **complementary**, with the hook as the primary counter:
 
-### Deduplication
+- The **OTEL receiver** parses `claude_code.skill_activated` — the canonical
+  event that fires for both Skill-tool calls and `/`-command invocations and
+  carries the real `invocation_trigger`. But OTEL has no working directory, so
+  it cannot attribute a project.
+- The **PreToolUse hook** runs in the project directory, so it supplies the
+  project slug. It only sees the Skill *tool*, not `/`-commands, and cannot
+  observe the trigger.
 
-Running both feeds does **not** double-count. The OTEL `tool_result` event and
-the PreToolUse hook carry the same `tool_use_id`, which is recorded with each
-row and constrained by a unique index. The hook fires first (before the tool
-runs) and wins, so the surviving row keeps the project attribution; the later
-OTEL row for the same activation is ignored. Rows without a `tool_use_id`
-(manual or watcher entries) are exempt from the constraint and never collide.
+Run both: the hook gives you per-project counts, OTEL enriches each row with the
+trigger and additionally captures `/`-command invocations the hook never sees.
 
-> A note on the spec: earlier design notes referenced a `claude_code.skill_activated`
-> OTEL event with an `invocation_trigger` attribute. Claude Code does not emit
-> that event. Skill activation is instead observable on the real
-> `claude_code.tool_result` event (`tool_name="Skill"`, with `skill_name` in the
-> tool parameters when `OTEL_LOG_TOOL_DETAILS=1`), which the receiver parses as
-> the single canonical signal per activation.
+### How the feeds merge (no double-counting)
+
+`skill_activated` has no `tool_use_id`, but the matching Skill `tool_result`
+event does, and the two share a `prompt.id` + skill name. The receiver bridges
+them: a `skill_activated` adopts its `tool_result`'s `tool_use_id` (and the
+standalone `tool_result` is then dropped, so the activation is counted once).
+The PreToolUse hook carries the same `tool_use_id`. Rows are merged on it by a
+partial unique index: **project comes from the hook, trigger comes from OTEL**,
+and the result is one enriched row regardless of which feed arrives first. Rows
+without a `tool_use_id` (a `/`-command, or manual/watcher entries) are exempt
+and counted independently.
+
+Because the bridge correlates events within an export batch, a `skill_activated`
+and its `tool_result` that land in different OTEL flushes (rare; both occur
+within one tool execution and the default flush is 5s) may not merge and could
+count twice against the hook. This is a best-effort triage signal, not billing.
 
 ## OTEL receiver
 
@@ -55,9 +64,11 @@ The receiver speaks OTLP/HTTP JSON. It accepts a POST of an
 `ExportLogsServiceRequest` at `/v1/logs`, extracts skill activations, writes
 them with `source = otel`, and returns `{}` (all-accepted).
 
-The `trigger` is taken from an explicit `invocation_trigger`/`trigger`
-attribute when present; otherwise it is inferred as `nested` for
-subagent-issued events and `user-initiated` for everything else.
+`OTEL_LOG_TOOL_DETAILS=1` is required: without it Claude Code reports
+user-defined and third-party skill names as the placeholder `custom_skill`. The
+`invocation_trigger` values (`user-slash`, `claude-proactive`, `nested-skill`)
+are normalized to the table's taxonomy (`user-initiated`, `proactive`,
+`nested`).
 
 ## PreToolUse hook (recommended for project attribution)
 

@@ -192,7 +192,7 @@ func runUsageHook(args []string, stdout, stderr io.Writer, gf globalFlags) int {
 		SkillName:   skill,
 		ProjectSlug: project,
 		Harness:     "claude",
-		Trigger:     "user-initiated",
+		Trigger:     "", // the hook can't observe the trigger; OTEL skill_activated enriches it
 		Source:      "hook",
 		ToolUseID:   payload.ToolUseID,
 	}); err != nil {
