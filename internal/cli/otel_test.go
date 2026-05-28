@@ -158,6 +158,37 @@ func TestParseOTLPPairsRepeatedSameSkillInPrompt(t *testing.T) {
 	}
 }
 
+func TestParseOTLPDoesNotPairStaleEarlierResult(t *testing.T) {
+	// A batch boundary places an earlier call's tool_result (seq 10) in the same
+	// payload as a later same-skill activation (seq 20) whose own tool_result
+	// (seq 21) is also present. The activation must pair with the result that
+	// follows it (tB, seq 21), never the stale earlier one (tA, seq 10).
+	const payload = `{"resourceLogs":[{"scopeLogs":[{"logRecords":[
+	  {"attributes":[{"key":"event.name","value":{"stringValue":"tool_result"}},{"key":"event.sequence","value":{"stringValue":"10"}},{"key":"prompt.id","value":{"stringValue":"p1"}},{"key":"tool_name","value":{"stringValue":"Skill"}},{"key":"skill_name","value":{"stringValue":"brainstorming"}},{"key":"tool_use_id","value":{"stringValue":"tA"}}]},
+	  {"attributes":[{"key":"event.name","value":{"stringValue":"skill_activated"}},{"key":"event.sequence","value":{"stringValue":"20"}},{"key":"prompt.id","value":{"stringValue":"p1"}},{"key":"skill.name","value":{"stringValue":"brainstorming"}},{"key":"invocation_trigger","value":{"stringValue":"claude-proactive"}}]},
+	  {"attributes":[{"key":"event.name","value":{"stringValue":"tool_result"}},{"key":"event.sequence","value":{"stringValue":"21"}},{"key":"prompt.id","value":{"stringValue":"p1"}},{"key":"tool_name","value":{"stringValue":"Skill"}},{"key":"skill_name","value":{"stringValue":"brainstorming"}},{"key":"tool_use_id","value":{"stringValue":"tB"}}]}
+	]}]}]}`
+
+	invs, err := parseOTLPSkillInvocations([]byte(payload))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var activation, standalone state.Invocation
+	for _, inv := range invs {
+		if inv.Trigger == "proactive" {
+			activation = inv
+		} else {
+			standalone = inv
+		}
+	}
+	if activation.ToolUseID != "tB" {
+		t.Fatalf("activation paired with %q, want tB (the result that follows it)", activation.ToolUseID)
+	}
+	if standalone.ToolUseID != "tA" {
+		t.Fatalf("stale earlier result = %q, want tA emitted standalone", standalone.ToolUseID)
+	}
+}
+
 func TestParseOTLPInvalidJSON(t *testing.T) {
 	if _, err := parseOTLPSkillInvocations([]byte("not json")); err == nil {
 		t.Fatal("expected error for invalid JSON")

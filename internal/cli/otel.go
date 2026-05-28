@@ -97,6 +97,7 @@ func parseOTLPSkillInvocations(data []byte) ([]state.Invocation, error) {
 		event string
 		attrs map[string]string
 		rec   otlpLogRecord
+		order int // event.sequence when present, else flattened payload index
 	}
 	var events []otelEvent
 	for _, rl := range payload.ResourceLogs {
@@ -111,16 +112,22 @@ func parseOTLPSkillInvocations(data []byte) ([]state.Invocation, error) {
 						attrs[k] = v
 					}
 				}
-				events = append(events, otelEvent{event: eventName(rec, attrs), attrs: attrs, rec: rec})
+				order := len(events)
+				if seq, err := strconv.Atoi(attrs["event.sequence"]); err == nil {
+					order = seq
+				}
+				events = append(events, otelEvent{event: eventName(rec, attrs), attrs: attrs, rec: rec, order: order})
 			}
 		}
 	}
 
-	// First pass: collect Skill tool_result tool_use_ids in order, keyed by
-	// (prompt.id, skill), so a skill_activated can adopt the id of its
-	// corresponding tool call. A FIFO queue per key pairs repeated invocations
-	// of the same skill within one prompt 1:1 rather than overwriting.
-	tuidsByPromptSkill := map[string][]string{}
+	// First pass: collect Skill tool_result candidates keyed by (prompt.id,
+	// skill), each tagged with its order. A skill_activated adopts the earliest
+	// unconsumed tool_result that occurs *after* it (by event.sequence). This
+	// pairs repeated same-skill invocations in a prompt 1:1 and avoids matching
+	// an activation to a stale earlier tool_result when a batch boundary places
+	// them together.
+	candidatesByPromptSkill := map[string][]*tuidCandidate{}
 	for _, e := range events {
 		if !isToolResult(e.event) || !strings.EqualFold(e.attrs["tool_name"], "Skill") {
 			continue
@@ -131,11 +138,10 @@ func parseOTLPSkillInvocations(data []byte) ([]state.Invocation, error) {
 			continue
 		}
 		key := bridgeKey(e.attrs["prompt.id"], skill)
-		tuidsByPromptSkill[key] = append(tuidsByPromptSkill[key], tuid)
+		candidatesByPromptSkill[key] = append(candidatesByPromptSkill[key], &tuidCandidate{tuid: tuid, order: e.order})
 	}
 
 	var invs []state.Invocation
-	consumed := map[string]int{} // per-key index into the tool_use_id queue
 	adopted := map[string]bool{} // tool_use_ids represented by a skill_activated row
 	for _, e := range events {
 		switch {
@@ -146,9 +152,9 @@ func parseOTLPSkillInvocations(data []byte) ([]state.Invocation, error) {
 			}
 			key := bridgeKey(e.attrs["prompt.id"], skill)
 			tuid := ""
-			if queue := tuidsByPromptSkill[key]; consumed[key] < len(queue) {
-				tuid = queue[consumed[key]]
-				consumed[key]++
+			if c := nextCandidateAfter(candidatesByPromptSkill[key], e.order); c != nil {
+				c.consumed = true
+				tuid = c.tuid
 				adopted[tuid] = true
 			}
 			invs = append(invs, state.Invocation{
@@ -201,6 +207,30 @@ func toolResultSkill(attrs map[string]string) string {
 
 func bridgeKey(promptID, skill string) string {
 	return promptID + "\x00" + skill
+}
+
+// tuidCandidate is a Skill tool_result available to be paired with a
+// skill_activated event during OTEL correlation.
+type tuidCandidate struct {
+	tuid     string
+	order    int
+	consumed bool
+}
+
+// nextCandidateAfter returns the earliest unconsumed tool_result candidate whose
+// order is strictly greater than the activation's order (so we never pair an
+// activation to a tool_result that preceded it).
+func nextCandidateAfter(candidates []*tuidCandidate, activationOrder int) *tuidCandidate {
+	var best *tuidCandidate
+	for _, c := range candidates {
+		if c.consumed || c.order <= activationOrder {
+			continue
+		}
+		if best == nil || c.order < best.order {
+			best = c
+		}
+	}
+	return best
 }
 
 // mapTrigger normalizes Claude Code's invocation_trigger values
