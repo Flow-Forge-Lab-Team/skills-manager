@@ -256,6 +256,11 @@ func collectProblems(home, libraryPath string, cat catalog) []string {
 		}
 	}
 
+	// stale variants: canonical SKILL.md changed since the ports were generated
+	for _, skill := range staleVariantSkills(libraryPath) {
+		problems = append(problems, fmt.Sprintf("stale variants for %q (canonical changed since last port); re-port with the skills-port skill, then `skills-manager variants %s --refresh`", skill, skill))
+	}
+
 	return problems
 }
 

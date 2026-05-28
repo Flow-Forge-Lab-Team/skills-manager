@@ -582,6 +582,7 @@ func runInstall(args []string, realStdout io.Writer, stderr io.Writer, syncMode 
 		for _, targetBase := range targetBases(candidate.Harnesses) {
 			relTarget := filepath.ToSlash(filepath.Join(targetBase, candidate.Skill.Name))
 			target := filepath.Join(projectPath, relTarget)
+			variantHarnesses := harnessesForBase(candidate.Harnesses, targetBase)
 			if opts.dryRun {
 				if _, err := os.Stat(target); err == nil {
 					if _, ok := managed[relTarget]; !ok {
@@ -605,11 +606,19 @@ func runInstall(args []string, realStdout io.Writer, stderr io.Writer, syncMode 
 					fmt.Fprintf(stderr, "stat %s: %v\n", relTarget, err)
 					return 3
 				}
+				// Reaching here means the dry run would copy: preflight the
+				// variant so a missing/bad one surfaces instead of a false green.
+				if err := validateVariantForHarnesses(src, variantHarnesses); err != nil {
+					fmt.Fprintf(stderr, "install %s: %v\n", relTarget, err)
+					return 3
+				}
 				fmt.Fprintf(stdout, "  copy %s -> %s\n", candidate.Skill.Name, relTarget)
 				continue
 			}
 
-			wrote, err := installSkillCopy(src, target, relTarget, manifest, managed)
+			wrote, err := installSkillCopy(src, target, relTarget, manifest, managed, func() error {
+				return validateVariantForHarnesses(src, variantHarnesses)
+			})
 			if err != nil {
 				if errors.Is(err, errUnmanagedTarget) || errors.Is(err, errLocallyEditedTarget) {
 					preserved[relTarget] = true
@@ -629,6 +638,13 @@ func runInstall(args []string, realStdout io.Writer, stderr io.Writer, syncMode 
 				return 3
 			}
 			if wrote {
+				// Pick the per-harness ported variant (if any) for this target
+				// base before fingerprinting, so the harness sees a single
+				// SKILL.md and the manifest records the final state.
+				if err := applyVariantToTarget(src, target, harnessesForBase(candidate.Harnesses, targetBase)); err != nil {
+					fmt.Fprintf(stderr, "apply variant for %s: %v\n", relTarget, err)
+					return 3
+				}
 				installed++
 				installedSkillSet[candidate.Skill.Name] = true
 				managed[relTarget] = true
@@ -1668,7 +1684,13 @@ var (
 	errLocallyEditedTarget = errors.New("manager-owned copy has local edits")
 )
 
-func installSkillCopy(src string, target string, relTarget string, manifest installManifest, managed map[string]bool) (bool, error) {
+// installSkillCopy copies src→target, returning errUnmanagedTarget /
+// errLocallyEditedTarget for targets that should be preserved (no change). The
+// optional preCopy hook runs only once the target is confirmed writable but
+// before it is destructively replaced — so a failing check (e.g. a missing
+// variant) leaves the existing target intact rather than half-replaced, and is
+// never invoked for preserved targets.
+func installSkillCopy(src string, target string, relTarget string, manifest installManifest, managed map[string]bool, preCopy func() error) (bool, error) {
 	if _, err := os.Stat(src); err != nil {
 		return false, err
 	}
@@ -1686,11 +1708,22 @@ func installSkillCopy(src string, target string, relTarget string, manifest inst
 				return false, errLocallyEditedTarget
 			}
 		}
+		if preCopy != nil {
+			if err := preCopy(); err != nil {
+				return false, err
+			}
+		}
 		if err := os.RemoveAll(target); err != nil {
 			return false, err
 		}
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return false, err
+	} else {
+		if preCopy != nil {
+			if err := preCopy(); err != nil {
+				return false, err
+			}
+		}
 	}
 	if err := copyDir(src, target); err != nil {
 		return false, err
