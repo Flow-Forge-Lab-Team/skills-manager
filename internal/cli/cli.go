@@ -97,6 +97,10 @@ func Run(args []string, stdout io.Writer, stderr io.Writer) int {
 		code = runSyncLibrary(cmdArgs, stdout, stderr, gf)
 	case "machines":
 		code = runMachines(cmdArgs, stdout, stderr, gf)
+	case "setup-schedule":
+		code = runSetupSchedule(cmdArgs, stdout, stderr, gf)
+	case "unschedule":
+		code = runUnschedule(cmdArgs, stdout, stderr, gf)
 	default:
 		fmt.Fprintf(stderr, "unknown argument: %s\n", cmd)
 		fmt.Fprintln(stderr, "Usage: skills-manager <command>")
