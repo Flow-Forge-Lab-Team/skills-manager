@@ -165,3 +165,27 @@ func TestVariantPathTraversalIsRejected(t *testing.T) {
 		t.Fatalf("unsafe override should be ignored, got %q", got)
 	}
 }
+
+func TestCompileFailsOnMissingDeclaredVariant(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+	libraryPath := filepath.Join(home, "library")
+	skillDir := filepath.Join(libraryPath, "ruler")
+	writeFile(t, filepath.Join(skillDir, "SKILL.md"), "---\nname: ruler\ndescription: c\n---\nCANONICAL\n")
+	// Declares a cursor variant file that does not exist.
+	writeFile(t, filepath.Join(skillDir, ".variants.yaml"), "version: 1\noverrides:\n  cursor: SKILL.cursor.md\ncanonical_fingerprint: x\n")
+	cat := catalog{Version: 1, Skills: []catalogSkill{{Name: "ruler", Tags: []string{"go"}}}}
+	if err := writeCatalog(filepath.Join(libraryPath, "catalog.yaml"), cat); err != nil {
+		t.Fatal(err)
+	}
+	projectPath := filepath.Join(home, "proj")
+	writeFile(t, filepath.Join(projectPath, ".skills", "installed.lock"), "version: 1\nskills:\n  - name: ruler\n")
+
+	if _, err := compileForHarness(home, projectPath, "cursor", ""); err == nil || !strings.Contains(err.Error(), "missing") {
+		t.Fatalf("expected missing-variant error, got %v", err)
+	}
+	// And it must not have silently written canonical content.
+	if _, err := os.Stat(filepath.Join(projectPath, ".cursor", "rules", "ruler.mdc")); !os.IsNotExist(err) {
+		t.Fatal("no rule should be written when a declared variant is missing")
+	}
+}

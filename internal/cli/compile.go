@@ -194,9 +194,16 @@ func loadCompiledRules(home, projectPath, harness, configPath string) ([]compile
 	libraryPath := filepath.Join(home, "library")
 	var rules []compiledRule
 	for _, name := range names {
-		rule, err := buildCompiledRule(filepath.Join(libraryPath, name, "SKILL.md"), name, tagsByName[name], harness)
+		skillMd := filepath.Join(libraryPath, name, "SKILL.md")
+		rule, err := buildCompiledRule(skillMd, name, tagsByName[name], harness)
 		if err != nil {
-			continue // skip skills we can't read; don't fail the whole compile
+			// A skill whose canonical SKILL.md is unreadable is skipped for
+			// robustness, but a declared-but-missing variant is a real
+			// misconfiguration we surface.
+			if !pathExists(skillMd) {
+				continue
+			}
+			return nil, err
 		}
 		rules = append(rules, rule)
 	}
@@ -276,9 +283,13 @@ func buildCompiledRule(skillMd, name string, catalogTags []string, harness strin
 	skillDir := filepath.Dir(skillMd)
 	if vf, ok, _ := readVariants(skillDir); ok {
 		if chosen := selectVariantFile(vf, []string{harness}); chosen != "" && chosen != "SKILL.md" {
-			if candidate := filepath.Join(skillDir, chosen); pathExists(candidate) {
-				skillMd = candidate
+			candidate := filepath.Join(skillDir, chosen)
+			if !pathExists(candidate) {
+				// A declared variant that's gone (bad sync / deletion) must fail
+				// loudly rather than silently emitting the unported canonical.
+				return compiledRule{}, fmt.Errorf("declared %s variant %q for %q is missing", harness, chosen, name)
 			}
+			skillMd = candidate
 		}
 	}
 	data, err := os.ReadFile(skillMd)
