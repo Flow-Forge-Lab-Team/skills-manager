@@ -725,6 +725,15 @@ func runInstall(args []string, realStdout io.Writer, stderr io.Writer, syncMode 
 		partial = true
 	}
 
+	// Regenerate the project AGENTS.md generated block from installed skills.
+	// Best-effort: assembly failures must not fail an otherwise-successful
+	// install/sync.
+	if !opts.dryRun {
+		if _, _, err := assembleAgentsMd(home, projectPath); err != nil {
+			fmt.Fprintf(stderr, "warning: regenerate AGENTS.md: %v\n", err)
+		}
+	}
+
 	exit := ExitSuccess
 	switch {
 	case blocked > 0 && installed > 0:
