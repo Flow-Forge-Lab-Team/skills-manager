@@ -226,11 +226,28 @@ func projectCompileSkills(projectPath, configPath string, cat catalog, harness s
 	}
 	var names []string
 	for _, c := range selectInstallCandidates(cat, cfg, "") {
-		if len(compatibleHarnesses(c.Skill.Compatibility, []string{harness})) > 0 {
-			names = append(names, c.Skill.Name)
+		if len(compatibleHarnesses(c.Skill.Compatibility, []string{harness})) == 0 {
+			continue
 		}
+		// Mirror install's blocking: don't compile rules for a skill whose
+		// required tools/MCP/credentials/model/runtimes are unmet — install
+		// would have refused it.
+		if skillHasUnmetRequirements(c.Skill.Requirements) {
+			continue
+		}
+		names = append(names, c.Skill.Name)
 	}
 	return names, nil
+}
+
+// skillHasUnmetRequirements reports whether any required dependency is missing,
+// matching the conditions under which install blocks a skill.
+func skillHasUnmetRequirements(req requirements) bool {
+	return len(missingRequiredTools(req)) > 0 ||
+		len(missingRequiredMCPServers(req)) > 0 ||
+		len(missingModelCapabilities(req)) > 0 ||
+		len(missingRequiredCredentials(req)) > 0 ||
+		len(missingRequiredScriptRuntimes(req)) > 0
 }
 
 // buildCompiledRule parses a SKILL.md into the neutral rule, applying tag-based

@@ -246,6 +246,37 @@ func TestCompileCursorPrunesStaleRules(t *testing.T) {
 	}
 }
 
+func TestCompileMatchFallbackSkipsUnmetRequirements(t *testing.T) {
+	// A cursor-only match-fallback skill whose required tool is missing must not
+	// be compiled — install would have blocked it.
+	home := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+	libraryPath := filepath.Join(home, "library")
+	writeFile(t, filepath.Join(libraryPath, "ok-skill", "SKILL.md"), "---\nname: ok-skill\ndescription: ok\n---\nbody\n")
+	writeFile(t, filepath.Join(libraryPath, "needs-tool", "SKILL.md"), "---\nname: needs-tool\ndescription: needs\n---\nbody\n")
+	cat := catalog{Version: 1, Skills: []catalogSkill{
+		{Name: "ok-skill", Tags: []string{"go"}},
+		{Name: "needs-tool", Tags: []string{"go"}, Requirements: requirements{Tools: []toolRequirement{{Name: "definitely-not-a-real-binary-xyz", Required: true}}}},
+	}}
+	if err := writeCatalog(filepath.Join(libraryPath, "catalog.yaml"), cat); err != nil {
+		t.Fatal(err)
+	}
+	projectPath := filepath.Join(home, "proj")
+	// cursor-only, no lock → match fallback.
+	writeFile(t, filepath.Join(projectPath, ".skills", "project.yaml"), "version: 1\ntags: [go]\nharnesses: [cursor]\n")
+
+	written, err := compileForHarness(home, projectPath, "cursor", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(written) != 1 {
+		t.Fatalf("compiled %d rules, want 1 (needs-tool blocked by missing requirement): %v", len(written), written)
+	}
+	if _, err := os.Stat(filepath.Join(projectPath, ".cursor", "rules", "needs-tool.mdc")); !os.IsNotExist(err) {
+		t.Fatal("skill with unmet required tool must not be compiled")
+	}
+}
+
 func TestReconcileCompileHarnessesPrunesWhenDisabled(t *testing.T) {
 	home, projectPath := setupCompileProject(t, []sampleSkill{{name: "alpha", tags: []string{"go"}}})
 	cfgPath := filepath.Join(projectPath, ".skills", "project.yaml")
