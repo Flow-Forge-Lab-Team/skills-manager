@@ -4,6 +4,9 @@ const views = [
   { id: "updates", label: "Updates" },
   { id: "projects", label: "Projects" },
   { id: "matrix", label: "Matrix" },
+  { id: "cross-machine", label: "Cross-machine" },
+  { id: "settings", label: "Settings" },
+  { id: "discover", label: "Discover" },
 ];
 
 let currentView = "overview";
@@ -716,11 +719,201 @@ async function render() {
     else if (currentView === "updates") await renderUpdates(content);
     else if (currentView === "projects") await renderProjects(content);
     else if (currentView === "matrix") await renderMatrix(content);
+    else if (currentView === "cross-machine") await renderCrossMachine(content);
+    else if (currentView === "settings") await renderSettings(content);
+    else if (currentView === "discover") renderDiscover(content);
     else if (currentView.startsWith("skill:")) await renderSkillDetail(content, currentView.slice("skill:".length));
     else if (currentView.startsWith("project:")) await renderProjectDetail(content, currentView.slice("project:".length));
   } catch (e) {
     content.appendChild(el("div", { className: "error", text: e.message }));
   }
+}
+
+async function renderCrossMachine(content) {
+  const cm = await api("/api/v1/machines");
+  document.getElementById("page-subtitle").textContent =
+    "this machine: " + cm.current_machine + (cm.has_remote ? " · remote configured" : " · local-only");
+
+  if (!cm.is_git_repo) {
+    content.appendChild(el("p", { className: "muted", text: "Library is not a git repository. Run `skills-manager init-library` or `join` to enable cross-machine sync." }));
+    return;
+  }
+
+  const syncPanel = el("section", { className: "panel" }, [
+    el("div", { className: "panel-title", text: "Sync — backed by `skills-manager sync-library`" }),
+    el("p", { className: "muted", text: "HEAD: " + (cm.head_commit || "unknown") }),
+    el("pre", { className: "diff compact", text: cm.git_status || "(clean)" }),
+  ]);
+  if (cm.has_remote) {
+    // "Refresh status" goes through the status action so the library is
+    // fetched before reporting, surfacing remote divergence.
+    const actions = el("div", { className: "update-actions" });
+    const pull = el("button", { className: "btn confirm", text: "Pull" });
+    pull.onclick = () => runSync("pull");
+    const push = el("button", { className: "btn", text: "Push" });
+    push.onclick = () => runSync("push");
+    const status = el("button", { className: "btn", text: "Refresh status" });
+    status.onclick = () => runSync("status");
+    actions.appendChild(pull);
+    actions.appendChild(push);
+    actions.appendChild(status);
+    syncPanel.appendChild(actions);
+  } else {
+    syncPanel.appendChild(el("p", { className: "advisory-note", text: "Local-only library (no git remote). Configure a remote with `skills-manager init-library` to enable pull/push." }));
+  }
+  content.appendChild(syncPanel);
+
+  const machinePanel = el("section", { className: "panel" }, [el("div", { className: "panel-title", text: "Machines" })]);
+  if (!(cm.machines || []).length) {
+    machinePanel.appendChild(el("p", { className: "muted", text: "No machines registered yet." }));
+  } else {
+    const table = el("table");
+    table.appendChild(el("thead", null, [el("tr", null, [
+      el("th", { text: "Machine" }), el("th", { text: "Last synced" }), el("th", { text: "Commit" }), el("th", { text: "Drift" }),
+    ])]));
+    const tbody = el("tbody");
+    cm.machines.forEach((mm) => {
+      const driftTone = mm.drift === "in-sync" ? "ok" : (mm.drift === "diverged" ? "warn" : "");
+      tbody.appendChild(el("tr", null, [
+        el("td", null, [el("span", { text: mm.name + (mm.current ? " (this)" : "") })]),
+        el("td", { text: mm.last_synced || "—" }),
+        el("td", { text: mm.last_commit || "—" }),
+        el("td", null, [badge(mm.drift, driftTone)]),
+      ]));
+    });
+    table.appendChild(tbody);
+    machinePanel.appendChild(table);
+  }
+  content.appendChild(machinePanel);
+
+  const missing = cm.missing_locked_skills || [];
+  const mlPanel = el("section", { className: "panel" }, [el("div", { className: "panel-title", text: "Missing locked skills" })]);
+  if (!missing.length) {
+    mlPanel.appendChild(el("p", { className: "muted", text: "All locked skills are present in the library." }));
+  } else {
+    mlPanel.appendChild(el("div", { className: "safety-banner", text: "Some projects lock skills not present in this library. Pull the library or reinstall to remediate." }));
+    missing.forEach((m) => mlPanel.appendChild(el("div", { className: "activity-row" }, [
+      badge("missing", "warn"),
+      el("div", null, [
+        el("div", { className: "row-title", text: m.project }),
+        el("div", { className: "muted", text: (m.skills || []).join(", ") }),
+      ]),
+    ])));
+  }
+  content.appendChild(mlPanel);
+
+  const overlap = cm.project_overlap || [];
+  const ovPanel = el("section", { className: "panel" }, [el("div", { className: "panel-title", text: "Project overlap (this machine)" })]);
+  if (!overlap.length) {
+    ovPanel.appendChild(el("p", { className: "muted", text: "No projects registered on this machine." }));
+  } else {
+    const table = el("table");
+    table.appendChild(el("thead", null, [el("tr", null, [el("th", { text: "Project" }), el("th", { text: "Skills" })])]));
+    const tbody = el("tbody");
+    overlap.forEach((p) => tbody.appendChild(el("tr", null, [
+      el("td", { text: p.slug }),
+      el("td", { text: (p.skills || []).join(", ") || "—" }),
+    ])));
+    table.appendChild(tbody);
+    ovPanel.appendChild(table);
+  }
+  content.appendChild(ovPanel);
+}
+
+async function runSync(action) {
+  await ensureSession();
+  try {
+    const res = await api("/api/v1/sync", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Skills-Manager-Token": sessionToken },
+      body: JSON.stringify({ action }),
+    });
+    if (res.exit_code !== 0) { alert(res.stderr || res.stdout || (action + " failed")); return; }
+    render();
+  } catch (e) { alert(e.message); }
+}
+
+async function renderSettings(content) {
+  const s = await api("/api/v1/settings");
+  document.getElementById("page-subtitle").textContent = "local manager configuration";
+  const draft = {
+    mode: s.mode || "copy",
+    llm_provider: s.llm_provider || "",
+    llm_model: s.llm_model || "",
+    llm_api_key_env: s.llm_api_key_env || "",
+    update_frequency_hours: s.update_frequency_hours || 24,
+  };
+
+  const form = el("section", { className: "panel" }, [el("div", { className: "panel-title", text: "Settings" })]);
+
+  const modeSel = el("select", null, []);
+  ["copy", "symlink"].forEach((m) => modeSel.appendChild(el("option", { value: m, text: m })));
+  modeSel.value = draft.mode;
+  modeSel.addEventListener("change", () => { draft.mode = modeSel.value; });
+  form.appendChild(field("Install mode", modeSel));
+
+  const provSel = el("select", null, []);
+  ["", "anthropic", "openai"].forEach((p) => provSel.appendChild(el("option", { value: p, text: p || "(none)" })));
+  provSel.value = draft.llm_provider;
+  provSel.addEventListener("change", () => { draft.llm_provider = provSel.value; });
+  form.appendChild(field("LLM provider", provSel));
+
+  const modelInput = el("input", { type: "text", value: draft.llm_model });
+  modelInput.addEventListener("input", () => { draft.llm_model = modelInput.value; });
+  form.appendChild(field("LLM model", modelInput));
+
+  const keyInput = el("input", { type: "text", value: draft.llm_api_key_env });
+  keyInput.addEventListener("input", () => { draft.llm_api_key_env = keyInput.value; });
+  const keyField = field("LLM API key env var", keyInput);
+  keyField.appendChild(el("div", { className: "advisory-note", text: "Name of the environment variable holding the key — never the key itself." }));
+  form.appendChild(keyField);
+
+  const freqInput = el("input", { type: "number", min: "1", value: String(draft.update_frequency_hours) });
+  freqInput.addEventListener("input", () => { draft.update_frequency_hours = parseInt(freqInput.value, 10) || 24; });
+  form.appendChild(field("Update frequency (hours)", freqInput));
+
+  const saveBtn = el("button", { className: "btn confirm", text: "Save settings" });
+  saveBtn.onclick = async () => {
+    saveBtn.disabled = true;
+    try {
+      await ensureSession();
+      // Always send LLM fields (including empties) so clearing a provider /
+      // model / key env var actually persists rather than being dropped.
+      const body = {
+        mode: draft.mode,
+        update_frequency_hours: draft.update_frequency_hours,
+        llm_provider: draft.llm_provider,
+        llm_model: draft.llm_model,
+        llm_api_key_env: draft.llm_api_key_env,
+      };
+      const res = await fetch("/api/v1/settings", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", "X-Skills-Manager-Token": sessionToken },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) { const e = await res.json().catch(() => ({})); alert(e.error || "save failed"); return; }
+      alert("Settings saved.");
+      render();
+    } catch (e) { alert(e.message); }
+    finally { saveBtn.disabled = false; }
+  };
+  form.appendChild(el("div", { className: "update-actions" }, [saveBtn]));
+  content.appendChild(form);
+
+  content.appendChild(el("section", { className: "panel" }, [
+    el("div", { className: "panel-title", text: "Library sync" }),
+    el("p", { className: "muted", text: s.library_has_remote ? "A git remote is configured. Use the Cross-machine view to pull/push." : "Local-only library (no git remote)." }),
+  ]));
+
+  content.appendChild(el("p", { className: "advisory-note", text: "Cloud scheduling (Claude routines / Codex automation) is intentionally not configurable here." }));
+}
+
+function renderDiscover(content) {
+  document.getElementById("page-subtitle").textContent = "deferred";
+  content.appendChild(el("section", { className: "panel" }, [
+    el("div", { className: "panel-title", text: "Discover" }),
+    el("p", { className: "muted", text: "Searching across skill marketplaces is deferred functionality. This view is a placeholder until cross-marketplace discovery ships." }),
+  ]));
 }
 
 render();

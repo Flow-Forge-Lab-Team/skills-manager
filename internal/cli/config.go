@@ -12,8 +12,32 @@ import (
 )
 
 type managerConfig struct {
-	Mode string    `json:"mode"`
-	LLM  llmConfig `json:"llm"`
+	Mode   string       `json:"mode"`
+	LLM    llmConfig    `json:"llm"`
+	Update updateConfig `json:"update"`
+}
+
+type updateConfig struct {
+	// FrequencyHours is the minimum age before `check` re-polls a skill.
+	// Zero means use the default (defaultUpdateFrequencyHours).
+	FrequencyHours int `json:"frequency_hours"`
+}
+
+const defaultUpdateFrequencyHours = 24
+
+// effectiveUpdateFrequencyHours is the configured re-poll interval in hours,
+// falling back to the default when unset. This is the value `check`, the
+// settings API, and `config get/show` all report so behavior is consistent.
+func (c managerConfig) effectiveUpdateFrequencyHours() int {
+	if c.Update.FrequencyHours < 1 {
+		return defaultUpdateFrequencyHours
+	}
+	return c.Update.FrequencyHours
+}
+
+// updateFrequency returns the configured re-poll interval, or the default.
+func (c managerConfig) updateFrequency() time.Duration {
+	return time.Duration(c.effectiveUpdateFrequencyHours()) * time.Hour
 }
 
 type llmConfig struct {
@@ -204,6 +228,8 @@ func loadManagerConfig(home string) (managerConfig, error) {
 			cfg.LLM.Usage.EstimatedCostUSD, _ = strconv.ParseFloat(value, 64)
 		case "llm.last_called_at":
 			cfg.LLM.Usage.LastCalledAt = value
+		case "update.frequency_hours":
+			cfg.Update.FrequencyHours, _ = strconv.Atoi(value)
 		}
 	}
 	return cfg, scanner.Err()
@@ -225,6 +251,8 @@ func saveManagerConfig(home string, cfg managerConfig) error {
 	fmt.Fprintf(&b, "  output_tokens: %d\n", cfg.LLM.Usage.OutputTokens)
 	fmt.Fprintf(&b, "  estimated_cost_usd: %.8f\n", cfg.LLM.Usage.EstimatedCostUSD)
 	writeConfigString(&b, "  ", "last_called_at", cfg.LLM.Usage.LastCalledAt)
+	b.WriteString("update:\n")
+	fmt.Fprintf(&b, "  frequency_hours: %d\n", cfg.Update.FrequencyHours)
 	if preserved := preservedConfigSections(home); preserved != "" {
 		b.WriteByte('\n')
 		b.WriteString(preserved)
@@ -254,7 +282,7 @@ func preservedConfigSections(home string) string {
 			key, _, ok := strings.Cut(trimmed, ":")
 			if ok {
 				switch strings.TrimSpace(key) {
-				case "version", "mode", "llm":
+				case "version", "mode", "llm", "update":
 					skip = true
 					continue
 				default:
@@ -298,6 +326,12 @@ func setConfigValue(cfg *managerConfig, key, value string) error {
 		cfg.LLM.APIKeyEnv = value
 	case "llm.model":
 		cfg.LLM.Model = value
+	case "update.frequency-hours":
+		hours, err := strconv.Atoi(value)
+		if err != nil || hours < 1 {
+			return fmt.Errorf("update.frequency_hours must be a positive integer")
+		}
+		cfg.Update.FrequencyHours = hours
 	default:
 		return fmt.Errorf("unknown config key: %s", key)
 	}
@@ -314,6 +348,8 @@ func getConfigValue(cfg managerConfig, key string) (string, error) {
 		return cfg.LLM.APIKeyEnv, nil
 	case "llm.model":
 		return cfg.LLM.Model, nil
+	case "update.frequency-hours":
+		return strconv.Itoa(cfg.effectiveUpdateFrequencyHours()), nil
 	default:
 		return "", fmt.Errorf("unknown config key: %s", key)
 	}
@@ -354,6 +390,8 @@ func printManagerConfig(w io.Writer, cfg managerConfig) {
 	fmt.Fprintf(w, "  model: %s\n", emptyAsTilde(cfg.LLM.Model))
 	fmt.Fprintln(w, "  usage:")
 	printLLMUsageIndented(w, cfg.LLM.Usage, "    ")
+	fmt.Fprintln(w, "update:")
+	fmt.Fprintf(w, "  frequency_hours: %d\n", cfg.effectiveUpdateFrequencyHours())
 }
 
 func printLLMUsage(w io.Writer, usage llmUsage) {

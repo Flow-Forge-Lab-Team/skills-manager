@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Flow-Forge-Lab-Team/skills-manager/internal/state"
 )
@@ -280,6 +281,69 @@ origin:
 	output = stdout.String()
 	if !strings.Contains(output, "updated") {
 		t.Fatalf("with --force, should show update:\n%s", output)
+	}
+}
+
+func TestCheckRespectsConfiguredFrequency(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+
+	stateDB, err := state.Open(home)
+	if err != nil {
+		t.Fatalf("Open state: %v", err)
+	}
+	defer stateDB.Close()
+	if err := stateDB.UpsertSkillPoll("pdf", "abc1234", "w/\"old-etag\""); err != nil {
+		t.Fatalf("UpsertSkillPoll: %v", err)
+	}
+	// Last checked 2h ago: skipped under the 24h default, eligible under 1h.
+	twoHoursAgo := time.Now().Add(-2 * time.Hour).UTC().Format(time.RFC3339)
+	if _, err := stateDB.Exec(`UPDATE skill_polls SET last_checked_at=? WHERE skill_name=?`, twoHoursAgo, "pdf"); err != nil {
+		t.Fatalf("set last_checked_at: %v", err)
+	}
+
+	libraryPath := filepath.Join(home, "library")
+	skillDir := filepath.Join(libraryPath, "pdf")
+	if err := os.MkdirAll(skillDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte("---\nname: pdf\n---\nBody\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(skillDir, ".skill-meta.yaml"), []byte("version: 1\norigin:\n  type: github\n  url: https://github.com/user/pdf-skill\n  commit: abc1234\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	newSKILL := []byte("---\nname: pdf\n---\nBody updated\n")
+	oldFetcher := fetcher
+	fetcher = &fakeFetcher{
+		files: map[string][]byte{"user/pdf-skill:def5678:SKILL.md": newSKILL},
+		tree:  map[string][]TreeEntry{"user/pdf-skill:def5678:": {{Path: "SKILL.md", SHA: gitBlobSHA(newSKILL), Type: "blob"}}},
+	}
+	defer func() { fetcher = oldFetcher }()
+	poller := &fakePoller{responses: map[string]fakeResponse{"user/pdf-skill": {commit: "def5678", etag: "w/\"new-etag\""}}}
+
+	// Default frequency (24h): 2h-old check is still skipped.
+	var stdout, stderr bytes.Buffer
+	if code := runCheckWithPoller(nil, &stdout, &stderr, globalFlags{}, poller); code != 0 {
+		t.Fatalf("check returned %d", code)
+	}
+	if !strings.Contains(stdout.String(), "checked recently") {
+		t.Fatalf("under default 24h, 2h-old poll should be skipped:\n%s", stdout.String())
+	}
+
+	// Configure a 1h frequency: the same 2h-old poll now re-checks.
+	if code := Run([]string{"config", "set", "update.frequency_hours", "1"}, &bytes.Buffer{}, &stderr); code != ExitSuccess {
+		t.Fatalf("config set returned %d", code)
+	}
+	stdout.Reset()
+	if code := runCheckWithPoller(nil, &stdout, &stderr, globalFlags{}, poller); code != 0 {
+		t.Fatalf("check (freq=1h) returned %d", code)
+	}
+	if strings.Contains(stdout.String(), "checked recently") {
+		t.Fatalf("under 1h frequency, 2h-old poll should re-check, not skip:\n%s", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "updated") {
+		t.Fatalf("expected pdf to be updated under 1h frequency:\n%s", stdout.String())
 	}
 }
 
