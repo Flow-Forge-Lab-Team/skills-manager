@@ -350,7 +350,10 @@ func updateTriageSkillMetadata(home, name string, req triageSkillMetadataUpdate)
 		cat.Skills[idx].Requirements = *req.Requirements
 		meta.Requirements = *req.Requirements
 	}
-	if err := writeSkillMeta(metaPath, meta); err != nil {
+	// writeSeedSkillMeta preserves unmodeled requirement keys in the sidecar
+	// (it delegates to writeSkillMeta when there are none), so a metadata edit
+	// is non-destructive for skills carrying custom requirement sections.
+	if err := writeSeedSkillMeta(metaPath, meta); err != nil {
 		return err
 	}
 	return writeCatalog(filepath.Join(libraryPath, "catalog.yaml"), cat)

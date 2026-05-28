@@ -487,3 +487,61 @@ func TestServeBindsLocalhostByDefault(t *testing.T) {
 		t.Fatalf("default addr = %s, want 127.0.0.1", addr)
 	}
 }
+
+func TestServeSkillMetadataPatchPreservesUnmodeledRequirements(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+	libraryPath := filepath.Join(home, "library")
+	writeFile(t, filepath.Join(libraryPath, "runtime-heavy", "SKILL.md"), "---\nname: runtime-heavy\ndescription: fixture\n---\n")
+	writeFile(t, filepath.Join(libraryPath, "runtime-heavy", ".skill-meta.yaml"), `version: 1
+tags:
+  - old
+requirements:
+  tools:
+    - name: "gh"
+      required: true
+      check: "gh auth status"
+  custom_review:
+    level: strict
+`)
+	if !sidecarHasUnmodeledRequirements(filepath.Join(libraryPath, "runtime-heavy", ".skill-meta.yaml")) {
+		t.Fatal("precondition: unmodeled requirements were not detected")
+	}
+	cat := catalog{Skills: []catalogSkill{{Name: "runtime-heavy", Tags: []string{"old"}}}}
+	if err := writeCatalog(filepath.Join(libraryPath, "catalog.yaml"), cat); err != nil {
+		t.Fatal(err)
+	}
+
+	srv := newServeServer(home)
+	ts := httptest.NewServer(srv)
+	defer ts.Close()
+
+	sess := serveSessionToken(t, ts.URL)
+	body := strings.NewReader(`{"tags":["triage"]}`)
+	req, _ := http.NewRequest(http.MethodPatch, ts.URL+"/api/v1/skills/runtime-heavy", body)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Skills-Manager-Token", sess)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+
+	metaText := readFile(t, filepath.Join(libraryPath, "runtime-heavy", ".skill-meta.yaml"))
+	if !strings.Contains(metaText, "custom_review:") || !strings.Contains(metaText, "level: strict") {
+		t.Fatalf("unmodeled custom_review section was dropped:\n%s", metaText)
+	}
+	meta, err := readSkillMeta(filepath.Join(libraryPath, "runtime-heavy", ".skill-meta.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(meta.Tags, ",") != "triage" {
+		t.Fatalf("meta tags = %#v, want triage", meta.Tags)
+	}
+	if !hasToolRequirement(meta.Requirements.Tools, "gh") {
+		t.Fatalf("gh requirement lost: %+v", meta.Requirements.Tools)
+	}
+}
