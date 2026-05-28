@@ -602,6 +602,25 @@ func TestServeUpdatesBatchReviewPreservesEvidence(t *testing.T) {
 	if code := doAction("upd-2", "reject"); code != http.StatusOK {
 		t.Fatalf("reject upd-2 = %d, want 200", code)
 	}
+
+	// A recoverable failure (accepting an already-resolved update) still returns
+	// HTTP 200 with a non-zero exit_code so the client can read stderr and offer
+	// fallbacks, rather than seeing an opaque transport error.
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/v1/updates/upd-1/accept", strings.NewReader("{}"))
+	req.Header.Set("X-Skills-Manager-Token", sess)
+	r, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.StatusCode != http.StatusOK {
+		t.Fatalf("failed action HTTP status = %d, want 200", r.StatusCode)
+	}
+	var failResp cliRunResponse
+	json.NewDecoder(r.Body).Decode(&failResp)
+	r.Body.Close()
+	if failResp.ExitCode == 0 {
+		t.Fatalf("re-accepting a resolved update should report non-zero exit_code, got %+v", failResp)
+	}
 	// After accept+reject, two updates leave the pending list.
 	resp2, _ := http.Get(ts.URL + "/api/v1/updates")
 	var after []triageUpdateView

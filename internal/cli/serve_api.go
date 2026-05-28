@@ -335,13 +335,13 @@ func (s *serveServer) handleUpdateSub(w http.ResponseWriter, r *http.Request) {
 	fullArgs := append([]string{"--json", "--non-interactive", "--quiet"}, args...)
 	var stdoutBuf, stderrBuf bytes.Buffer
 	code := s.runCLIInHome(fullArgs, &stdoutBuf, &stderrBuf)
-	status := http.StatusOK
-	if code != ExitSuccess {
-		status = http.StatusBadRequest
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(cliRunResponse{
+	// Always return 200 with the exit code in the body (matching /api/v1/run).
+	// A non-zero exit here is an expected, recoverable outcome — e.g. the
+	// divergence guard refusing an accept, or `summarize --auto` finding no
+	// configured provider so the client can offer the handoff fallback. The
+	// client inspects exit_code/stderr rather than treating it as a transport
+	// error.
+	writeJSONResponse(w, cliRunResponse{
 		ExitCode: code,
 		Stdout:   stdoutBuf.String(),
 		Stderr:   stderrBuf.String(),
