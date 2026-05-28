@@ -434,10 +434,11 @@ func loadTriageProjectDetail(home, slug string) (triageProjectDetail, error) {
 			continue
 		}
 		detail.MatchExplain = append(detail.MatchExplain, c)
-		if c.Score > 0 || len(c.Harnesses) > 0 {
-			detail.PreviewSkills = append(detail.PreviewSkills, c)
-		}
-		if !installed[c.Name] && c.Score > 0 {
+		// Every candidate here is a real match (category/tag/always), so the
+		// preview mirrors the install candidate list and suggestions are the
+		// not-yet-installed subset, matching `match --suggest`.
+		detail.PreviewSkills = append(detail.PreviewSkills, c)
+		if !installed[c.Name] {
 			detail.SuggestedSkills = append(detail.SuggestedSkills, c)
 		}
 	}
@@ -771,12 +772,12 @@ func lastActivityForSkill(home, skillName string) string {
 }
 
 func scoredProjectCandidates(cat catalog, project projectConfig, installed map[string]bool, suggestOnly bool) []triageProjectCandidate {
-	never := set(project.NeverInclude)
 	var out []triageProjectCandidate
-	for _, skill := range cat.Skills {
-		if never[skill.Name] {
-			continue
-		}
+	// Mirror `skills-manager match`: only always/category/tag matches are
+	// candidates. Scoring every catalog skill would leak unrelated portable
+	// skills (compatible with all harnesses, score 0) into the preview.
+	for _, c := range selectInstallCandidates(cat, project, "") {
+		skill := c.Skill
 		if suggestOnly && installed[skill.Name] {
 			continue
 		}

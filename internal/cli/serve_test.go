@@ -72,6 +72,9 @@ func TestServeAPIReadsFreshDiskState(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(skillsDir, "installed.lock"), lockBytes, 0644); err != nil {
 			t.Fatal(err)
 		}
+		if err := os.WriteFile(filepath.Join(skillsDir, "project.yaml"), []byte("version: 1\ncategories: [Engineering]\ntags: [fixture]\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
 		manifest := installManifest{
 			Version:     1,
 			ProjectPath: projectPath,
@@ -485,6 +488,73 @@ func TestServeBindsLocalhostByDefault(t *testing.T) {
 	addr := net.JoinHostPort(opts.host, strconv.Itoa(opts.port))
 	if !strings.HasPrefix(addr, "127.0.0.1:") {
 		t.Fatalf("default addr = %s, want 127.0.0.1", addr)
+	}
+}
+
+func TestServeProjectDetailExcludesNonMatchingPortableSkills(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+	libraryPath := filepath.Join(home, "library")
+	for _, name := range []string{"match-cat", "match-tag", "portable-unrelated"} {
+		writeFile(t, filepath.Join(libraryPath, name, "SKILL.md"), "---\nname: "+name+"\ndescription: fixture\n---\n")
+	}
+	cat := catalog{Version: 1, Skills: []catalogSkill{
+		{Name: "match-cat", Categories: []string{"Engineering"}},
+		{Name: "match-tag", Tags: []string{"go"}},
+		// Portable: compatible with every harness but matches no category/tag.
+		{Name: "portable-unrelated", Categories: []string{"Marketing"}, Compatibility: compatibility{ExplicitPortable: true}},
+	}}
+	if err := writeCatalog(filepath.Join(libraryPath, "catalog.yaml"), cat); err != nil {
+		t.Fatal(err)
+	}
+
+	projectPath := filepath.Join(home, "projects", "proj-x")
+	skillsDir := filepath.Join(projectPath, ".skills")
+	if err := os.MkdirAll(skillsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(skillsDir, "project.yaml"), "version: 1\ncategories: [Engineering]\ntags: [go]\nharnesses: [claude, codex]\n")
+	manifestsDir := filepath.Join(home, "manifests")
+	if err := os.MkdirAll(manifestsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := json.Marshal(installManifest{Version: 1, ProjectPath: projectPath, ProjectSlug: "proj-x", ManagedPaths: []string{}})
+	if err := os.WriteFile(filepath.Join(manifestsDir, "proj-x.json"), raw, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	srv := newServeServer(home)
+	ts := httptest.NewServer(srv)
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/api/v1/projects/proj-x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	var detail triageProjectDetail
+	if err := json.NewDecoder(resp.Body).Decode(&detail); err != nil {
+		t.Fatal(err)
+	}
+	names := func(cs []triageProjectCandidate) map[string]bool {
+		m := map[string]bool{}
+		for _, c := range cs {
+			m[c.Name] = true
+		}
+		return m
+	}
+	explain := names(detail.MatchExplain)
+	if !explain["match-cat"] || !explain["match-tag"] {
+		t.Fatalf("match_explain missing real candidates: %#v", explain)
+	}
+	if explain["portable-unrelated"] {
+		t.Fatalf("match_explain leaked non-matching portable skill: %#v", explain)
+	}
+	if names(detail.PreviewSkills)["portable-unrelated"] {
+		t.Fatalf("preview_skills leaked non-matching portable skill")
 	}
 }
 
