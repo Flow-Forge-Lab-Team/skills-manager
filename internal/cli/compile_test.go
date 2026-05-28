@@ -275,6 +275,20 @@ func TestCompileMatchFallbackSkipsUnmetRequirements(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(projectPath, ".cursor", "rules", "needs-tool.mdc")); !os.IsNotExist(err) {
 		t.Fatal("skill with unmet required tool must not be compiled")
 	}
+
+	// Same filtering must apply when the skills come from an install lock.
+	writeFile(t, filepath.Join(projectPath, ".skills", "installed.lock"), "version: 1\nskills:\n  - name: ok-skill\n  - name: needs-tool\n")
+	_ = os.RemoveAll(filepath.Join(projectPath, ".cursor"))
+	written, err = compileForHarness(home, projectPath, "cursor", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(written) != 1 {
+		t.Fatalf("locked: compiled %d rules, want 1 (needs-tool still blocked): %v", len(written), written)
+	}
+	if _, err := os.Stat(filepath.Join(projectPath, ".cursor", "rules", "needs-tool.mdc")); !os.IsNotExist(err) {
+		t.Fatal("locked skill with unmet required tool must not be compiled")
+	}
 }
 
 func TestReconcileCompileHarnessesPrunesWhenDisabled(t *testing.T) {

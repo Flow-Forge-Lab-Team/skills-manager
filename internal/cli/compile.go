@@ -204,18 +204,25 @@ func projectCompileSkills(projectPath, configPath string, cat catalog, harness s
 	if err != nil {
 		return nil, fmt.Errorf("read install lock: %w", err)
 	}
+	skillByName := map[string]catalogSkill{}
+	for _, s := range cat.Skills {
+		skillByName[s.Name] = s
+	}
 	if len(lock.Skills) > 0 {
 		// A lock can include skills installed only for other harnesses (e.g.
-		// exclusive:claude). Only compile those compatible with this harness.
-		compatByName := map[string]compatibility{}
-		for _, s := range cat.Skills {
-			compatByName[s.Name] = s.Compatibility
-		}
+		// exclusive:claude) or a synthesized entry for a skill install blocked
+		// on missing requirements. Only compile those compatible with this
+		// harness and whose requirements are met.
 		var names []string
 		for _, e := range lock.Skills {
-			if len(compatibleHarnesses(compatByName[e.Name], []string{harness})) > 0 {
-				names = append(names, e.Name)
+			s := skillByName[e.Name]
+			if len(compatibleHarnesses(s.Compatibility, []string{harness})) == 0 {
+				continue
 			}
+			if skillHasUnmetRequirements(s.Requirements) {
+				continue
+			}
+			names = append(names, e.Name)
 		}
 		return names, nil
 	}
