@@ -2,6 +2,7 @@ package cli
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -57,15 +58,18 @@ func runStatus(args []string, stdout io.Writer, stderr io.Writer, gf globalFlags
 	var unregCount int
 	db.QueryRow("SELECT COUNT(*) FROM detected WHERE action IS NULL OR action = '' OR action = 'pending'").Scan(&unregCount)
 
+	watcherCount := countWatcherNotifications(home)
+
 	sched := formatScheduledCheckStatus(db, home)
 
 	if gf.JSON {
 		out := map[string]interface{}{
-			"library_skills":  libCount,
-			"projects":        projCount,
-			"pending_updates": pendingCount,
-			"unregistered":    unregCount,
-			"scheduled_check": sched,
+			"library_skills":        libCount,
+			"projects":              projCount,
+			"pending_updates":       pendingCount,
+			"unregistered":          unregCount,
+			"watcher_notifications": watcherCount,
+			"scheduled_check":       sched,
 		}
 		if err := writeJSON(stdout, out); err != nil {
 			fmt.Fprintln(stderr, err)
@@ -84,6 +88,9 @@ func runStatus(args []string, stdout io.Writer, stderr io.Writer, gf globalFlags
 			fmt.Fprintf(humanOut, " (outside library; `scan` will be added with ingest)")
 		}
 		fmt.Fprintln(humanOut)
+		if watcherCount > 0 {
+			fmt.Fprintf(humanOut, "Watcher alerts:   %d (in ~/.skills-manager/notifications/; run `scan --ingest` to review)\n", watcherCount)
+		}
 		fmt.Fprintf(humanOut, "Scheduled checks: %s\n", sched)
 	}
 
@@ -118,6 +125,40 @@ func countPendingUpdates(libraryPath string) int {
 				count++
 			}
 		}
+	}
+	return count
+}
+
+// countWatcherNotifications counts unresolved watcher detections written under
+// ~/.skills-manager/notifications/ by `skills-manager watch`. A notification is
+// resolved once its fingerprint appears in the library (e.g. after ingest), so
+// resolved files are pruned and not counted — otherwise status would report
+// handled alerts forever.
+func countWatcherNotifications(home string) int {
+	dir := filepath.Join(home, "notifications")
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return 0
+	}
+	inLibrary := buildFingerprintIndex(filepath.Join(home, "library"))
+	count := 0
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasPrefix(e.Name(), "watch-") || !strings.HasSuffix(e.Name(), ".json") {
+			continue
+		}
+		path := filepath.Join(dir, e.Name())
+		data, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		var n watchNotification
+		if json.Unmarshal(data, &n) == nil && n.Fingerprint != "" {
+			if _, ok := inLibrary[n.Fingerprint]; ok {
+				_ = os.Remove(path) // resolved (now in library) — prune
+				continue
+			}
+		}
+		count++
 	}
 	return count
 }

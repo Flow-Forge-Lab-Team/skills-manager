@@ -167,11 +167,19 @@ If the user enabled `auto_ingest: true` in config, the prompt is skipped only
 for high-confidence cases. The accepted skill still appears in the activity feed
 for review.
 
-## Filesystem watcher (deferred)
+## Filesystem watcher
 
-Background daemon. Optional and deferred until v0.3. v0.1/v0.2 use
-`skills-manager scan` so ingest is reviewable and does not require a resident
-process.
+Optional background daemon, shipped in v0.3 (`skills-manager watch`). v0.1/v0.2
+rely on `skills-manager scan` so ingest is reviewable and does not require a
+resident process; the watcher is opt-in and, by default, only writes review
+notifications rather than changing the catalog.
+
+It is implemented with interval **polling** (dependency-free) rather than an OS
+file-event API, so it behaves identically across platforms with no external
+dependencies. Run it in the foreground (`skills-manager watch`), as a detached
+daemon (`watch --daemon` / `watch --stop`), and tune the cadence with
+`--interval <secs>`. `--auto-ingest` is opt-in and only ingests high-confidence,
+non-suspicious, unregistered skills.
 
 ### What it watches
 
