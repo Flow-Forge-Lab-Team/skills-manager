@@ -14,11 +14,14 @@ type Invocation struct {
 	Trigger     string // user-initiated | proactive | nested
 	InvokedAt   string // RFC3339 timestamp; defaulted to now when empty
 	Source      string // otel | hook | watcher | manual
+	ToolUseID   string // correlation id shared by the OTEL event and the hook; dedupes the two feeds
 }
 
 // RecordInvocation inserts a single invocation row. An empty InvokedAt is
 // defaulted to the current UTC time so callers ingesting events without a
-// timestamp still produce ordered rows.
+// timestamp still produce ordered rows. A row whose ToolUseID was already
+// recorded is ignored (the two feeds share the id), so enabling both the OTEL
+// receiver and the PreToolUse hook does not double-count an activation.
 func (db *DB) RecordInvocation(inv Invocation) error {
 	if inv.SkillName == "" {
 		return fmt.Errorf("record invocation: skill name required")
@@ -27,9 +30,9 @@ func (db *DB) RecordInvocation(inv Invocation) error {
 		inv.InvokedAt = time.Now().UTC().Format(time.RFC3339)
 	}
 	_, err := db.Exec(`
-		INSERT INTO invocations (skill_name, project_slug, harness, trigger, invoked_at, source)
-		VALUES (?, ?, ?, ?, ?, ?)
-	`, inv.SkillName, inv.ProjectSlug, inv.Harness, inv.Trigger, inv.InvokedAt, inv.Source)
+		INSERT OR IGNORE INTO invocations (skill_name, project_slug, harness, trigger, invoked_at, source, tool_use_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
+	`, inv.SkillName, inv.ProjectSlug, inv.Harness, inv.Trigger, inv.InvokedAt, inv.Source, inv.ToolUseID)
 	if err != nil {
 		return fmt.Errorf("record invocation: %w", err)
 	}
@@ -46,8 +49,8 @@ func (db *DB) RecordInvocations(invs []Invocation) (int, error) {
 		return 0, fmt.Errorf("record invocations: begin: %w", err)
 	}
 	stmt, err := tx.Prepare(`
-		INSERT INTO invocations (skill_name, project_slug, harness, trigger, invoked_at, source)
-		VALUES (?, ?, ?, ?, ?, ?)
+		INSERT OR IGNORE INTO invocations (skill_name, project_slug, harness, trigger, invoked_at, source, tool_use_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
 	`)
 	if err != nil {
 		tx.Rollback()
@@ -65,11 +68,15 @@ func (db *DB) RecordInvocations(invs []Invocation) (int, error) {
 		if invokedAt == "" {
 			invokedAt = now
 		}
-		if _, err := stmt.Exec(inv.SkillName, inv.ProjectSlug, inv.Harness, inv.Trigger, invokedAt, inv.Source); err != nil {
+		res, err := stmt.Exec(inv.SkillName, inv.ProjectSlug, inv.Harness, inv.Trigger, invokedAt, inv.Source, inv.ToolUseID)
+		if err != nil {
 			tx.Rollback()
 			return 0, fmt.Errorf("record invocations: exec: %w", err)
 		}
-		written++
+		// A row deduped against an existing tool_use_id affects 0 rows.
+		if n, err := res.RowsAffected(); err == nil && n > 0 {
+			written++
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return 0, fmt.Errorf("record invocations: commit: %w", err)

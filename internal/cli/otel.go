@@ -137,6 +137,7 @@ func skillInvocationFromEvent(rec otlpLogRecord, attrs map[string]string) (state
 		Trigger:   deriveTrigger(attrs),
 		InvokedAt: deriveTimestamp(rec, attrs),
 		Source:    "otel",
+		ToolUseID: attrs["tool_use_id"],
 	}, true
 }
 

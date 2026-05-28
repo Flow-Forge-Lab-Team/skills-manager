@@ -19,6 +19,15 @@ The OTEL receiver gives low-friction, cross-session capture but cannot say
 the project directory and sees the working directory, so it attributes the
 project slug. Run both for the most complete matrix.
 
+### Deduplication
+
+Running both feeds does **not** double-count. The OTEL `tool_result` event and
+the PreToolUse hook carry the same `tool_use_id`, which is recorded with each
+row and constrained by a unique index. The hook fires first (before the tool
+runs) and wins, so the surviving row keeps the project attribution; the later
+OTEL row for the same activation is ignored. Rows without a `tool_use_id`
+(manual or watcher entries) are exempt from the constraint and never collide.
+
 > A note on the spec: earlier design notes referenced a `claude_code.skill_activated`
 > OTEL event with an `invocation_trigger` attribute. Claude Code does not emit
 > that event. Skill activation is instead observable on the real

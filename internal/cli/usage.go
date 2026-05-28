@@ -141,6 +141,7 @@ type hookPayload struct {
 	HookEventName string          `json:"hook_event_name"`
 	ToolName      string          `json:"tool_name"`
 	Cwd           string          `json:"cwd"`
+	ToolUseID     string          `json:"tool_use_id"`
 	ToolInput     json.RawMessage `json:"tool_input"`
 }
 
@@ -193,6 +194,7 @@ func runUsageHook(args []string, stdout, stderr io.Writer, gf globalFlags) int {
 		Harness:     "claude",
 		Trigger:     "user-initiated",
 		Source:      "hook",
+		ToolUseID:   payload.ToolUseID,
 	}); err != nil {
 		fmt.Fprintf(stderr, "usage hook: record: %v\n", err)
 	}

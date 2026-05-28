@@ -367,10 +367,15 @@ CREATE TABLE invocations (
   harness TEXT,
   trigger TEXT,                     -- user-initiated | proactive | nested
   invoked_at TEXT,
-  source TEXT                       -- otel | hook | watcher | manual
+  source TEXT,                      -- otel | hook | watcher | manual
+  tool_use_id TEXT                  -- shared by the OTEL event + hook; dedupes the two feeds
 );
 CREATE INDEX idx_invocations_skill_date
   ON invocations (skill_name, invoked_at);
+-- Partial unique index dedupes the OTEL and hook feeds; rows without a
+-- tool_use_id (manual/watcher) are exempt and never collide.
+CREATE UNIQUE INDEX idx_invocations_tool_use_id
+  ON invocations (tool_use_id) WHERE tool_use_id IS NOT NULL AND tool_use_id != '';
 
 -- Drift detection: skills detected on disk but not in library
 CREATE TABLE detected (
