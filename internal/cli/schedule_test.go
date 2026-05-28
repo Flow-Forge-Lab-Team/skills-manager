@@ -98,6 +98,26 @@ func TestScheduleStateRoundTrip(t *testing.T) {
 	}
 }
 
+func TestStripManagedCronBlock(t *testing.T) {
+	in := "# other job\n0 1 * * * /bin/true\n" + cronMarker + "\n0 9 * * * /bin/sm check\n\n# tail\n"
+	got := stripManagedCronBlock(in)
+	joined := strings.Join(got, "\n")
+	if strings.Contains(joined, cronMarker) {
+		t.Fatalf("marker should be removed: %q", joined)
+	}
+	if !strings.Contains(joined, "/bin/true") {
+		t.Fatalf("unrelated cron should remain: %q", joined)
+	}
+}
+
+func TestBuildCronShellCommand_QuotesSpaces(t *testing.T) {
+	cfg := ScheduleConfig{BinaryPath: "/opt/skills manager/bin"}
+	cmd := buildCronShellCommand(cfg, false)
+	if !strings.Contains(cmd, "'/opt/skills manager/bin'") {
+		t.Fatalf("expected quoted path, got %q", cmd)
+	}
+}
+
 func TestParseScheduleOptions_InvalidProvider(t *testing.T) {
 	_, _, err := parseScheduleOptions([]string{"--provider", "cloud"})
 	if err == nil {

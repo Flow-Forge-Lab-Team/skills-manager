@@ -257,10 +257,47 @@ func scheduledProgramArgs(cfg ScheduleConfig, includeSummarize bool) []string {
 	return []string{"/bin/sh", "-c", inner}
 }
 
+func buildCronShellCommand(cfg ScheduleConfig, includeSummarize bool) string {
+	bin := shellSingleQuote(cfg.BinaryPath)
+	if includeSummarize {
+		inner := bin + " check --non-interactive --quiet --json && " +
+			bin + " summarize --pending --auto --non-interactive"
+		return "/bin/sh -c " + shellSingleQuote(inner)
+	}
+	return bin + " check --non-interactive --quiet --json"
+}
+
+func shellSingleQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'"'"'`) + "'"
+}
+
+func stripManagedCronBlock(crontab string) []string {
+	lines := strings.Split(crontab, "\n")
+	out := make([]string, 0, len(lines))
+	skip := false
+	for _, line := range lines {
+		if strings.TrimSpace(line) == cronMarker {
+			skip = true
+			continue
+		}
+		if skip {
+			if strings.TrimSpace(line) == "" {
+				skip = false
+			}
+			continue
+		}
+		out = append(out, line)
+	}
+	for len(out) > 0 && strings.TrimSpace(out[len(out)-1]) == "" {
+		out = out[:len(out)-1]
+	}
+	return out
+}
+
 func installCron(cfg ScheduleConfig, home string, includeSummarize bool) error {
 	logPath := filepath.Join(cfg.LogDir, "check.log")
-	cmdLine := strings.Join(scheduledProgramArgs(cfg, includeSummarize), " ")
-	cronLine := fmt.Sprintf("0 9 * * * %s >> %s 2>&1", cmdLine, logPath)
+	cmdLine := buildCronShellCommand(cfg, includeSummarize)
+	cronLine := fmt.Sprintf("0 9 * * * %s >> %s 2>&1", cmdLine, shellSingleQuote(logPath))
 
 	fragmentPath := filepath.Join(home, "cron-fragment")
 	content := cronMarker + "\n" + cronLine + "\n"
@@ -269,20 +306,7 @@ func installCron(cfg ScheduleConfig, home string, includeSummarize bool) error {
 	}
 
 	existing, _ := exec.Command("crontab", "-l").Output()
-	var lines []string
-	for _, line := range strings.Split(string(existing), "\n") {
-		if strings.Contains(line, "skills-manager") && strings.Contains(line, "check") {
-			continue
-		}
-		if strings.TrimSpace(line) == cronMarker {
-			continue
-		}
-		lines = append(lines, line)
-	}
-	// trim trailing blank lines
-	for len(lines) > 0 && strings.TrimSpace(lines[len(lines)-1]) == "" {
-		lines = lines[:len(lines)-1]
-	}
+	lines := stripManagedCronBlock(string(existing))
 	lines = append(lines, cronMarker, cronLine, "")
 	newTab := strings.Join(lines, "\n")
 
@@ -307,16 +331,7 @@ func uninstallCron(home string) error {
 		}
 		return err
 	}
-	var kept []string
-	for _, line := range strings.Split(string(existing), "\n") {
-		if strings.Contains(line, "skills-manager") && strings.Contains(line, "check") {
-			continue
-		}
-		if strings.TrimSpace(line) == cronMarker {
-			continue
-		}
-		kept = append(kept, line)
-	}
+	kept := stripManagedCronBlock(string(existing))
 	newTab := strings.TrimRight(strings.Join(kept, "\n"), "\n")
 	if newTab == "" {
 		cmd := exec.Command("crontab", "-r")

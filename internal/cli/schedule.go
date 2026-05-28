@@ -134,6 +134,10 @@ func installLaunchd(cfg ScheduleConfig, includeSummarize bool) error {
 
 	content := generateLaunchdPlist(cfg, includeSummarize)
 
+	if err := os.MkdirAll(filepath.Dir(plistPath), 0o755); err != nil {
+		return fmt.Errorf("create LaunchAgents directory: %w", err)
+	}
+
 	// Write with standard plist permissions
 	if err := os.WriteFile(plistPath, []byte(content), 0o644); err != nil {
 		return fmt.Errorf("write launchd plist: %w", err)
