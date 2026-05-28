@@ -383,6 +383,21 @@ Flags:
 Show library counts, pending updates, unregistered skills, stale scheduled check state.
 
 ` + globalFlagHelp()
+	case "usage":
+		return `skills-manager usage [subcommand]
+
+Track and view skill usage (skill × project × harness × count).
+
+Subcommands:
+  (none) | matrix   show the aggregated usage matrix (--json for structured output)
+  receiver          run an OTLP/HTTP log receiver for Claude Code telemetry
+                      --port <n>    listen port (default: 4318)
+                      --host <addr> bind address (default: 127.0.0.1)
+  hook              record one invocation from a PreToolUse hook payload on stdin
+                      --print-config  print the settings.json hook snippet
+  setup             print OTEL + PreToolUse hook setup instructions
+
+` + globalFlagHelp()
 	case "doctor":
 		return `skills-manager doctor [--rebuild-state] [--rebuild-catalog]
 
@@ -459,6 +474,7 @@ Commands:
   unschedule      remove local OS scheduler
   status      show library counts, pending, unregistered, scheduled state
   serve       local triage web UI + REST API (localhost by default)
+  usage       track and view skill usage (OTEL receiver, hook, matrix)
   doctor      diagnose problems; --rebuild-state --rebuild-catalog
   set         update a skill's compatibility declaration
   help        show help for a command

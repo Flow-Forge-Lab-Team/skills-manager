@@ -39,6 +39,7 @@ func newServeServer(home string) *serveServer {
 	s.mux.HandleFunc("/api/v1/updates", s.handleUpdates)
 	s.mux.HandleFunc("/api/v1/updates/", s.handleUpdateSub)
 	s.mux.HandleFunc("/api/v1/matrix", s.handleMatrix)
+	s.mux.HandleFunc("/api/v1/usage", s.handleUsage)
 	s.mux.HandleFunc("/api/v1/run", s.handleRunCLI)
 	s.mux.Handle("/", s.handleStatic())
 	return s
@@ -182,6 +183,19 @@ func (s *serveServer) handleMatrix(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSONResponse(w, matrix)
+}
+
+func (s *serveServer) handleUsage(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	view, err := loadUsageMatrix(s.home)
+	if err != nil {
+		writeAPIError(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSONResponse(w, view)
 }
 
 var serveAllowedCLI = map[string]bool{
