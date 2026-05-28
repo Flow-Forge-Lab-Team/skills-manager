@@ -88,12 +88,14 @@ func TestCompileCursorProducesReasonableRules(t *testing.T) {
 	if globs, _ := fm["globs"].([]interface{}); len(globs) != 0 {
 		t.Fatalf("always-helper should have no globs, got %v", fm["globs"])
 	}
-	// react → tsx glob, not alwaysApply.
-	_, raw := parse("react-helper")
-	if !strings.Contains(raw, "**/*.tsx") {
-		t.Fatalf("react-helper should infer a tsx glob:\n%s", raw)
+	// react → the exact inferred glob list (sorted), not alwaysApply. Assert the
+	// parsed YAML list rather than a substring, so a wrong shape/quoting/order
+	// can't slip through (the blind spot that hid the Copilot applyTo bug).
+	frm, raw := parse("react-helper")
+	if got := frm["globs"]; !globsEqual(got, []string{"**/*.jsx", "**/*.tsx"}) {
+		t.Fatalf("react-helper globs = %#v, want [**/*.jsx **/*.tsx]\n%s", got, raw)
 	}
-	if fm, _ := parse("react-helper"); fm["alwaysApply"] != false {
+	if frm["alwaysApply"] != false {
 		t.Fatalf("react-helper alwaysApply should be false")
 	}
 	// description carried through and body present.
@@ -119,14 +121,20 @@ func TestCompileCursorFrontmatterOverride(t *testing.T) {
 		t.Fatal(err)
 	}
 	raw := readFile(t, filepath.Join(projectPath, ".cursor", "rules", "override.mdc"))
-	if !strings.Contains(raw, "**/*.custom") {
-		t.Fatalf("override globs not applied:\n%s", raw)
+	end := strings.Index(raw[4:], "---")
+	if !strings.HasPrefix(raw, "---\n") || end == -1 {
+		t.Fatalf("override.mdc missing frontmatter:\n%s", raw)
 	}
-	if strings.Contains(raw, "**/*.tsx") {
-		t.Fatalf("inferred globs should be replaced by override:\n%s", raw)
+	var fm map[string]interface{}
+	if err := yaml.Unmarshal([]byte(raw[4:end+4]), &fm); err != nil {
+		t.Fatalf("override frontmatter not valid yaml: %v\n%s", err, raw)
 	}
-	if !strings.Contains(raw, "Custom desc") {
-		t.Fatalf("override description not applied:\n%s", raw)
+	// The override globs must replace the inferred ones exactly (no tsx).
+	if got := fm["globs"]; !globsEqual(got, []string{"**/*.custom"}) {
+		t.Fatalf("override globs = %#v, want [**/*.custom]\n%s", got, raw)
+	}
+	if fm["description"] != "Custom desc" {
+		t.Fatalf("override description = %v, want \"Custom desc\"", fm["description"])
 	}
 }
 
@@ -484,4 +492,20 @@ func TestCompileCopilotRemovesGeneratedOnlyFallbackFile(t *testing.T) {
 	if _, err := os.Stat(singlePath); !os.IsNotExist(err) {
 		t.Fatalf("generated-only fallback file should be removed, not left empty (err=%v)", err)
 	}
+}
+
+// globsEqual reports whether a parsed YAML globs value (a []interface{} of
+// strings) equals the expected list, in order.
+func globsEqual(parsed interface{}, want []string) bool {
+	list, ok := parsed.([]interface{})
+	if !ok || len(list) != len(want) {
+		return false
+	}
+	for i, v := range list {
+		s, ok := v.(string)
+		if !ok || s != want[i] {
+			return false
+		}
+	}
+	return true
 }
