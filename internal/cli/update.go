@@ -83,6 +83,37 @@ func runUpdate(args []string, realStdout io.Writer, stderr io.Writer, gf globalF
 		return runAcceptAllSafe(realStdout, stdout, stderr, gf)
 	}
 
+	switch args[0] {
+	case "--accept":
+		if len(args) < 2 || strings.TrimSpace(args[1]) == "" {
+			fmt.Fprintln(stderr, "usage: skills-manager update --accept <skill>")
+			return ExitUsageError
+		}
+		return runUpdateAccept(args[1], realStdout, stdout, stderr, gf)
+	case "--reject":
+		if len(args) < 2 || strings.TrimSpace(args[1]) == "" {
+			fmt.Fprintln(stderr, "usage: skills-manager update --reject <skill>")
+			return ExitUsageError
+		}
+		return runUpdateReject(args[1], realStdout, stdout, stderr, gf)
+	case "--pin":
+		if len(args) < 2 || strings.TrimSpace(args[1]) == "" {
+			fmt.Fprintln(stderr, "usage: skills-manager update --pin <skill> [version]")
+			return ExitUsageError
+		}
+		version := ""
+		if len(args) >= 3 {
+			version = strings.TrimSpace(args[2])
+		}
+		return runUpdatePin(args[1], version, realStdout, stdout, stderr, gf)
+	case "--unpin":
+		if len(args) < 2 || strings.TrimSpace(args[1]) == "" {
+			fmt.Fprintln(stderr, "usage: skills-manager update --unpin <skill>")
+			return ExitUsageError
+		}
+		return runUpdateUnpin(args[1], realStdout, stdout, stderr, gf)
+	}
+
 	fmt.Fprintf(stderr, "unknown update option: %s\n", args[0])
 	return ExitUsageError
 }

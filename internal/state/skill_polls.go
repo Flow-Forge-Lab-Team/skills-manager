@@ -136,6 +136,16 @@ func (db *DB) MarkUpdateAccepted(skillName string) error {
 	return err
 }
 
+// MarkUpdateRejected marks a pending update as rejected, removing it from the
+// pending list. The row is retained (status='rejected') so the rejected version
+// is recorded rather than silently re-detected.
+func (db *DB) MarkUpdateRejected(skillName string) error {
+	_, err := db.Exec(`
+		UPDATE updates SET status='rejected' WHERE skill_name=? AND status='pending'
+	`, skillName)
+	return err
+}
+
 // MarkUpdateSummarized records the advisory summary cache path for a pending update.
 func (db *DB) MarkUpdateSummarized(skillName, summaryStatus, summaryPath string) error {
 	_, err := db.Exec(`

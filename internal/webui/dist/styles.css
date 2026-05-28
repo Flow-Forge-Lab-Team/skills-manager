@@ -93,6 +93,25 @@ textarea { width: 100%; resize: vertical; font-family: ui-monospace, SFMono-Regu
   font-size: 11px; margin: 0 4px 4px 0; overflow: hidden; text-overflow: ellipsis;
 }
 .badge.warn { color: var(--warn); background: rgba(245, 158, 11, 0.1); }
+.badge.danger { color: var(--danger); background: rgba(239, 68, 68, 0.12); border-color: rgba(239, 68, 68, 0.4); }
+.badge.ok { color: var(--ok); background: rgba(16, 185, 129, 0.1); }
+.badge.advisory { color: var(--text-muted); background: var(--bg-elev); font-style: italic; }
+.safety-banner {
+  border: 1px solid var(--danger); background: rgba(239, 68, 68, 0.08);
+  color: var(--danger); border-radius: 8px; padding: 10px 12px; margin-bottom: 10px;
+  font-weight: 600;
+}
+.update-card { margin-bottom: 14px; }
+.update-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+.btn.danger { color: var(--danger); background: rgba(239, 68, 68, 0.1); }
+.btn.confirm { color: var(--ok); background: rgba(16, 185, 129, 0.12); }
+.toolbar { display: flex; gap: 12px; flex-wrap: wrap; align-items: end; margin-bottom: 14px; }
+.toolbar .field { margin-bottom: 0; }
+.advisory-note { font-size: 11px; color: var(--text-faint); margin-top: 4px; }
+.matrix-wrap td.heat-1 { background: rgba(124,124,255,0.12); text-align: center; }
+.matrix-wrap td.heat-2 { background: rgba(124,124,255,0.28); text-align: center; }
+.matrix-wrap td.heat-3 { background: rgba(124,124,255,0.5); text-align: center; }
+.matrix-wrap td.heat-4 { background: rgba(124,124,255,0.8); text-align: center; color: #fff; }
 table { width: 100%; border-collapse: collapse; font-size: 12px; }
 th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); }
 th { color: var(--text-faint); font-weight: 500; font-size: 11px; text-transform: uppercase; }

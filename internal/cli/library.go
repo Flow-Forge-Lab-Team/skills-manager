@@ -49,6 +49,9 @@ type skillMeta struct {
 	Summary        string              `yaml:"summary,omitempty"`
 	LocalChanges   bool                `yaml:"local_changes,omitempty"`
 	LastChangedAt  string              `yaml:"last_changed_at,omitempty"`
+	// Pinned, when set, freezes the skill at this version: the check/poll path
+	// will not stage upstream updates past it until the pin is removed.
+	Pinned string `yaml:"pinned,omitempty"`
 }
 
 func ensureLibrary(home string) (string, error) {

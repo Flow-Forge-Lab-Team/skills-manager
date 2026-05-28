@@ -254,34 +254,98 @@ func (s *serveServer) handleUpdates(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if updates == nil {
-		updates = []pendingUpdateView{}
+		updates = []triageUpdateView{}
 	}
 	writeJSONResponse(w, updates)
 }
 
 func (s *serveServer) handleUpdateSub(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
+	rest := strings.TrimPrefix(r.URL.Path, "/api/v1/updates/")
+	parts := strings.Split(strings.Trim(rest, "/"), "/")
+	if len(parts) != 2 || parts[0] == "" {
+		http.Error(w, "expected /api/v1/updates/<skill>/<diff|accept|reject|pin|unpin|summary>", http.StatusBadRequest)
+		return
+	}
+	skill, action := parts[0], parts[1]
+
+	if action == "diff" {
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		diff, err := loadTriageUpdateDiff(s.home, skill)
+		if err != nil {
+			if strings.Contains(err.Error(), "no pending") {
+				writeAPIError(w, http.StatusNotFound, err)
+				return
+			}
+			writeAPIError(w, http.StatusInternalServerError, err)
+			return
+		}
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(diff))
+		return
+	}
+
+	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	rest := strings.TrimPrefix(r.URL.Path, "/api/v1/updates/")
-	parts := strings.Split(strings.Trim(rest, "/"), "/")
-	if len(parts) != 2 || parts[1] != "diff" {
-		http.Error(w, "expected /api/v1/updates/<skill>/diff", http.StatusBadRequest)
+	if err := validateSkillName(skill); err != nil {
+		writeAPIError(w, http.StatusBadRequest, err)
 		return
 	}
-	diff, err := loadTriageUpdateDiff(s.home, parts[0])
-	if err != nil {
-		if strings.Contains(err.Error(), "no pending") {
-			writeAPIError(w, http.StatusNotFound, err)
-			return
+	if !s.authorizeAPIWrite(w, r) {
+		return
+	}
+
+	var args []string
+	switch action {
+	case "accept":
+		args = []string{"update", "--accept", skill}
+	case "reject":
+		args = []string{"update", "--reject", skill}
+	case "unpin":
+		args = []string{"update", "--unpin", skill}
+	case "pin":
+		var body struct {
+			Version string `json:"version"`
 		}
-		writeAPIError(w, http.StatusInternalServerError, err)
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		args = []string{"update", "--pin", skill}
+		if strings.TrimSpace(body.Version) != "" {
+			args = append(args, strings.TrimSpace(body.Version))
+		}
+	case "summary":
+		var body struct {
+			Mode string `json:"mode"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		mode := "--auto"
+		if body.Mode == "handoff" {
+			mode = "--handoff"
+		}
+		args = []string{"summarize", skill, mode}
+	default:
+		http.Error(w, "unknown update action: "+action, http.StatusBadRequest)
 		return
 	}
-	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write([]byte(diff))
+
+	fullArgs := append([]string{"--json", "--non-interactive", "--quiet"}, args...)
+	var stdoutBuf, stderrBuf bytes.Buffer
+	code := s.runCLIInHome(fullArgs, &stdoutBuf, &stderrBuf)
+	status := http.StatusOK
+	if code != ExitSuccess {
+		status = http.StatusBadRequest
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(cliRunResponse{
+		ExitCode: code,
+		Stdout:   stdoutBuf.String(),
+		Stderr:   stderrBuf.String(),
+	})
 }
 
 func (s *serveServer) handleMatrix(w http.ResponseWriter, r *http.Request) {

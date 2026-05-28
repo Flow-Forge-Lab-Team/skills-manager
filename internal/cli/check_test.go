@@ -283,6 +283,55 @@ origin:
 	}
 }
 
+func TestCheckSkipsPinnedSkill(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+
+	stateDB, err := state.Open(home)
+	if err != nil {
+		t.Fatalf("Open state: %v", err)
+	}
+	defer stateDB.Close()
+
+	skillDir := filepath.Join(home, "library", "pdf")
+	if err := os.MkdirAll(skillDir, 0755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte("---\nname: pdf\ndescription: PDF tool\n---\nBody v1\n"), 0644); err != nil {
+		t.Fatalf("write SKILL.md: %v", err)
+	}
+	// GitHub-sourced but pinned: check must not stage an update past the pin.
+	metaContent := `version: 1
+pinned: abc1234
+origin:
+  type: github
+  url: https://github.com/user/pdf-skill
+  commit: abc1234
+`
+	if err := os.WriteFile(filepath.Join(skillDir, ".skill-meta.yaml"), []byte(metaContent), 0644); err != nil {
+		t.Fatalf("write meta: %v", err)
+	}
+
+	poller := &fakePoller{responses: map[string]fakeResponse{
+		"user/pdf-skill": {commit: "def5678", etag: "w/\"new-etag\""},
+	}}
+
+	var stdout, stderr bytes.Buffer
+	code := runCheckWithPoller(nil, &stdout, &stderr, globalFlags{}, poller)
+	if code != 0 {
+		t.Fatalf("runCheck returned %d, want 0\nstderr: %s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "pinned") {
+		t.Fatalf("expected pinned skip in output:\n%s", stdout.String())
+	}
+	if _, err := os.Stat(filepath.Join(skillDir, ".update-pending")); !os.IsNotExist(err) {
+		t.Fatalf("pinned skill must not stage a pending update, err=%v", err)
+	}
+	if pending, _ := stateDB.GetPendingUpdate("pdf"); pending != nil {
+		t.Fatalf("pinned skill must not record a pending update: %+v", pending)
+	}
+}
+
 func TestCheckSkipsNonGitHub(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("SKILLS_MANAGER_HOME", home)
