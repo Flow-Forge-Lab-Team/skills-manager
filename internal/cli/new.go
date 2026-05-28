@@ -273,8 +273,10 @@ func validateAuthoredSkill(name, draft string) error {
 		return fmt.Errorf("unterminated frontmatter")
 	}
 	var fm struct {
-		Name        string `yaml:"name"`
-		Description string `yaml:"description"`
+		Name        string   `yaml:"name"`
+		Description string   `yaml:"description"`
+		Compatible  []string `yaml:"compatible"`
+		Exclusive   string   `yaml:"exclusive"`
 	}
 	if err := yaml.Unmarshal([]byte(trimmed[3:end+3]), &fm); err != nil {
 		return fmt.Errorf("invalid frontmatter: %w", err)
@@ -288,6 +290,15 @@ func validateAuthoredSkill(name, draft string) error {
 	}
 	if len(desc) < 15 {
 		return fmt.Errorf("description too short to be activation-safe")
+	}
+	// Descriptions drive activation: require an explicit "when to use" trigger
+	// (per the skills-author rules) rather than a vague summary.
+	if !strings.Contains(strings.ToLower(desc), "when") {
+		return fmt.Errorf("description must state when to use the skill (e.g. \"Use when …\")")
+	}
+	// Guided authoring must declare compatibility, not leave it implicitly portable.
+	if len(fm.Compatible) == 0 && strings.TrimSpace(fm.Exclusive) == "" {
+		return fmt.Errorf("missing compatibility declaration (compatible: [...] or exclusive: <harness>)")
 	}
 	for _, line := range strings.Split(draft, "\n") {
 		if looksSuspicious(strings.ToLower(strings.TrimSpace(line))) {
