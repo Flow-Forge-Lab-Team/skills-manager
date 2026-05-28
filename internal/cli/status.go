@@ -2,6 +2,7 @@ package cli
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -128,18 +129,36 @@ func countPendingUpdates(libraryPath string) int {
 	return count
 }
 
-// countWatcherNotifications counts pending watcher detections written under
-// ~/.skills-manager/notifications/ by `skills-manager watch`.
+// countWatcherNotifications counts unresolved watcher detections written under
+// ~/.skills-manager/notifications/ by `skills-manager watch`. A notification is
+// resolved once its fingerprint appears in the library (e.g. after ingest), so
+// resolved files are pruned and not counted — otherwise status would report
+// handled alerts forever.
 func countWatcherNotifications(home string) int {
-	entries, err := os.ReadDir(filepath.Join(home, "notifications"))
+	dir := filepath.Join(home, "notifications")
+	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return 0
 	}
+	inLibrary := buildFingerprintIndex(filepath.Join(home, "library"))
 	count := 0
 	for _, e := range entries {
-		if !e.IsDir() && strings.HasPrefix(e.Name(), "watch-") && strings.HasSuffix(e.Name(), ".json") {
-			count++
+		if e.IsDir() || !strings.HasPrefix(e.Name(), "watch-") || !strings.HasSuffix(e.Name(), ".json") {
+			continue
 		}
+		path := filepath.Join(dir, e.Name())
+		data, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		var n watchNotification
+		if json.Unmarshal(data, &n) == nil && n.Fingerprint != "" {
+			if _, ok := inLibrary[n.Fingerprint]; ok {
+				_ = os.Remove(path) // resolved (now in library) — prune
+				continue
+			}
+		}
+		count++
 	}
 	return count
 }

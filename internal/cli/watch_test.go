@@ -136,6 +136,31 @@ func TestWatchOnceNoDuplicatePrompts(t *testing.T) {
 	if st.WatcherNotifications != 2 {
 		t.Fatalf("status watcher_notifications = %d, want 2", st.WatcherNotifications)
 	}
+
+	// Resolve the newbie alert by adding its fingerprint to the library. status
+	// must stop counting (and prune) the resolved notification.
+	libFingerprint(t, libraryPath, "newbie", filepath.Join(harness, "newbie", "SKILL.md"))
+	if n := countWatcherNotifications(home); n != 1 {
+		t.Fatalf("after resolving newbie, watcher count = %d, want 1 (drift only)", n)
+	}
+	// The resolved ingest-candidate file should have been pruned.
+	for _, e := range mustReadDir(t, notifDir) {
+		data, _ := os.ReadFile(filepath.Join(notifDir, e.Name()))
+		var n watchNotification
+		json.Unmarshal(data, &n)
+		if n.Skill == "newbie" {
+			t.Fatalf("resolved newbie notification should have been pruned")
+		}
+	}
+}
+
+func mustReadDir(t *testing.T, dir string) []os.DirEntry {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return entries
 }
 
 func TestWatchAutoIngestSkipsSuspicious(t *testing.T) {
