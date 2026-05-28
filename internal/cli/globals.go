@@ -408,6 +408,16 @@ Subcommands:
   setup             print OTEL + PreToolUse hook setup instructions
 
 ` + globalFlagHelp()
+	case "variants":
+		return `skills-manager variants [skill] [--refresh]
+
+Inspect per-harness ported skill variants (.variants.yaml). With no skill,
+list skills that have variants and flag stale ones (canonical SKILL.md
+changed since the ports were generated). With a skill, show its variant
+map. --refresh re-stamps the canonical fingerprint after a manual re-port
+(content re-porting itself is done via the skills-port skill).
+
+` + globalFlagHelp()
 	case "compile":
 		return `skills-manager compile <harness> [project-path]
 
@@ -546,6 +556,7 @@ Commands:
   watch       poll harness paths for new skills; --daemon/--stop/--auto-ingest
   assemble    regenerate project AGENTS.md from installed always-on skills
   compile     translate installed skills to a harness format (cursor, copilot)
+  variants    inspect per-harness ported skill variants; --refresh re-stamps
   doctor      diagnose problems; --rebuild-state --rebuild-catalog
   set         update a skill's compatibility declaration
   help        show help for a command

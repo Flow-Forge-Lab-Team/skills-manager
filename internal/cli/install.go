@@ -629,6 +629,13 @@ func runInstall(args []string, realStdout io.Writer, stderr io.Writer, syncMode 
 				return 3
 			}
 			if wrote {
+				// Pick the per-harness ported variant (if any) for this target
+				// base before fingerprinting, so the harness sees a single
+				// SKILL.md and the manifest records the final state.
+				if err := applyVariantToTarget(src, target, harnessesForBase(candidate.Harnesses, targetBase)); err != nil {
+					fmt.Fprintf(stderr, "apply variant for %s: %v\n", relTarget, err)
+					return 3
+				}
 				installed++
 				installedSkillSet[candidate.Skill.Name] = true
 				managed[relTarget] = true
