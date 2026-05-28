@@ -72,6 +72,9 @@ func TestServeAPIReadsFreshDiskState(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(skillsDir, "installed.lock"), lockBytes, 0644); err != nil {
 			t.Fatal(err)
 		}
+		if err := os.WriteFile(filepath.Join(skillsDir, "project.yaml"), []byte("version: 1\ncategories: [Engineering]\ntags: [fixture]\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
 		manifest := installManifest{
 			Version:     1,
 			ProjectPath: projectPath,
@@ -286,6 +289,115 @@ func TestServeAPIReadsFreshDiskState(t *testing.T) {
 		assertFirst("requirements=declared&page_size=1", "skill-5")
 	})
 
+	t.Run("skill detail includes usage install and metadata", func(t *testing.T) {
+		resp, err := http.Get(ts.URL + "/api/v1/skills/skill-0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("status = %d, want 200", resp.StatusCode)
+		}
+		var detail map[string]interface{}
+		if err := json.NewDecoder(resp.Body).Decode(&detail); err != nil {
+			t.Fatal(err)
+		}
+		if detail["name"] != "skill-0" {
+			t.Fatalf("name = %v, want skill-0", detail["name"])
+		}
+		projects, ok := detail["installed_projects"].([]interface{})
+		if !ok || len(projects) != projectCount {
+			t.Fatalf("installed_projects = %#v, want %d entries", detail["installed_projects"], projectCount)
+		}
+	})
+
+	t.Run("skill metadata patch updates catalog and sidecar", func(t *testing.T) {
+		sess := serveSessionToken(t, ts.URL)
+		body := strings.NewReader(`{"categories":["Ops","Engineering","Ops"],"tags":["go","triage"],"requirements":{"tools":[{"name":"git","required":true,"check":"git --version"}]}}`)
+		req, _ := http.NewRequest(http.MethodPatch, ts.URL+"/api/v1/skills/skill-5", body)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-Skills-Manager-Token", sess)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("status = %d, want 200", resp.StatusCode)
+		}
+		catRead, err := readCatalog(filepath.Join(libraryPath, "catalog.yaml"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var got *catalogSkill
+		for i := range catRead.Skills {
+			if catRead.Skills[i].Name == "skill-5" {
+				got = &catRead.Skills[i]
+				break
+			}
+		}
+		if got == nil {
+			t.Fatal("skill-5 missing from catalog")
+		}
+		if strings.Join(got.Categories, ",") != "Engineering,Ops" {
+			t.Fatalf("categories = %#v, want sorted deduped Engineering,Ops", got.Categories)
+		}
+		if len(got.Requirements.Tools) != 1 || got.Requirements.Tools[0].Check != "git --version" {
+			t.Fatalf("requirements = %+v, want git check", got.Requirements)
+		}
+		meta, err := readSkillMeta(filepath.Join(libraryPath, "skill-5", ".skill-meta.yaml"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Join(meta.Tags, ",") != "go,triage" {
+			t.Fatalf("meta tags = %#v, want go,triage", meta.Tags)
+		}
+	})
+
+	t.Run("skill compatibility endpoint uses set command path", func(t *testing.T) {
+		sess := serveSessionToken(t, ts.URL)
+		body := strings.NewReader(`{"mode":"exclusive","harness":"codex","reason":"fixture"}`)
+		req, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/v1/skills/skill-5/compatibility", body)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-Skills-Manager-Token", sess)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("status = %d, want 200", resp.StatusCode)
+		}
+		meta, err := readSkillMeta(filepath.Join(libraryPath, "skill-5", ".skill-meta.yaml"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if meta.Compatibility.Mode != "exclusive" || meta.Compatibility.Harness != "codex" {
+			t.Fatalf("compatibility = %+v, want exclusive codex", meta.Compatibility)
+		}
+	})
+
+	t.Run("project detail mirrors match explanation and warnings", func(t *testing.T) {
+		resp, err := http.Get(ts.URL + "/api/v1/projects/proj-0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("status = %d, want 200", resp.StatusCode)
+		}
+		var detail triageProjectDetail
+		if err := json.NewDecoder(resp.Body).Decode(&detail); err != nil {
+			t.Fatal(err)
+		}
+		if detail.Slug != "proj-0" || detail.SkillCount != 2 {
+			t.Fatalf("detail = %+v, want proj-0 with 2 skills", detail)
+		}
+		if len(detail.MatchExplain) == 0 {
+			t.Fatalf("match_explain empty")
+		}
+	})
+
 	t.Run("static index", func(t *testing.T) {
 		resp, err := http.Get(ts.URL + "/")
 		if err != nil {
@@ -306,6 +418,25 @@ func TestParseServeOptions(t *testing.T) {
 	if opts.port != 8888 || opts.host != "0.0.0.0" {
 		t.Fatalf("opts = %+v", opts)
 	}
+}
+
+func serveSessionToken(t *testing.T, baseURL string) string {
+	t.Helper()
+	resp, err := http.Get(baseURL + "/api/v1/session")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var sess struct {
+		Token string `json:"token"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&sess); err != nil {
+		t.Fatal(err)
+	}
+	if sess.Token == "" {
+		t.Fatal("empty session token")
+	}
+	return sess.Token
 }
 
 func TestServeRunCLIWhitelist(t *testing.T) {
@@ -357,5 +488,130 @@ func TestServeBindsLocalhostByDefault(t *testing.T) {
 	addr := net.JoinHostPort(opts.host, strconv.Itoa(opts.port))
 	if !strings.HasPrefix(addr, "127.0.0.1:") {
 		t.Fatalf("default addr = %s, want 127.0.0.1", addr)
+	}
+}
+
+func TestServeProjectDetailExcludesNonMatchingPortableSkills(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+	libraryPath := filepath.Join(home, "library")
+	for _, name := range []string{"match-cat", "match-tag", "portable-unrelated"} {
+		writeFile(t, filepath.Join(libraryPath, name, "SKILL.md"), "---\nname: "+name+"\ndescription: fixture\n---\n")
+	}
+	cat := catalog{Version: 1, Skills: []catalogSkill{
+		{Name: "match-cat", Categories: []string{"Engineering"}},
+		{Name: "match-tag", Tags: []string{"go"}},
+		// Portable: compatible with every harness but matches no category/tag.
+		{Name: "portable-unrelated", Categories: []string{"Marketing"}, Compatibility: compatibility{ExplicitPortable: true}},
+	}}
+	if err := writeCatalog(filepath.Join(libraryPath, "catalog.yaml"), cat); err != nil {
+		t.Fatal(err)
+	}
+
+	projectPath := filepath.Join(home, "projects", "proj-x")
+	skillsDir := filepath.Join(projectPath, ".skills")
+	if err := os.MkdirAll(skillsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(skillsDir, "project.yaml"), "version: 1\ncategories: [Engineering]\ntags: [go]\nharnesses: [claude, codex]\n")
+	manifestsDir := filepath.Join(home, "manifests")
+	if err := os.MkdirAll(manifestsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := json.Marshal(installManifest{Version: 1, ProjectPath: projectPath, ProjectSlug: "proj-x", ManagedPaths: []string{}})
+	if err := os.WriteFile(filepath.Join(manifestsDir, "proj-x.json"), raw, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	srv := newServeServer(home)
+	ts := httptest.NewServer(srv)
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/api/v1/projects/proj-x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	var detail triageProjectDetail
+	if err := json.NewDecoder(resp.Body).Decode(&detail); err != nil {
+		t.Fatal(err)
+	}
+	names := func(cs []triageProjectCandidate) map[string]bool {
+		m := map[string]bool{}
+		for _, c := range cs {
+			m[c.Name] = true
+		}
+		return m
+	}
+	explain := names(detail.MatchExplain)
+	if !explain["match-cat"] || !explain["match-tag"] {
+		t.Fatalf("match_explain missing real candidates: %#v", explain)
+	}
+	if explain["portable-unrelated"] {
+		t.Fatalf("match_explain leaked non-matching portable skill: %#v", explain)
+	}
+	if names(detail.PreviewSkills)["portable-unrelated"] {
+		t.Fatalf("preview_skills leaked non-matching portable skill")
+	}
+}
+
+func TestServeSkillMetadataPatchPreservesUnmodeledRequirements(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+	libraryPath := filepath.Join(home, "library")
+	writeFile(t, filepath.Join(libraryPath, "runtime-heavy", "SKILL.md"), "---\nname: runtime-heavy\ndescription: fixture\n---\n")
+	writeFile(t, filepath.Join(libraryPath, "runtime-heavy", ".skill-meta.yaml"), `version: 1
+tags:
+  - old
+requirements:
+  tools:
+    - name: "gh"
+      required: true
+      check: "gh auth status"
+  custom_review:
+    level: strict
+`)
+	if !sidecarHasUnmodeledRequirements(filepath.Join(libraryPath, "runtime-heavy", ".skill-meta.yaml")) {
+		t.Fatal("precondition: unmodeled requirements were not detected")
+	}
+	cat := catalog{Skills: []catalogSkill{{Name: "runtime-heavy", Tags: []string{"old"}}}}
+	if err := writeCatalog(filepath.Join(libraryPath, "catalog.yaml"), cat); err != nil {
+		t.Fatal(err)
+	}
+
+	srv := newServeServer(home)
+	ts := httptest.NewServer(srv)
+	defer ts.Close()
+
+	sess := serveSessionToken(t, ts.URL)
+	body := strings.NewReader(`{"tags":["triage"]}`)
+	req, _ := http.NewRequest(http.MethodPatch, ts.URL+"/api/v1/skills/runtime-heavy", body)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Skills-Manager-Token", sess)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+
+	metaText := readFile(t, filepath.Join(libraryPath, "runtime-heavy", ".skill-meta.yaml"))
+	if !strings.Contains(metaText, "custom_review:") || !strings.Contains(metaText, "level: strict") {
+		t.Fatalf("unmodeled custom_review section was dropped:\n%s", metaText)
+	}
+	meta, err := readSkillMeta(filepath.Join(libraryPath, "runtime-heavy", ".skill-meta.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(meta.Tags, ",") != "triage" {
+		t.Fatalf("meta tags = %#v, want triage", meta.Tags)
+	}
+	if !hasToolRequirement(meta.Requirements.Tools, "gh") {
+		t.Fatalf("gh requirement lost: %+v", meta.Requirements.Tools)
 	}
 }
