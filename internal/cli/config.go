@@ -25,13 +25,19 @@ type updateConfig struct {
 
 const defaultUpdateFrequencyHours = 24
 
+// effectiveUpdateFrequencyHours is the configured re-poll interval in hours,
+// falling back to the default when unset. This is the value `check`, the
+// settings API, and `config get/show` all report so behavior is consistent.
+func (c managerConfig) effectiveUpdateFrequencyHours() int {
+	if c.Update.FrequencyHours < 1 {
+		return defaultUpdateFrequencyHours
+	}
+	return c.Update.FrequencyHours
+}
+
 // updateFrequency returns the configured re-poll interval, or the default.
 func (c managerConfig) updateFrequency() time.Duration {
-	hours := c.Update.FrequencyHours
-	if hours < 1 {
-		hours = defaultUpdateFrequencyHours
-	}
-	return time.Duration(hours) * time.Hour
+	return time.Duration(c.effectiveUpdateFrequencyHours()) * time.Hour
 }
 
 type llmConfig struct {
@@ -343,7 +349,7 @@ func getConfigValue(cfg managerConfig, key string) (string, error) {
 	case "llm.model":
 		return cfg.LLM.Model, nil
 	case "update.frequency-hours":
-		return strconv.Itoa(cfg.Update.FrequencyHours), nil
+		return strconv.Itoa(cfg.effectiveUpdateFrequencyHours()), nil
 	default:
 		return "", fmt.Errorf("unknown config key: %s", key)
 	}
@@ -385,7 +391,7 @@ func printManagerConfig(w io.Writer, cfg managerConfig) {
 	fmt.Fprintln(w, "  usage:")
 	printLLMUsageIndented(w, cfg.LLM.Usage, "    ")
 	fmt.Fprintln(w, "update:")
-	fmt.Fprintf(w, "  frequency_hours: %d\n", cfg.Update.FrequencyHours)
+	fmt.Fprintf(w, "  frequency_hours: %d\n", cfg.effectiveUpdateFrequencyHours())
 }
 
 func printLLMUsage(w io.Writer, usage llmUsage) {

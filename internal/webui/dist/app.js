@@ -739,22 +739,29 @@ async function renderCrossMachine(content) {
     return;
   }
 
-  const actions = el("div", { className: "update-actions" });
-  const pull = el("button", { className: "btn confirm", text: "Pull" });
-  pull.onclick = () => runSync("pull");
-  const push = el("button", { className: "btn", text: "Push" });
-  push.onclick = () => runSync("push");
-  const status = el("button", { className: "btn", text: "Refresh status" });
-  status.onclick = () => render();
-  actions.appendChild(pull);
-  actions.appendChild(push);
-  actions.appendChild(status);
-  content.appendChild(el("section", { className: "panel" }, [
+  const syncPanel = el("section", { className: "panel" }, [
     el("div", { className: "panel-title", text: "Sync — backed by `skills-manager sync-library`" }),
     el("p", { className: "muted", text: "HEAD: " + (cm.head_commit || "unknown") }),
     el("pre", { className: "diff compact", text: cm.git_status || "(clean)" }),
-    actions,
-  ]));
+  ]);
+  if (cm.has_remote) {
+    // "Refresh status" goes through the status action so the library is
+    // fetched before reporting, surfacing remote divergence.
+    const actions = el("div", { className: "update-actions" });
+    const pull = el("button", { className: "btn confirm", text: "Pull" });
+    pull.onclick = () => runSync("pull");
+    const push = el("button", { className: "btn", text: "Push" });
+    push.onclick = () => runSync("push");
+    const status = el("button", { className: "btn", text: "Refresh status" });
+    status.onclick = () => runSync("status");
+    actions.appendChild(pull);
+    actions.appendChild(push);
+    actions.appendChild(status);
+    syncPanel.appendChild(actions);
+  } else {
+    syncPanel.appendChild(el("p", { className: "advisory-note", text: "Local-only library (no git remote). Configure a remote with `skills-manager init-library` to enable pull/push." }));
+  }
+  content.appendChild(syncPanel);
 
   const machinePanel = el("section", { className: "panel" }, [el("div", { className: "panel-title", text: "Machines" })]);
   if (!(cm.machines || []).length) {

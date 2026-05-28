@@ -140,16 +140,12 @@ func loadTriageSettings(home string) (triageSettings, error) {
 	if err != nil {
 		return triageSettings{}, err
 	}
-	freq := cfg.Update.FrequencyHours
-	if freq < 1 {
-		freq = defaultUpdateFrequencyHours
-	}
 	return triageSettings{
 		Mode:                 cfg.Mode,
 		LLMProvider:          cfg.LLM.Provider,
 		LLMModel:             cfg.LLM.Model,
 		LLMAPIKeyEnv:         cfg.LLM.APIKeyEnv,
-		UpdateFrequencyHours: freq,
+		UpdateFrequencyHours: cfg.effectiveUpdateFrequencyHours(),
 		LibraryHasRemote:     hasGitRemote(filepath.Join(home, "library")),
 	}, nil
 }

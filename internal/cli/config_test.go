@@ -100,6 +100,19 @@ func TestConfigUpdateFrequencyRoundTrip(t *testing.T) {
 	}
 }
 
+func TestConfigGetUpdateFrequencyReportsEffectiveDefault(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+	// No config written: get/show must report the effective default, not 0.
+	var stdout, stderr bytes.Buffer
+	if code := Run([]string{"config", "get", "update.frequency_hours"}, &stdout, &stderr); code != ExitSuccess {
+		t.Fatalf("get returned %d\nstderr:%s", code, stderr.String())
+	}
+	if strings.TrimSpace(stdout.String()) != "24" {
+		t.Fatalf("defaulted get = %q, want 24", strings.TrimSpace(stdout.String()))
+	}
+}
+
 func TestConfigSetPreservesUnmanagedSections(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("SKILLS_MANAGER_HOME", home)
