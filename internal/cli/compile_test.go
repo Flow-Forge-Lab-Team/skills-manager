@@ -463,3 +463,23 @@ func TestCompileCopilotIgnoresCursorOverride(t *testing.T) {
 		t.Fatalf("copilot applyTo should use the react-inferred glob:\n%s", raw)
 	}
 }
+
+func TestCompileCopilotRemovesGeneratedOnlyFallbackFile(t *testing.T) {
+	// Single-file fallback created solely by the compiler must be removed (not
+	// left empty) when nothing qualifies anymore.
+	skills := []sampleSkill{{name: "gen", tags: []string{"misc"}}}
+	home, projectPath := setupCompileProject(t, skills)
+	singlePath := filepath.Join(projectPath, ".github", "copilot-instructions.md")
+
+	if _, err := compileForHarness(home, projectPath, "copilot", ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(singlePath); err != nil {
+		t.Fatalf("expected generated fallback file: %v", err)
+	}
+	// Disable copilot → file should be removed entirely (no user content).
+	pruneAllCompileHarnesses(projectPath)
+	if _, err := os.Stat(singlePath); !os.IsNotExist(err) {
+		t.Fatalf("generated-only fallback file should be removed, not left empty (err=%v)", err)
+	}
+}

@@ -558,7 +558,11 @@ func writeCopilotInstructions(projectPath string, rules []compiledRule) ([]strin
 		if strings.Contains(existing, copilotBeginMarker) {
 			cleaned := removeMarkedBlock(existing, copilotBeginMarker, copilotEndMarker)
 			if cleaned != existing {
-				if err := os.WriteFile(singlePath, []byte(cleaned), 0o644); err != nil {
+				if strings.TrimSpace(cleaned) == "" {
+					// File held only our generated block — remove it entirely
+					// rather than leaving an empty file behind.
+					_ = os.Remove(singlePath)
+				} else if err := os.WriteFile(singlePath, []byte(cleaned), 0o644); err != nil {
 					return written, err
 				}
 				written = append(written, singleRel)
