@@ -73,6 +73,31 @@ type triageProject struct {
 	Skills       []string `json:"skills,omitempty"`
 }
 
+type triageProjectDetail struct {
+	triageProject
+	Config          projectConfig             `json:"config"`
+	DetectedStack   []string                  `json:"detected_stack"`
+	PreviewSkills   []triageProjectCandidate  `json:"preview_skills"`
+	ManualSkills    []string                  `json:"manual_skills"`
+	SuggestedSkills []triageProjectCandidate  `json:"suggested_skills"`
+	Warnings        []triageDependencyWarning `json:"warnings"`
+	MatchExplain    []triageProjectCandidate  `json:"match_explain"`
+}
+
+type triageProjectCandidate struct {
+	Name      string   `json:"name"`
+	Score     int      `json:"score"`
+	Reasons   []string `json:"reasons,omitempty"`
+	Harnesses []string `json:"harnesses,omitempty"`
+	Warnings  []string `json:"warnings,omitempty"`
+}
+
+type triageDependencyWarning struct {
+	Skill string   `json:"skill"`
+	Kind  string   `json:"kind"`
+	Names []string `json:"names"`
+}
+
 type triageMatrix struct {
 	Skills   []string            `json:"skills"`
 	Projects []string            `json:"projects"`
@@ -268,16 +293,67 @@ func loadTriageSkillDetail(home, name string) (map[string]interface{}, error) {
 	}
 
 	return map[string]interface{}{
-		"name":           skill.Name,
-		"summary":        skill.Summary,
-		"categories":     skill.Categories,
-		"tags":           skill.Tags,
-		"compatibility":  skill.Compatibility,
-		"requirements":   skill.Requirements,
-		"origin":         meta.Origin,
-		"fingerprint":    fingerprintOut,
-		"categorization": meta.Categorization,
+		"name":                skill.Name,
+		"summary":             skill.Summary,
+		"categories":          skill.Categories,
+		"tags":                skill.Tags,
+		"compatibility":       skill.Compatibility,
+		"compatibility_label": compatibilityLabel(skill.Compatibility),
+		"requirements":        skill.Requirements,
+		"requirements_status": requirementsStatus(skill.Requirements),
+		"origin":              meta.Origin,
+		"fingerprint":         fingerprintOut,
+		"categorization":      meta.Categorization,
+		"installed_projects":  installedProjectSlugs(home, name),
+		"usage_30d":           usageForSkill(home, name),
+		"last_activity_at":    lastActivityForSkill(home, name),
 	}, nil
+}
+
+func updateTriageSkillMetadata(home, name string, req triageSkillMetadataUpdate) error {
+	if err := validateSkillName(name); err != nil {
+		return err
+	}
+	cat, libraryPath, err := loadTriageCatalog(home)
+	if err != nil {
+		return err
+	}
+	idx := -1
+	for i := range cat.Skills {
+		if cat.Skills[i].Name == name {
+			idx = i
+			break
+		}
+	}
+	if idx == -1 {
+		return fmt.Errorf("skill %q not found", name)
+	}
+	skillPath := filepath.Join(libraryPath, name)
+	metaPath := filepath.Join(skillPath, ".skill-meta.yaml")
+	if _, err := os.Stat(filepath.Join(skillPath, "SKILL.md")); err != nil {
+		return fmt.Errorf("skill %q not found: %w", name, err)
+	}
+
+	meta, _ := readSkillMeta(metaPath)
+	meta.Version = 1
+	if req.Categories != nil {
+		clean := normalizeTriageList(*req.Categories)
+		cat.Skills[idx].Categories = clean
+		meta.Categories = clean
+	}
+	if req.Tags != nil {
+		clean := normalizeTriageList(*req.Tags)
+		cat.Skills[idx].Tags = clean
+		meta.Tags = clean
+	}
+	if req.Requirements != nil {
+		cat.Skills[idx].Requirements = *req.Requirements
+		meta.Requirements = *req.Requirements
+	}
+	if err := writeSkillMeta(metaPath, meta); err != nil {
+		return err
+	}
+	return writeCatalog(filepath.Join(libraryPath, "catalog.yaml"), cat)
 }
 
 func loadTriageProjects(home string) ([]triageProject, error) {
@@ -319,6 +395,56 @@ func loadTriageProjects(home string) ([]triageProject, error) {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Slug < out[j].Slug })
 	return out, nil
+}
+
+func loadTriageProjectDetail(home, slug string) (triageProjectDetail, error) {
+	projects, err := loadTriageProjects(home)
+	if err != nil {
+		return triageProjectDetail{}, err
+	}
+	var project triageProject
+	for _, p := range projects {
+		if p.Slug == slug {
+			project = p
+			break
+		}
+	}
+	if project.Slug == "" {
+		return triageProjectDetail{}, fmt.Errorf("project %q not found", slug)
+	}
+	detail := triageProjectDetail{triageProject: project}
+	configPath := filepath.Join(project.ProjectPath, ".skills", "project.yaml")
+	if cfg, err := readProjectConfig(configPath); err == nil {
+		detail.Config = cfg
+	}
+	detail.DetectedStack = detectedStackTags(detail.Config.Tags)
+	cat, _, err := loadTriageCatalog(home)
+	if err != nil {
+		return detail, err
+	}
+	installed := set(project.Skills)
+	manual := set(detail.Config.AlwaysInclude)
+	detail.ManualSkills = append(detail.ManualSkills, detail.Config.AlwaysInclude...)
+	sort.Strings(detail.ManualSkills)
+	for _, c := range scoredProjectCandidates(cat, detail.Config, installed, false) {
+		if manual[c.Name] {
+			continue
+		}
+		detail.MatchExplain = append(detail.MatchExplain, c)
+		if c.Score > 0 || len(c.Harnesses) > 0 {
+			detail.PreviewSkills = append(detail.PreviewSkills, c)
+		}
+		if !installed[c.Name] && c.Score > 0 {
+			detail.SuggestedSkills = append(detail.SuggestedSkills, c)
+		}
+	}
+	for _, skill := range cat.Skills {
+		if !installed[skill.Name] {
+			continue
+		}
+		detail.Warnings = append(detail.Warnings, dependencyWarnings(skill)...)
+	}
+	return detail, nil
 }
 
 func loadTriageUpdates(home string) ([]pendingUpdateView, error) {
@@ -600,6 +726,127 @@ func loadTriageUpdateBadges(home string) map[string][]string {
 		}
 		out[update.SkillName] = badges
 	}
+	return out
+}
+
+func installedProjectSlugs(home, skillName string) []string {
+	projects, err := loadTriageProjects(home)
+	if err != nil {
+		return []string{}
+	}
+	var out []string
+	for _, project := range projects {
+		if triageContainsString(project.Skills, skillName) {
+			out = append(out, project.Slug)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+func usageForSkill(home, skillName string) int {
+	db, err := state.Open(home)
+	if err != nil {
+		return 0
+	}
+	defer db.Close()
+	cutoff := time.Now().UTC().AddDate(0, 0, -30).Format(time.RFC3339)
+	var count int
+	_ = db.QueryRow(`SELECT COUNT(*) FROM invocations WHERE skill_name = ? AND invoked_at >= ?`, skillName, cutoff).Scan(&count)
+	return count
+}
+
+func lastActivityForSkill(home, skillName string) string {
+	db, err := state.Open(home)
+	if err != nil {
+		return ""
+	}
+	defer db.Close()
+	var at string
+	_ = db.QueryRow(`SELECT MAX(invoked_at) FROM invocations WHERE skill_name = ?`, skillName).Scan(&at)
+	return at
+}
+
+func scoredProjectCandidates(cat catalog, project projectConfig, installed map[string]bool, suggestOnly bool) []triageProjectCandidate {
+	never := set(project.NeverInclude)
+	var out []triageProjectCandidate
+	for _, skill := range cat.Skills {
+		if never[skill.Name] {
+			continue
+		}
+		if suggestOnly && installed[skill.Name] {
+			continue
+		}
+		score, reasons, warnings := computeMatchScore(skill, project)
+		harnesses := compatibleHarnesses(skill.Compatibility, project.Harnesses)
+		if len(harnesses) == 0 {
+			warnings = append(warnings, "no compatible harness in project")
+		}
+		warnings = append(warnings, dependencyWarningStrings(skill)...)
+		out = append(out, triageProjectCandidate{
+			Name:      skill.Name,
+			Score:     score,
+			Reasons:   reasons,
+			Harnesses: harnesses,
+			Warnings:  warnings,
+		})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Score != out[j].Score {
+			return out[i].Score > out[j].Score
+		}
+		return out[i].Name < out[j].Name
+	})
+	return out
+}
+
+func dependencyWarnings(skill catalogSkill) []triageDependencyWarning {
+	var out []triageDependencyWarning
+	add := func(kind string, names []string) {
+		if len(names) > 0 {
+			out = append(out, triageDependencyWarning{Skill: skill.Name, Kind: kind, Names: names})
+		}
+	}
+	add("tools", missingRequiredTools(skill.Requirements))
+	add("mcp_servers", missingRequiredMCPServers(skill.Requirements))
+	add("model", missingModelCapabilities(skill.Requirements))
+	add("credentials", missingRequiredCredentials(skill.Requirements))
+	add("runtimes", missingRequiredScriptRuntimes(skill.Requirements))
+	return out
+}
+
+func dependencyWarningStrings(skill catalogSkill) []string {
+	var out []string
+	for _, warning := range dependencyWarnings(skill) {
+		out = append(out, fmt.Sprintf("missing %s: %s", warning.Kind, strings.Join(warning.Names, ", ")))
+	}
+	return out
+}
+
+func detectedStackTags(tags []string) []string {
+	stackTags := set([]string{"nodejs", "python", "go", "rust", "typescript", "java", "php", "csharp"})
+	var out []string
+	for _, tag := range tags {
+		if stackTags[tag] {
+			out = append(out, tag)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+func normalizeTriageList(values []string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" || seen[value] {
+			continue
+		}
+		seen[value] = true
+		out = append(out, value)
+	}
+	sort.Strings(out)
 	return out
 }
 

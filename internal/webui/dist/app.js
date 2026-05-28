@@ -79,10 +79,14 @@ function renderNav() {
   nav.replaceChildren();
   views.forEach((v) => {
     nav.appendChild(el("div", {
-      className: "nav-item" + (v.id === currentView ? " active" : ""),
+      className: "nav-item" + (navActive(v.id) ? " active" : ""),
       onClick: () => { currentView = v.id; render(); },
     }, [v.label]));
   });
+}
+
+function navActive(id) {
+  return currentView === id || (id === "library" && currentView.startsWith("skill:")) || (id === "projects" && currentView.startsWith("project:"));
 }
 
 function statCard(label, value) {
@@ -103,6 +107,27 @@ function selectControl(label, value, options, onChange) {
   select.value = value || "";
   select.addEventListener("change", () => onChange(select.value));
   return select;
+}
+
+function parseCSV(value) {
+  return (value || "").split(",").map((v) => v.trim()).filter(Boolean);
+}
+
+function field(label, node) {
+  return el("label", { className: "field" }, [
+    el("span", { text: label }),
+    node,
+  ]);
+}
+
+function detailList(values) {
+  const items = values || [];
+  if (!items.length) return [el("span", { className: "muted", text: "None" })];
+  return items.map((v) => badge(v));
+}
+
+function jsonBlock(value) {
+  return el("pre", { className: "diff compact", text: JSON.stringify(value || {}, null, 2) });
 }
 
 async function renderOverview(content) {
@@ -224,7 +249,7 @@ async function renderLibrary(content) {
   table.appendChild(thead);
   const tbody = el("tbody");
   (list.skills || []).forEach((s) => {
-    tbody.appendChild(el("tr", null, [
+    tbody.appendChild(el("tr", { className: "click-row", onClick: () => { currentView = "skill:" + s.name; render(); } }, [
       el("td", null, [
         el("div", { className: "row-title", text: s.name }),
         el("div", { className: "muted", text: [(s.categories || []).join(", ") || "Uncategorized", s.source].filter(Boolean).join(" · ") }),
@@ -257,6 +282,99 @@ async function renderLibrary(content) {
   pager.appendChild(el("span", { className: "muted", text: "Page " + list.page + " of " + maxPage }));
   pager.appendChild(next);
   content.appendChild(pager);
+}
+
+async function renderSkillDetail(content, name) {
+  const detail = await api("/api/v1/skills/" + encodeURIComponent(name));
+  document.getElementById("page-title").textContent = detail.name;
+  document.getElementById("page-subtitle").textContent = detail.summary || "Skill detail";
+  const actions = document.getElementById("page-actions");
+  actions.replaceChildren();
+  actions.appendChild(el("button", { className: "btn", text: "Back to library", onClick: () => { currentView = "library"; render(); } }));
+
+  const grid = el("div", { className: "detail-grid" });
+  grid.appendChild(el("section", { className: "panel" }, [
+    el("div", { className: "panel-title", text: "Origin" }),
+    el("p", { className: "muted", text: [
+      detail.origin && (detail.origin.source || detail.origin.type),
+      detail.origin && (detail.origin.url || detail.origin.path),
+      detail.origin && (detail.origin.commit || detail.origin.version),
+    ].filter(Boolean).join(" · ") || "No origin metadata." }),
+    el("div", { className: "kv", text: "Fingerprint " + ((detail.fingerprint && detail.fingerprint.sha256) || "unknown") }),
+  ]));
+  grid.appendChild(el("section", { className: "panel" }, [
+    el("div", { className: "panel-title", text: "State" }),
+    badge(detail.compatibility_label || "unknown"),
+    badge(detail.requirements_status || "none"),
+    el("p", { className: "muted", text: (detail.usage_30d || 0) + " invocations in 30d · " + ((detail.installed_projects || []).length) + " projects" }),
+    el("div", null, detailList(detail.installed_projects)),
+  ]));
+  content.appendChild(grid);
+
+  const cats = el("input", { value: (detail.categories || []).join(", "), placeholder: "Engineering, Product" });
+  const tags = el("input", { value: (detail.tags || []).join(", "), placeholder: "go, cli" });
+  const reqs = el("textarea", { rows: "8" });
+  reqs.value = JSON.stringify(detail.requirements || {}, null, 2);
+  const save = el("button", { className: "btn", text: "Save metadata" });
+  save.onclick = async () => {
+    save.disabled = true;
+    try {
+      await api("/api/v1/skills/" + encodeURIComponent(name), {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", "X-Skills-Manager-Token": sessionToken },
+        body: JSON.stringify({ categories: parseCSV(cats.value), tags: parseCSV(tags.value), requirements: JSON.parse(reqs.value || "{}") }),
+      });
+      render();
+    } catch (e) {
+      alert(e.message);
+    } finally {
+      save.disabled = false;
+    }
+  };
+  const metaPanel = el("section", { className: "panel" }, [
+    el("div", { className: "panel-title", text: "Metadata" }),
+    field("Categories", cats),
+    field("Tags", tags),
+    field("Requirements JSON", reqs),
+    save,
+  ]);
+  content.appendChild(metaPanel);
+
+  const mode = selectControl("Compatibility", detail.compatibility && detail.compatibility.mode, ["portable", "compatible", "exclusive"], () => {});
+  mode.value = (detail.compatibility && detail.compatibility.mode) || detail.compatibility_label || "portable";
+  const harness = el("input", { value: (detail.compatibility && detail.compatibility.harness) || "", placeholder: "codex" });
+  const harnesses = el("input", { value: ((detail.compatibility && detail.compatibility.harnesses) || []).join(", "), placeholder: "codex, claude" });
+  const reason = el("input", { value: "", placeholder: "Reason" });
+  const compatSave = el("button", { className: "btn", text: "Apply compatibility" });
+  compatSave.onclick = async () => {
+    compatSave.disabled = true;
+    try {
+      await api("/api/v1/skills/" + encodeURIComponent(name) + "/compatibility", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Skills-Manager-Token": sessionToken },
+        body: JSON.stringify({ mode: mode.value, harness: harness.value.trim(), harnesses: parseCSV(harnesses.value), reason: reason.value.trim() }),
+      });
+      render();
+    } catch (e) {
+      alert(e.message);
+    } finally {
+      compatSave.disabled = false;
+    }
+  };
+  content.appendChild(el("section", { className: "panel" }, [
+    el("div", { className: "panel-title", text: "Compatibility" }),
+    field("Mode", mode),
+    field("Exclusive harness", harness),
+    field("Compatible harnesses", harnesses),
+    field("Reason", reason),
+    el("p", { className: "muted", text: "Preview: updates SKILL.md compatibility frontmatter, .skill-meta.yaml, and catalog.yaml." }),
+    compatSave,
+  ]));
+
+  content.appendChild(el("section", { className: "panel" }, [
+    el("div", { className: "panel-title", text: "Raw compatibility" }),
+    jsonBlock(detail.compatibility || {}),
+  ]));
 }
 
 async function renderUpdates(content) {
@@ -301,7 +419,7 @@ async function renderProjects(content) {
   table.appendChild(thead);
   const tbody = el("tbody");
   projects.forEach((p) => {
-    tbody.appendChild(el("tr", null, [
+    tbody.appendChild(el("tr", { className: "click-row", onClick: () => { currentView = "project:" + p.slug; render(); } }, [
       el("td", { text: p.slug }),
       el("td", { text: p.project_path }),
       el("td", { text: String(p.skill_count || 0) }),
@@ -309,6 +427,66 @@ async function renderProjects(content) {
   });
   table.appendChild(tbody);
   content.appendChild(table);
+}
+
+async function renderProjectDetail(content, slug) {
+  const p = await api("/api/v1/projects/" + encodeURIComponent(slug));
+  document.getElementById("page-title").textContent = p.slug;
+  document.getElementById("page-subtitle").textContent = p.project_path || "";
+  const actions = document.getElementById("page-actions");
+  actions.replaceChildren();
+  actions.appendChild(el("button", { className: "btn", text: "Back to projects", onClick: () => { currentView = "projects"; render(); } }));
+
+  content.appendChild(el("div", { className: "stats" }, [
+    statCard("Installed skills", p.skill_count || 0),
+    statCard("Managed paths", p.managed_paths || 0),
+    statCard("Suggested", (p.suggested_skills || []).length),
+    statCard("Warnings", (p.warnings || []).length),
+  ]));
+
+  content.appendChild(el("section", { className: "panel" }, [
+    el("div", { className: "panel-title", text: "Project profile" }),
+    el("div", null, detailList((p.config && p.config.Categories) || (p.config && p.config.categories))),
+    el("div", null, detailList((p.config && p.config.Tags) || (p.config && p.config.tags))),
+    el("p", { className: "muted", text: "Detected stack: " + ((p.detected_stack || []).join(", ") || "unknown") }),
+  ]));
+
+  const warnings = el("section", { className: "panel" }, [el("div", { className: "panel-title", text: "Dependency warnings" })]);
+  if (!(p.warnings || []).length) warnings.appendChild(el("p", { className: "muted", text: "No missing dependency warnings for installed skills." }));
+  (p.warnings || []).forEach((w) => warnings.appendChild(el("div", { className: "activity-row" }, [
+    badge(w.kind || "missing", "warn"),
+    el("div", null, [
+      el("div", { className: "row-title", text: w.skill }),
+      el("div", { className: "muted", text: (w.names || []).join(", ") }),
+    ]),
+  ])));
+  content.appendChild(warnings);
+
+  renderCandidatePanel(content, "Preview skills", p.preview_skills || []);
+  renderCandidatePanel(content, "Suggested skills", p.suggested_skills || []);
+  renderCandidatePanel(content, "Match explanation", p.match_explain || []);
+}
+
+function renderCandidatePanel(content, title, candidates) {
+  const panel = el("section", { className: "panel" }, [el("div", { className: "panel-title", text: title })]);
+  if (!candidates.length) {
+    panel.appendChild(el("p", { className: "muted", text: "No entries." }));
+  } else {
+    const table = el("table");
+    const thead = el("thead");
+    thead.appendChild(el("tr", null, [el("th", { text: "Skill" }), el("th", { text: "Score" }), el("th", { text: "Reasons" }), el("th", { text: "Warnings" })]));
+    table.appendChild(thead);
+    const tbody = el("tbody");
+    candidates.slice(0, 50).forEach((c) => tbody.appendChild(el("tr", { className: "click-row", onClick: () => { currentView = "skill:" + c.name; render(); } }, [
+      el("td", { text: c.name }),
+      el("td", { text: String(c.score || 0) }),
+      el("td", { text: (c.reasons || []).join(", ") }),
+      el("td", { text: (c.warnings || []).join("; ") }),
+    ])));
+    table.appendChild(tbody);
+    panel.appendChild(table);
+  }
+  content.appendChild(panel);
 }
 
 async function renderMatrix(content) {
@@ -348,7 +526,7 @@ async function render() {
   }
   renderNav();
   const view = views.find((v) => v.id === currentView);
-  document.getElementById("page-title").textContent = view.label;
+  document.getElementById("page-title").textContent = view ? view.label : "";
   document.getElementById("page-subtitle").textContent = "";
   document.getElementById("page-actions").replaceChildren();
   const content = document.getElementById("content");
@@ -359,6 +537,8 @@ async function render() {
     else if (currentView === "updates") await renderUpdates(content);
     else if (currentView === "projects") await renderProjects(content);
     else if (currentView === "matrix") await renderMatrix(content);
+    else if (currentView.startsWith("skill:")) await renderSkillDetail(content, currentView.slice("skill:".length));
+    else if (currentView.startsWith("project:")) await renderProjectDetail(content, currentView.slice("project:".length));
   } catch (e) {
     content.appendChild(el("div", { className: "error", text: e.message }));
   }

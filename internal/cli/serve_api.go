@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -36,6 +37,7 @@ func newServeServer(home string) *serveServer {
 	s.mux.HandleFunc("/api/v1/skills", s.handleSkills)
 	s.mux.HandleFunc("/api/v1/skills/", s.handleSkillDetail)
 	s.mux.HandleFunc("/api/v1/projects", s.handleProjects)
+	s.mux.HandleFunc("/api/v1/projects/", s.handleProjectDetail)
 	s.mux.HandleFunc("/api/v1/updates", s.handleUpdates)
 	s.mux.HandleFunc("/api/v1/updates/", s.handleUpdateSub)
 	s.mux.HandleFunc("/api/v1/matrix", s.handleMatrix)
@@ -97,21 +99,109 @@ func (s *serveServer) handleSkills(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *serveServer) handleSkillDetail(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
+	rest := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/v1/skills/"), "/")
+	parts := strings.Split(rest, "/")
+	if len(parts) == 2 && parts[1] == "compatibility" {
+		s.handleSkillCompatibility(w, r, parts[0])
+		return
+	}
+	if len(parts) != 1 || parts[0] == "" {
+		http.Error(w, "skill name required", http.StatusBadRequest)
+		return
+	}
+	name := parts[0]
+	switch r.Method {
+	case http.MethodGet:
+		detail, err := loadTriageSkillDetail(s.home, name)
+		if err != nil {
+			if strings.Contains(err.Error(), "not found") {
+				writeAPIError(w, http.StatusNotFound, err)
+				return
+			}
+			writeAPIError(w, http.StatusInternalServerError, err)
+			return
+		}
+		writeJSONResponse(w, detail)
+	case http.MethodPatch:
+		if !s.authorizeAPIWrite(w, r) {
+			return
+		}
+		var req triageSkillMetadataUpdate
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeAPIError(w, http.StatusBadRequest, fmt.Errorf("invalid JSON body: %w", err))
+			return
+		}
+		if err := updateTriageSkillMetadata(s.home, name, req); err != nil {
+			if strings.Contains(err.Error(), "not found") {
+				writeAPIError(w, http.StatusNotFound, err)
+				return
+			}
+			writeAPIError(w, http.StatusBadRequest, err)
+			return
+		}
+		detail, err := loadTriageSkillDetail(s.home, name)
+		if err != nil {
+			writeAPIError(w, http.StatusInternalServerError, err)
+			return
+		}
+		writeJSONResponse(w, detail)
+	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	name := strings.TrimPrefix(r.URL.Path, "/api/v1/skills/")
-	if name == "" || strings.Contains(name, "/") {
-		http.Error(w, "skill name required", http.StatusBadRequest)
+}
+
+func (s *serveServer) handleSkillCompatibility(w http.ResponseWriter, r *http.Request, name string) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if err := validateSkillName(name); err != nil {
+		writeAPIError(w, http.StatusBadRequest, err)
+		return
+	}
+	if !s.authorizeAPIWrite(w, r) {
+		return
+	}
+	var req triageSkillCompatibilityUpdate
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeAPIError(w, http.StatusBadRequest, fmt.Errorf("invalid JSON body: %w", err))
+		return
+	}
+	if req.Mode == "" {
+		writeAPIError(w, http.StatusBadRequest, fmt.Errorf("mode required"))
+		return
+	}
+	args := []string{"--json", "--non-interactive", "--quiet", "set", name, "--compatibility", req.Mode}
+	switch req.Mode {
+	case "portable":
+	case "exclusive":
+		if req.Harness == "" {
+			writeAPIError(w, http.StatusBadRequest, fmt.Errorf("harness required for exclusive mode"))
+			return
+		}
+		args = append(args, "--harness", req.Harness)
+	case "compatible":
+		if len(req.Harnesses) == 0 {
+			writeAPIError(w, http.StatusBadRequest, fmt.Errorf("harnesses required for compatible mode"))
+			return
+		}
+		args = append(args, "--harnesses", strings.Join(req.Harnesses, ","))
+	default:
+		writeAPIError(w, http.StatusBadRequest, fmt.Errorf("invalid compatibility mode: %s", req.Mode))
+		return
+	}
+	if req.Reason != "" {
+		args = append(args, "--reason", req.Reason)
+	}
+	var stdoutBuf, stderrBuf bytes.Buffer
+	code := s.runCLIInHome(args, &stdoutBuf, &stderrBuf)
+	if code != ExitSuccess {
+		writeAPIError(w, http.StatusBadRequest, errors.New(strings.TrimSpace(stderrBuf.String())))
 		return
 	}
 	detail, err := loadTriageSkillDetail(s.home, name)
 	if err != nil {
-		if strings.Contains(err.Error(), "not found") {
-			writeAPIError(w, http.StatusNotFound, err)
-			return
-		}
 		writeAPIError(w, http.StatusInternalServerError, err)
 		return
 	}
@@ -129,6 +219,28 @@ func (s *serveServer) handleProjects(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSONResponse(w, projects)
+}
+
+func (s *serveServer) handleProjectDetail(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	slug := strings.TrimPrefix(r.URL.Path, "/api/v1/projects/")
+	if slug == "" || strings.Contains(slug, "/") {
+		http.Error(w, "project slug required", http.StatusBadRequest)
+		return
+	}
+	detail, err := loadTriageProjectDetail(s.home, slug)
+	if err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			writeAPIError(w, http.StatusNotFound, err)
+			return
+		}
+		writeAPIError(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSONResponse(w, detail)
 }
 
 func (s *serveServer) handleUpdates(w http.ResponseWriter, r *http.Request) {
@@ -223,8 +335,7 @@ func (s *serveServer) handleRunCLI(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	if r.Header.Get("X-Skills-Manager-Token") != s.token {
-		writeAPIError(w, http.StatusForbidden, fmt.Errorf("invalid or missing session token"))
+	if !s.authorizeAPIWrite(w, r) {
 		return
 	}
 	var req cliRunRequest
@@ -250,6 +361,27 @@ func (s *serveServer) handleRunCLI(w http.ResponseWriter, r *http.Request) {
 		Stdout:   stdoutBuf.String(),
 		Stderr:   stderrBuf.String(),
 	})
+}
+
+func (s *serveServer) authorizeAPIWrite(w http.ResponseWriter, r *http.Request) bool {
+	if r.Header.Get("X-Skills-Manager-Token") != s.token {
+		writeAPIError(w, http.StatusForbidden, fmt.Errorf("invalid or missing session token"))
+		return false
+	}
+	return true
+}
+
+type triageSkillMetadataUpdate struct {
+	Categories   *[]string     `json:"categories,omitempty"`
+	Tags         *[]string     `json:"tags,omitempty"`
+	Requirements *requirements `json:"requirements,omitempty"`
+}
+
+type triageSkillCompatibilityUpdate struct {
+	Mode      string   `json:"mode"`
+	Harness   string   `json:"harness,omitempty"`
+	Harnesses []string `json:"harnesses,omitempty"`
+	Reason    string   `json:"reason,omitempty"`
 }
 
 func (s *serveServer) runCLIInHome(args []string, stdout, stderr io.Writer) int {

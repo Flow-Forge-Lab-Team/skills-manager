@@ -69,7 +69,7 @@ html, body {
 .usage-bar span { display: block; height: 100%; background: var(--accent); }
 .usage-count { color: var(--text-muted); text-align: right; font-variant-numeric: tabular-nums; }
 .filters { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
-.search, select {
+.search, select, input, textarea {
   background: var(--bg-panel);
   color: var(--text);
   border: 1px solid var(--border);
@@ -78,7 +78,14 @@ html, body {
   padding: 6px 9px;
   font: inherit;
 }
+textarea { width: 100%; resize: vertical; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 .search { width: 220px; }
+.detail-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px; margin-bottom: 14px; }
+.field { display: grid; gap: 5px; margin-bottom: 10px; color: var(--text-muted); }
+.field span { font-size: 11px; text-transform: uppercase; color: var(--text-faint); }
+.field input, .field select { width: 100%; }
+.kv { color: var(--text-muted); overflow-wrap: anywhere; }
+.click-row { cursor: pointer; }
 .badge {
   display: inline-flex; align-items: center; max-width: 160px;
   min-height: 22px; padding: 2px 7px; border: 1px solid var(--border);
@@ -101,6 +108,7 @@ pre.diff {
   background: var(--bg-panel); border: 1px solid var(--border); border-radius: 8px;
   padding: 12px; overflow: auto; max-height: 480px; font-size: 11px; white-space: pre-wrap;
 }
+pre.compact { max-height: 260px; margin-top: 8px; }
 .matrix-wrap { overflow: auto; max-height: 70vh; }
 .matrix-wrap td.installed { background: var(--accent-dim); text-align: center; }
 .error { color: var(--danger); padding: 12px; border: 1px solid var(--danger); border-radius: 8px; }
