@@ -227,17 +227,17 @@ async function renderLibrary(content) {
     tbody.appendChild(el("tr", null, [
       el("td", null, [
         el("div", { className: "row-title", text: s.name }),
-        el("div", { className: "muted", text: (s.categories || []).join(", ") || "Uncategorized" }),
+        el("div", { className: "muted", text: [(s.categories || []).join(", ") || "Uncategorized", s.source].filter(Boolean).join(" · ") }),
       ]),
       el("td", { text: (s.summary || "").slice(0, 140) }),
       el("td", null, [
         badge(s.compatibility_label || "unknown"),
         badge(s.requirements_status || "none"),
-        s.pending_update ? badge("update", "warn") : null,
+        ...((s.update_badges || []).length ? s.update_badges.map((b) => badge(b, "warn")) : (s.pending_update ? [badge("update", "warn")] : [])),
       ]),
       el("td", null, [
         el("div", { text: (s.usage_30d || 0) + " in 30d" }),
-        el("div", { className: "muted", text: s.installed_projects + " projects" }),
+        el("div", { className: "muted", text: [s.installed_projects + " projects", s.last_activity_at].filter(Boolean).join(" · ") }),
       ]),
       el("td", null, (s.tags || []).slice(0, 4).map((t) => badge(t))),
     ]));

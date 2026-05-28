@@ -42,6 +42,8 @@ func TestServeAPIReadsFreshDiskState(t *testing.T) {
 			Tags:       []string{"fixture"},
 		})
 	}
+	cat.Skills[5].Compatibility = compatibility{ExplicitPortable: true}
+	cat.Skills[5].Requirements = requirements{Tools: []toolRequirement{{Name: "git", Required: true}}}
 	if err := writeCatalog(filepath.Join(libraryPath, "catalog.yaml"), cat); err != nil {
 		t.Fatal(err)
 	}
@@ -134,6 +136,12 @@ func TestServeAPIReadsFreshDiskState(t *testing.T) {
 		}
 		if err := db.InsertUpdate("skill-2", "old", "new", "github"); err != nil {
 			t.Fatal(err)
+		}
+		for i := 0; i < 12; i++ {
+			if _, err := db.Exec(`INSERT INTO invocations (skill_name, project_slug, harness, trigger, invoked_at, source) VALUES (?, ?, ?, ?, ?, ?)`,
+				"skill-"+strconv.Itoa(20+i), "proj-0", "claude", "user", now.Add(time.Duration(i)*time.Second).Format(time.RFC3339), "otel"); err != nil {
+				t.Fatal(err)
+			}
 		}
 
 		resp, err := http.Get(ts.URL + "/api/v1/overview")
@@ -233,6 +241,49 @@ func TestServeAPIReadsFreshDiskState(t *testing.T) {
 		if list.Skills[0].Name != "skill-103" {
 			t.Fatalf("first page-2 skill = %q, want skill-103", list.Skills[0].Name)
 		}
+	})
+
+	t.Run("library sorts and state filters", func(t *testing.T) {
+		db, err := state.Open(home)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer db.Close()
+		now := time.Now().UTC()
+		if _, err := db.Exec(`INSERT INTO invocations (skill_name, project_slug, harness, trigger, invoked_at, source) VALUES (?, ?, ?, ?, ?, ?)`,
+			"skill-7", "proj-0", "claude", "user", now.Add(-2*time.Minute).Format(time.RFC3339), "otel"); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.Exec(`INSERT INTO invocations (skill_name, project_slug, harness, trigger, invoked_at, source) VALUES (?, ?, ?, ?, ?, ?)`,
+			"skill-7", "proj-0", "claude", "user", now.Add(-time.Minute).Format(time.RFC3339), "otel"); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.Exec(`INSERT INTO invocations (skill_name, project_slug, harness, trigger, invoked_at, source) VALUES (?, ?, ?, ?, ?, ?)`,
+			"skill-8", "proj-0", "claude", "user", now.Add(time.Hour).Format(time.RFC3339), "otel"); err != nil {
+			t.Fatal(err)
+		}
+
+		assertFirst := func(query, want string) {
+			t.Helper()
+			resp, err := http.Get(ts.URL + "/api/v1/skills?" + query)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer resp.Body.Close()
+			var list triageSkillList
+			if err := json.NewDecoder(resp.Body).Decode(&list); err != nil {
+				t.Fatal(err)
+			}
+			if len(list.Skills) == 0 || list.Skills[0].Name != want {
+				t.Fatalf("%s first = %+v, want %s", query, list.Skills, want)
+			}
+		}
+
+		assertFirst("sort=usage&page_size=1", "skill-7")
+		assertFirst("sort=recent&page_size=1", "skill-8")
+		assertFirst("sort=updates&page_size=1", "skill-2")
+		assertFirst("compatibility=portable&page_size=1", "skill-5")
+		assertFirst("requirements=declared&page_size=1", "skill-5")
 	})
 
 	t.Run("static index", func(t *testing.T) {

@@ -344,7 +344,7 @@ func loadTriageUpdates(home string) ([]pendingUpdateView, error) {
 }
 
 func loadTriageMatrix(home string) (triageMatrix, error) {
-	skills, err := loadTriageSkills(home)
+	skills, err := loadTriageSkillNames(home)
 	if err != nil {
 		return triageMatrix{}, err
 	}
@@ -359,13 +359,26 @@ func loadTriageMatrix(home string) (triageMatrix, error) {
 		Cells:    map[string][]string{},
 	}
 	for _, s := range skills {
-		m.Skills = append(m.Skills, s.Name)
+		m.Skills = append(m.Skills, s)
 	}
 	for _, p := range projects {
 		m.Projects = append(m.Projects, p.Slug)
 		m.Cells[p.Slug] = append([]string(nil), p.Skills...)
 	}
 	return m, nil
+}
+
+func loadTriageSkillNames(home string) ([]string, error) {
+	cat, _, err := loadTriageCatalog(home)
+	if err != nil {
+		return nil, err
+	}
+	names := make([]string, 0, len(cat.Skills))
+	for _, skill := range cat.Skills {
+		names = append(names, skill.Name)
+	}
+	sort.Strings(names)
+	return names, nil
 }
 
 func loadTriageUpdateDiff(home, skill string) (string, error) {
@@ -469,6 +482,9 @@ func triageContainsString(values []string, want string) bool {
 func compatibilityLabel(c compatibility) string {
 	if c.Mode != "" {
 		return c.Mode
+	}
+	if c.ExplicitPortable {
+		return "portable"
 	}
 	if c.Harness != "" {
 		return "exclusive"
@@ -605,27 +621,33 @@ func loadTriageMostUsed(db *state.DB, limit int) []triageUsage {
 }
 
 func loadTriageActivity(db *state.DB, limit int) []triageActivity {
-	var out []triageActivity
-	appendRows := func(kind, query string) {
-		rows, err := db.Query(query, limit)
-		if err != nil {
-			return
-		}
-		defer rows.Close()
-		for rows.Next() {
-			var item triageActivity
-			item.Kind = kind
-			if err := rows.Scan(&item.SkillName, &item.Detail, &item.At); err == nil {
-				out = append(out, item)
-			}
-		}
+	rows, err := db.Query(`
+		SELECT kind, skill_name, detail, at
+		FROM (
+			SELECT 'update' AS kind, skill_name, source AS detail, detected_at AS at, 0 AS priority
+			FROM updates
+			WHERE status = 'pending'
+			UNION ALL
+			SELECT 'detected' AS kind, skill_name, source_guess AS detail, detected_at AS at, 1 AS priority
+			FROM detected
+			WHERE action IS NULL OR action = '' OR action = 'pending'
+			UNION ALL
+			SELECT 'invocation' AS kind, skill_name, COALESCE(project_slug, '') AS detail, invoked_at AS at, 2 AS priority
+			FROM invocations
+		)
+		ORDER BY priority, at DESC
+		LIMIT ?
+	`, limit)
+	if err != nil {
+		return []triageActivity{}
 	}
-	appendRows("update", `SELECT skill_name, source, detected_at FROM updates WHERE status = 'pending' ORDER BY detected_at DESC LIMIT ?`)
-	appendRows("detected", `SELECT skill_name, source_guess, detected_at FROM detected WHERE action IS NULL OR action = '' OR action = 'pending' ORDER BY detected_at DESC LIMIT ?`)
-	appendRows("invocation", `SELECT skill_name, COALESCE(project_slug, ''), invoked_at FROM invocations ORDER BY invoked_at DESC LIMIT ?`)
-	sort.SliceStable(out, func(i, j int) bool { return out[i].At > out[j].At })
-	if len(out) > limit {
-		out = out[:limit]
+	defer rows.Close()
+	var out []triageActivity
+	for rows.Next() {
+		var item triageActivity
+		if err := rows.Scan(&item.Kind, &item.SkillName, &item.Detail, &item.At); err == nil {
+			out = append(out, item)
+		}
 	}
 	if out == nil {
 		return []triageActivity{}
