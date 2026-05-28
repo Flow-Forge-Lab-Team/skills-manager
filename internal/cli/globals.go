@@ -408,6 +408,16 @@ Subcommands:
   setup             print OTEL + PreToolUse hook setup instructions
 
 ` + globalFlagHelp()
+	case "assemble":
+		return `skills-manager assemble [project-path]
+
+Regenerate the project-root AGENTS.md from the project's installed skills.
+Includes skills tagged ` + "`always-on`" + ` or with ` + "`agents_md: true`" + ` in their
+frontmatter, ordered by an optional frontmatter ` + "`order:`" + ` hint, under a
+project metadata header. Content outside the generated marker block is
+preserved. Runs automatically after install/sync.
+
+` + globalFlagHelp()
 	case "watch":
 		return `skills-manager watch [flags]
        skills-manager watch --daemon
@@ -515,6 +525,7 @@ Commands:
   serve       local triage web UI + REST API (localhost by default)
   usage       track and view skill usage (OTEL receiver, hook, matrix)
   watch       poll harness paths for new skills; --daemon/--stop/--auto-ingest
+  assemble    regenerate project AGENTS.md from installed always-on skills
   doctor      diagnose problems; --rebuild-state --rebuild-catalog
   set         update a skill's compatibility declaration
   help        show help for a command
