@@ -189,3 +189,53 @@ func TestCompileFailsOnMissingDeclaredVariant(t *testing.T) {
 		t.Fatal("no rule should be written when a declared variant is missing")
 	}
 }
+
+func TestCompileFailsOnMalformedVariantsManifest(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+	libraryPath := filepath.Join(home, "library")
+	skillDir := filepath.Join(libraryPath, "ruler")
+	writeFile(t, filepath.Join(skillDir, "SKILL.md"), "---\nname: ruler\ndescription: c\n---\nbody\n")
+	writeFile(t, filepath.Join(skillDir, ".variants.yaml"), "version: 1\noverrides: : : not-yaml\n  - [\n")
+	cat := catalog{Version: 1, Skills: []catalogSkill{{Name: "ruler", Tags: []string{"go"}}}}
+	if err := writeCatalog(filepath.Join(libraryPath, "catalog.yaml"), cat); err != nil {
+		t.Fatal(err)
+	}
+	projectPath := filepath.Join(home, "proj")
+	writeFile(t, filepath.Join(projectPath, ".skills", "installed.lock"), "version: 1\nskills:\n  - name: ruler\n")
+	if _, err := compileForHarness(home, projectPath, "cursor", ""); err == nil {
+		t.Fatal("expected error for malformed .variants.yaml")
+	}
+}
+
+func TestInstallPreservesTargetOnMissingVariant(t *testing.T) {
+	home := t.TempDir()
+	project := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+	writeFile(t, filepath.Join(project, ".skills", "project.yaml"), "version: 1\nname: demo\ncategories: [Engineering]\nharnesses: [claude]\n")
+	writeFile(t, filepath.Join(home, "library", "catalog.yaml"), "version: 1\nskills:\n  - name: rev\n    categories: [Engineering]\n    compatibility:\n      mode: portable\n    requirements:\n      tools: []\n")
+	skillDir := filepath.Join(home, "library", "rev")
+	writeFile(t, filepath.Join(skillDir, "SKILL.md"), "---\nname: rev\n---\nCANONICAL\n")
+	// Install once cleanly (no variants).
+	var o, e bytes.Buffer
+	if code := Run([]string{"install", "--project", project}, &o, &e); code != 0 {
+		t.Fatalf("first install failed: %s", e.String())
+	}
+	target := filepath.Join(project, ".claude", "skills", "rev", "SKILL.md")
+	before := readFile(t, target)
+	// Now declare a claude variant whose file is missing, and reinstall.
+	writeFile(t, filepath.Join(skillDir, ".variants.yaml"), "version: 1\noverrides:\n  claude: SKILL.claude.md\n")
+	o.Reset()
+	e.Reset()
+	if code := Run([]string{"install", "--project", project}, &o, &e); code == 0 {
+		t.Fatal("reinstall should fail when declared variant is missing")
+	}
+	// The previously-installed target must not be left as a raw/garbled copy.
+	after := readFile(t, target)
+	if after != before {
+		t.Fatalf("managed target should be untouched on variant failure:\nbefore=%q\nafter=%q", before, after)
+	}
+	if _, err := os.Stat(filepath.Join(project, ".claude", "skills", "rev", ".variants.yaml")); err == nil {
+		t.Fatal(".variants.yaml must not be left in the harness copy")
+	}
+}

@@ -281,7 +281,11 @@ func buildCompiledRule(skillMd, name string, catalogTags []string, harness strin
 	// Honor a per-harness ported variant: if the skill declares an override for
 	// this harness, compile from the ported file instead of the canonical.
 	skillDir := filepath.Dir(skillMd)
-	if vf, ok, _ := readVariants(skillDir); ok {
+	vf, ok, verr := readVariants(skillDir)
+	if verr != nil {
+		return compiledRule{}, fmt.Errorf("read variants for %q: %w", name, verr)
+	}
+	if ok {
 		if chosen := selectVariantFile(vf, []string{harness}); chosen != "" && chosen != "SKILL.md" {
 			candidate := filepath.Join(skillDir, chosen)
 			if !pathExists(candidate) {

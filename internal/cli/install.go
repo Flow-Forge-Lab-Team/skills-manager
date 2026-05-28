@@ -609,6 +609,19 @@ func runInstall(args []string, realStdout io.Writer, stderr io.Writer, syncMode 
 				continue
 			}
 
+			// Validate the per-harness variant before installSkillCopy
+			// destructively replaces the target, so a missing declared variant
+			// can't leave a managed install as a raw library copy.
+			if err := validateVariantForHarnesses(src, harnessesForBase(candidate.Harnesses, targetBase)); err != nil {
+				if installed > 0 {
+					if writeErr := saveInstallManifest(manifestPath, manifest, managed, preserved, files); writeErr != nil {
+						fmt.Fprintf(stderr, "write manifest after variant error: %v\n", writeErr)
+					}
+				}
+				fmt.Fprintf(stderr, "install %s: %v\n", relTarget, err)
+				return 3
+			}
+
 			wrote, err := installSkillCopy(src, target, relTarget, manifest, managed)
 			if err != nil {
 				if errors.Is(err, errUnmanagedTarget) || errors.Is(err, errLocallyEditedTarget) {

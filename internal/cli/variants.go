@@ -116,6 +116,28 @@ func applyVariantToTarget(srcSkillDir, target string, harnesses []string) error 
 	return nil
 }
 
+// validateVariantForHarnesses checks, before the install destructively replaces
+// a target, that the skill's variant metadata is readable and that any selected
+// override file actually exists. This avoids leaving a managed install as a raw
+// library copy when a declared variant is missing.
+func validateVariantForHarnesses(srcSkillDir string, harnesses []string) error {
+	vf, ok, err := readVariants(srcSkillDir)
+	if err != nil {
+		return fmt.Errorf("read variants: %w", err)
+	}
+	if !ok {
+		return nil
+	}
+	chosen := selectVariantFile(vf, harnesses)
+	if chosen == "" || chosen == "SKILL.md" {
+		return nil
+	}
+	if _, err := os.Stat(filepath.Join(srcSkillDir, chosen)); err != nil {
+		return fmt.Errorf("declared variant %q is missing: %w", chosen, err)
+	}
+	return nil
+}
+
 // harnessesForBase returns the subset of harnesses (in canonical install order)
 // that install into the given project target base, so variant selection for a
 // shared path (e.g. .agents/skills) is deterministic.
