@@ -294,7 +294,11 @@ func preserveAuthoredRequirements(draft, libraryPath, home string) error {
 	// Merge: authored explicit requirements take precedence, but inferred
 	// requirements the detectors found (e.g. a `gh pr` in the body) are kept.
 	merged := fm.Requirements
+	authoredModel := fm.Requirements.Model
 	mergeSeedRequirements(&merged, meta.Requirements) // adds inferred tools/mcp/model not already present
+	// mergeSeedRequirements can replace the whole model block; instead merge
+	// model fields individually so authored constraints survive.
+	merged.Model = mergeModelRequirements(authoredModel, meta.Requirements.Model)
 	credSeen := map[string]bool{}
 	for _, c := range merged.Credentials {
 		credSeen[c.Name] = true
@@ -316,6 +320,26 @@ func preserveAuthoredRequirements(draft, libraryPath, home string) error {
 	return writeCatalog(filepath.Join(home, "library", "catalog.yaml"), cat)
 }
 
+// mergeModelRequirements prefers authored model fields, filling empty ones from
+// inferred (so an inferred tool_use augments rather than replaces authored
+// reasoning / context constraints).
+func mergeModelRequirements(authored, inferred modelRequirement) modelRequirement {
+	out := authored
+	if out.ToolUse == "" {
+		out.ToolUse = inferred.ToolUse
+	}
+	if out.MinContextTokens == 0 {
+		out.MinContextTokens = inferred.MinContextTokens
+	}
+	if out.Reasoning == "" {
+		out.Reasoning = inferred.Reasoning
+	}
+	if out.Notes == "" {
+		out.Notes = inferred.Notes
+	}
+	return out
+}
+
 // validateAuthoredSkill enforces the skills-author rules: name match, an
 // activation-safe (non-stub, specific) description, valid frontmatter, and no
 // hostile instructions.
@@ -329,11 +353,14 @@ func validateAuthoredSkill(name, draft string) error {
 		return fmt.Errorf("unterminated frontmatter")
 	}
 	var fm struct {
-		Name        string   `yaml:"name"`
-		Description string   `yaml:"description"`
-		Compatible  []string `yaml:"compatible"`
-		Exclusive   string   `yaml:"exclusive"`
+		Name         string       `yaml:"name"`
+		Description  string       `yaml:"description"`
+		Compatible   []string     `yaml:"compatible"`
+		Exclusive    string       `yaml:"exclusive"`
+		Requirements requirements `yaml:"requirements"`
 	}
+	// Decoding requirements here means a malformed requirements block (wrong
+	// shape) is rejected rather than silently dropped during preservation.
 	if err := yaml.Unmarshal([]byte(trimmed[3:end+3]), &fm); err != nil {
 		return fmt.Errorf("invalid frontmatter: %w", err)
 	}

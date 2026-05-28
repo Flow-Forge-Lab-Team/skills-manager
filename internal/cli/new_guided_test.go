@@ -109,3 +109,40 @@ func TestNewGuidedPreservesAuthoredRequirements(t *testing.T) {
 		t.Fatalf("inferred gh requirement dropped by authored-requirements merge: %+v", meta.Requirements)
 	}
 }
+
+func TestNewGuidedMergesModelFields(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+	// Author sets model.reasoning; body triggers inferred tool_use ("tool use").
+	draft := "---\nname: planner\ndescription: Use when planning a multi-step refactor across files.\ncompatible: [claude]\nrequirements:\n  model:\n    reasoning: high\n    min_context_tokens: 32000\n---\n# planner\n\nThis skill relies on tool use to coordinate edits.\n\n## How to verify\nRun it on a sample plan.\n"
+	f := filepath.Join(t.TempDir(), "d.md")
+	if err := os.WriteFile(f, []byte(draft), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var o, e bytes.Buffer
+	if code := Run([]string{"new", "planner", "--guided", "--apply", f}, &o, &e); code != ExitSuccess {
+		t.Fatalf("returned %d\nstderr:%s", code, e.String())
+	}
+	meta, _ := readSkillMeta(filepath.Join(home, "library", "planner", ".skill-meta.yaml"))
+	if meta.Requirements.Model.Reasoning != "high" || meta.Requirements.Model.MinContextTokens != 32000 {
+		t.Fatalf("authored model fields lost: %+v", meta.Requirements.Model)
+	}
+}
+
+func TestNewGuidedRejectsMalformedRequirements(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+	// tools should be a list; a scalar is a shape error.
+	draft := "---\nname: bad-reqs\ndescription: Use when doing a specific scoped task in this repo.\ncompatible: [claude]\nrequirements:\n  tools: not-a-list\n---\nbody\n"
+	f := filepath.Join(t.TempDir(), "d.md")
+	if err := os.WriteFile(f, []byte(draft), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var o, e bytes.Buffer
+	if code := Run([]string{"new", "bad-reqs", "--guided", "--apply", f}, &o, &e); code == ExitSuccess {
+		t.Fatalf("malformed requirements should be rejected, got success")
+	}
+	if _, err := os.Stat(filepath.Join(home, "library", "bad-reqs")); err == nil {
+		t.Fatal("malformed-requirements draft must not be ingested")
+	}
+}
