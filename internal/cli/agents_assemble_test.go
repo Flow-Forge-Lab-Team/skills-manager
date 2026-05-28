@@ -123,6 +123,36 @@ func TestAssembleNoIncludedSkillsLeavesFileUntouched(t *testing.T) {
 	}
 }
 
+func TestAssembleClearsStaleBlockWhenNothingQualifies(t *testing.T) {
+	home, projectPath := setupAssembleProject(t)
+	agentsPath := filepath.Join(projectPath, "AGENTS.md")
+	writeFile(t, agentsPath, "# Notes\n\nUser content.\n")
+	// First pass: generates a block (alpha/beta qualify).
+	if _, _, err := assembleAgentsMd(home, projectPath); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(readFile(t, agentsPath), agentsBeginMarker) {
+		t.Fatal("expected a generated block on first pass")
+	}
+	// Now the lock only contains gamma (which doesn't qualify): the stale block
+	// must be cleared, user content kept.
+	writeFile(t, filepath.Join(projectPath, ".skills", "installed.lock"), "version: 1\nskills:\n  - name: gamma\n")
+	wrote, _, err := assembleAgentsMd(home, projectPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !wrote {
+		t.Fatal("expected a write to clear the stale block")
+	}
+	content := readFile(t, agentsPath)
+	if strings.Contains(content, agentsBeginMarker) || strings.Contains(content, "## beta") {
+		t.Fatalf("stale generated block should be cleared:\n%s", content)
+	}
+	if !strings.Contains(content, "User content.") {
+		t.Fatalf("user content must be preserved:\n%s", content)
+	}
+}
+
 func TestAssembleSurfacesMalformedLock(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("SKILLS_MANAGER_HOME", home)

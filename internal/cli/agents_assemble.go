@@ -105,10 +105,30 @@ func assembleAgentsMd(home, projectPath string) (bool, string, error) {
 		}
 		entries = append(entries, agentsSkillEntry{name: locked.Name, order: order, body: strings.TrimSpace(body)})
 	}
-	if len(entries) == 0 {
-		// Nothing to include: leave any existing AGENTS.md untouched.
-		return false, agentsPath, nil
+	var existing string
+	if data, err := os.ReadFile(agentsPath); err == nil {
+		existing = string(data)
+	} else if !os.IsNotExist(err) {
+		return false, agentsPath, err
 	}
+
+	if len(entries) == 0 {
+		// Nothing qualifies. If a stale generated block exists, clear it (so
+		// install/sync stop showing guidance for uninstalled skills) while
+		// keeping user-authored content; otherwise leave the file untouched.
+		if !strings.Contains(existing, agentsBeginMarker) {
+			return false, agentsPath, nil
+		}
+		cleaned := removeAgentsBlock(existing)
+		if cleaned == existing {
+			return false, agentsPath, nil
+		}
+		if err := os.WriteFile(agentsPath, []byte(cleaned), 0o644); err != nil {
+			return false, agentsPath, err
+		}
+		return true, agentsPath, nil
+	}
+
 	sort.SliceStable(entries, func(i, j int) bool {
 		if entries[i].order != entries[j].order {
 			return entries[i].order < entries[j].order
@@ -118,13 +138,6 @@ func assembleAgentsMd(home, projectPath string) (bool, string, error) {
 
 	cfg, _ := readProjectConfig(filepath.Join(projectPath, ".skills", "project.yaml"))
 	generated := buildAgentsBlock(cfg, entries)
-
-	var existing string
-	if data, err := os.ReadFile(agentsPath); err == nil {
-		existing = string(data)
-	} else if !os.IsNotExist(err) {
-		return false, agentsPath, err
-	}
 	merged := mergeAgentsBlock(existing, generated)
 	if merged == existing {
 		return false, agentsPath, nil
@@ -218,4 +231,26 @@ func mergeAgentsBlock(existing, generated string) string {
 		return generated + "\n"
 	}
 	return trimmed + "\n\n" + generated + "\n"
+}
+
+// removeAgentsBlock strips the generated marker region from content, preserving
+// user-authored content around it.
+func removeAgentsBlock(existing string) string {
+	start := strings.Index(existing, agentsBeginMarker)
+	end := strings.Index(existing, agentsEndMarker)
+	if start == -1 || end == -1 || end < start {
+		return existing
+	}
+	before := strings.TrimRight(existing[:start], " \t\n")
+	after := strings.TrimLeft(existing[end+len(agentsEndMarker):], "\n")
+	switch {
+	case before == "" && after == "":
+		return ""
+	case before == "":
+		return after
+	case after == "":
+		return before + "\n"
+	default:
+		return before + "\n\n" + after
+	}
 }
