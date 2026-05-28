@@ -408,6 +408,20 @@ Subcommands:
   setup             print OTEL + PreToolUse hook setup instructions
 
 ` + globalFlagHelp()
+	case "port":
+		return `skills-manager port <skill> --to <harnesses> [--auto | --handoff | --apply <file>]
+
+Rewrite a skill for one or more target harnesses (saved as variants).
+
+  --auto            run the configured LLM provider (skills-port bundled skill)
+  --handoff         (default) write a prompt file per harness for a manual agent
+  --apply <file>    import an agent-produced ported SKILL.md (single --to harness)
+
+Ported output is validated (name preserved, description present, target
+compatibility declared, no hostile instructions, valid frontmatter) before it
+is saved as SKILL.<harness>.md and recorded in .variants.yaml.
+
+` + globalFlagHelp()
 	case "variants":
 		return `skills-manager variants [skill] [--refresh]
 
@@ -557,6 +571,7 @@ Commands:
   assemble    regenerate project AGENTS.md from installed always-on skills
   compile     translate installed skills to a harness format (cursor, copilot)
   variants    inspect per-harness ported skill variants; --refresh re-stamps
+  port        rewrite a skill for target harnesses (provider or handoff)
   doctor      diagnose problems; --rebuild-state --rebuild-catalog
   set         update a skill's compatibility declaration
   help        show help for a command
