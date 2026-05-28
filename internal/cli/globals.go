@@ -408,6 +408,35 @@ Subcommands:
   setup             print OTEL + PreToolUse hook setup instructions
 
 ` + globalFlagHelp()
+	case "watch":
+		return `skills-manager watch [flags]
+       skills-manager watch --daemon
+       skills-manager watch --stop
+
+Poll active harness skill paths for newly-appearing or changed SKILL.md
+files and write review notifications to ~/.skills-manager/notifications/.
+Optional and dependency-free (polling, not an OS file-event API). Catalog
+changes still require review: detection only writes notifications unless
+--auto-ingest is set, and auto-ingest is high-confidence-only and refuses
+skills with suspicious instructions.
+
+Forms:
+  (foreground)        watch and report until Ctrl-C
+  --daemon            run detached in the background (PID in watch.pid)
+  --stop              stop the background watcher
+  --interval <secs>   poll interval (default: 5)
+  --paths <a,b,...>   override watched paths (default: known harness dirs +
+                      registered project skill dirs)
+  --auto-ingest       opt-in: auto-ingest high-confidence, non-suspicious,
+                      unregistered skills
+  --once              run a single poll then exit
+
+Event types written as notifications:
+  ingest-candidate    new unregistered SKILL.md (review with scan --ingest)
+  drift               a manager-created skill changed on disk
+  user-edit           a known skill was edited outside the manager
+
+` + globalFlagHelp()
 	case "doctor":
 		return `skills-manager doctor [--rebuild-state] [--rebuild-catalog]
 
@@ -485,6 +514,7 @@ Commands:
   status      show library counts, pending, unregistered, scheduled state
   serve       local triage web UI + REST API (localhost by default)
   usage       track and view skill usage (OTEL receiver, hook, matrix)
+  watch       poll harness paths for new skills; --daemon/--stop/--auto-ingest
   doctor      diagnose problems; --rebuild-state --rebuild-catalog
   set         update a skill's compatibility declaration
   help        show help for a command
