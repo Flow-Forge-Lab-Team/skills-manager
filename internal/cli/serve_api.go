@@ -19,10 +19,10 @@ import (
 )
 
 type serveServer struct {
-	home      string
-	token     string
-	runMu     sync.Mutex
-	mux       *http.ServeMux
+	home  string
+	token string
+	runMu sync.Mutex
+	mux   *http.ServeMux
 }
 
 func newServeServer(home string) *serveServer {
@@ -87,7 +87,7 @@ func (s *serveServer) handleSkills(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	skills, err := loadTriageSkills(s.home)
+	skills, err := loadTriageSkillList(s.home, r.URL.Query())
 	if err != nil {
 		writeAPIError(w, http.StatusInternalServerError, err)
 		return

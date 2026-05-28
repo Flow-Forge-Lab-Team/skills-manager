@@ -9,6 +9,7 @@ const views = [
 let currentView = "overview";
 let cacheBust = () => Date.now();
 let sessionToken = null;
+let libraryState = { search: "", category: "", tag: "", source: "", compatibility: "", requirements: "", sort: "name", page: 1, pageSize: 25 };
 
 async function ensureSession() {
   if (sessionToken) return;
@@ -91,6 +92,19 @@ function statCard(label, value) {
   ]);
 }
 
+function badge(text, tone) {
+  return el("span", { className: "badge" + (tone ? " " + tone : ""), text });
+}
+
+function selectControl(label, value, options, onChange) {
+  const select = el("select", { "aria-label": label });
+  select.appendChild(el("option", { value: "", text: label }));
+  options.forEach((opt) => select.appendChild(el("option", { value: opt, text: opt })));
+  select.value = value || "";
+  select.addEventListener("change", () => onChange(select.value));
+  return select;
+}
+
 async function renderOverview(content) {
   const o = await api("/api/v1/overview");
   document.getElementById("page-subtitle").textContent =
@@ -102,6 +116,45 @@ async function renderOverview(content) {
     statCard("Pending updates", o.pending_updates),
     statCard("Unregistered", o.unregistered),
   ]));
+  const grid = el("div", { className: "overview-grid" });
+  const activity = el("section", { className: "panel" }, [
+    el("div", { className: "panel-title", text: "Recent activity" }),
+  ]);
+  if ((o.activity || []).length === 0) {
+    activity.appendChild(el("p", { className: "empty", text: "No recent activity." }));
+  } else {
+    const list = el("div", { className: "activity-list" });
+    (o.activity || []).forEach((item) => {
+      list.appendChild(el("div", { className: "activity-row" }, [
+        badge(item.kind || "event"),
+        el("div", null, [
+          el("div", { className: "row-title", text: item.skill_name || item.detail || "unknown" }),
+          el("div", { className: "muted", text: [item.detail, item.at].filter(Boolean).join(" · ") }),
+        ]),
+      ]));
+    });
+    activity.appendChild(list);
+  }
+  const usage = el("section", { className: "panel" }, [
+    el("div", { className: "panel-title", text: "Most used" }),
+  ]);
+  if ((o.most_used || []).length === 0) {
+    usage.appendChild(el("p", { className: "empty", text: "No invocation data yet." }));
+  } else {
+    const max = Math.max(...o.most_used.map((u) => u.count || 0), 1);
+    (o.most_used || []).forEach((u) => {
+      usage.appendChild(el("div", { className: "usage-row" }, [
+        el("div", { className: "usage-label", text: u.skill_name }),
+        el("div", { className: "usage-bar" }, [
+          el("span", { style: "width:" + Math.max(4, Math.round(((u.count || 0) / max) * 100)) + "%" }),
+        ]),
+        el("div", { className: "usage-count", text: String(u.count || 0) }),
+      ]));
+    });
+  }
+  grid.appendChild(activity);
+  grid.appendChild(usage);
+  content.appendChild(grid);
   content.appendChild(el("p", { className: "muted", text: "Scheduled checks: " + (o.scheduled_check || "unknown") }));
   const actions = document.getElementById("page-actions");
   actions.replaceChildren();
@@ -121,26 +174,89 @@ async function renderOverview(content) {
 }
 
 async function renderLibrary(content) {
-  const skills = await api("/api/v1/skills");
-  document.getElementById("page-subtitle").textContent = skills.length + " skills in catalog";
-  const table = el("table");
+  const params = new URLSearchParams();
+  Object.entries(libraryState).forEach(([key, value]) => {
+    if (value !== "" && value !== null && value !== undefined) params.set(key === "pageSize" ? "page_size" : key, value);
+  });
+  const list = await api("/api/v1/skills?" + params.toString());
+  document.getElementById("page-subtitle").textContent = list.total + " skills in catalog";
+  const actions = document.getElementById("page-actions");
+  actions.replaceChildren();
+  const search = el("input", { className: "search", placeholder: "Search skills", value: libraryState.search, type: "search" });
+  let searchTimer = null;
+  search.addEventListener("input", () => {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(() => {
+      libraryState.search = search.value;
+      libraryState.page = 1;
+      render();
+    }, 180);
+  });
+  actions.appendChild(search);
+
+  const filters = el("div", { className: "filters" }, [
+    selectControl("Category", libraryState.category, list.categories || [], (v) => { libraryState.category = v; libraryState.page = 1; render(); }),
+    selectControl("Tag", libraryState.tag, list.tags || [], (v) => { libraryState.tag = v; libraryState.page = 1; render(); }),
+    selectControl("Source", libraryState.source, list.sources || [], (v) => { libraryState.source = v; libraryState.page = 1; render(); }),
+    selectControl("Compatibility", libraryState.compatibility, ["compatible", "exclusive", "portable", "unknown"], (v) => { libraryState.compatibility = v; libraryState.page = 1; render(); }),
+    selectControl("Requirements", libraryState.requirements, ["declared", "inferred", "none"], (v) => { libraryState.requirements = v; libraryState.page = 1; render(); }),
+    selectControl("Sort", libraryState.sort, ["name", "usage", "recent", "updates"], (v) => { libraryState.sort = v || "name"; libraryState.page = 1; render(); }),
+  ]);
+  content.appendChild(filters);
+
+  if ((list.skills || []).length === 0) {
+    content.appendChild(el("div", { className: "empty-state" }, [
+      el("div", { className: "panel-title", text: "No skills match" }),
+      el("p", { className: "muted", text: "Try clearing filters or run scan/check from the CLI." }),
+    ]));
+    return;
+  }
+
+  const table = el("table", { className: "library-table" });
   const thead = el("thead");
   thead.appendChild(el("tr", null, [
     el("th", { text: "Name" }),
-    el("th", { text: "Categories" }),
     el("th", { text: "Summary" }),
+    el("th", { text: "State" }),
+    el("th", { text: "Usage" }),
+    el("th", { text: "Tags" }),
   ]));
   table.appendChild(thead);
   const tbody = el("tbody");
-  skills.forEach((s) => {
+  (list.skills || []).forEach((s) => {
     tbody.appendChild(el("tr", null, [
-      el("td", { text: s.name }),
-      el("td", { text: (s.categories || []).join(", ") }),
-      el("td", { text: (s.summary || "").slice(0, 80) }),
+      el("td", null, [
+        el("div", { className: "row-title", text: s.name }),
+        el("div", { className: "muted", text: [(s.categories || []).join(", ") || "Uncategorized", s.source].filter(Boolean).join(" · ") }),
+      ]),
+      el("td", { text: (s.summary || "").slice(0, 140) }),
+      el("td", null, [
+        badge(s.compatibility_label || "unknown"),
+        badge(s.requirements_status || "none"),
+        ...((s.update_badges || []).length ? s.update_badges.map((b) => badge(b, "warn")) : (s.pending_update ? [badge("update", "warn")] : [])),
+      ]),
+      el("td", null, [
+        el("div", { text: (s.usage_30d || 0) + " in 30d" }),
+        el("div", { className: "muted", text: [s.installed_projects + " projects", s.last_activity_at].filter(Boolean).join(" · ") }),
+      ]),
+      el("td", null, (s.tags || []).slice(0, 4).map((t) => badge(t))),
     ]));
   });
   table.appendChild(tbody);
   content.appendChild(table);
+
+  const maxPage = Math.max(1, Math.ceil((list.total || 0) / list.page_size));
+  const pager = el("div", { className: "pager" });
+  const prev = el("button", { className: "btn", text: "Prev" });
+  prev.disabled = list.page <= 1;
+  prev.onclick = () => { libraryState.page = Math.max(1, libraryState.page - 1); render(); };
+  const next = el("button", { className: "btn", text: "Next" });
+  next.disabled = list.page >= maxPage;
+  next.onclick = () => { libraryState.page += 1; render(); };
+  pager.appendChild(prev);
+  pager.appendChild(el("span", { className: "muted", text: "Page " + list.page + " of " + maxPage }));
+  pager.appendChild(next);
+  content.appendChild(pager);
 }
 
 async function renderUpdates(content) {
