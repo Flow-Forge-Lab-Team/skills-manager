@@ -353,6 +353,19 @@ Flags:
   --reason "<text>"          optional human note (exclusive mode)
 
 ` + globalFlagHelp()
+	case "setup-schedule":
+		return `skills-manager setup-schedule [--provider local]
+
+Install a local OS scheduler (launchd on macOS, cron on Linux) for daily
+skills-manager check --non-interactive --quiet --json.
+
+` + globalFlagHelp()
+	case "unschedule":
+		return `skills-manager unschedule [--provider local]
+
+Remove the local OS scheduler installed by setup-schedule.
+
+` + globalFlagHelp()
 	case "serve":
 		return `skills-manager serve [flags]
 
@@ -442,6 +455,8 @@ Commands:
   summarize   generate or import advisory update summaries
   config      configure opt-in provider settings and usage accounting
   seed-catalog apply seed taxonomy metadata to the library
+  setup-schedule  install local OS daily check (launchd/cron)
+  unschedule      remove local OS scheduler
   status      show library counts, pending, unregistered, scheduled state
   serve       local triage web UI + REST API (localhost by default)
   doctor      diagnose problems; --rebuild-state --rebuild-catalog
