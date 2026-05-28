@@ -20,6 +20,9 @@ type compiledRule struct {
 	Tags        []string
 	AlwaysApply bool
 	Globs       []string
+	// CopilotApplyTo, when non-empty, is an explicit Copilot applyTo override
+	// from the skill's `copilot:` frontmatter block.
+	CopilotApplyTo string
 }
 
 // runCompile implements `skills-manager compile <harness> [project-path]`,
@@ -85,7 +88,7 @@ func runCompile(args []string, realStdout io.Writer, stderr io.Writer, gf global
 
 // compileOnlyHarnesses are harnesses that need format translation rather than
 // SKILL.md copy. install/sync recompile these when a project opts in.
-var compileOnlyHarnesses = map[string]bool{"cursor": true}
+var compileOnlyHarnesses = map[string]bool{"cursor": true, "copilot": true}
 
 // compileHarnessesForProject returns the compile-only harnesses listed in the
 // project's config (so install/sync know what to recompile). configPath may
@@ -133,6 +136,9 @@ func pruneCompileHarness(projectPath, harness string) error {
 	case "cursor":
 		_, err := writeCursorRules(projectPath, nil) // nil rules → prune-only
 		return err
+	case "copilot":
+		_, err := writeCopilotInstructions(projectPath, nil)
+		return err
 	default:
 		return nil
 	}
@@ -150,12 +156,15 @@ func pruneAllCompileHarnesses(projectPath string) {
 // compileForHarness compiles every installed skill for the given harness and
 // returns the project-relative paths written.
 func compileForHarness(home, projectPath, harness, configPath string) ([]string, error) {
-	if harness != "cursor" {
-		return nil, fmt.Errorf("unsupported harness %q (supported: cursor)", harness)
+	if harness != "cursor" && harness != "copilot" {
+		return nil, fmt.Errorf("unsupported harness %q (supported: cursor, copilot)", harness)
 	}
 	rules, err := loadCompiledRules(home, projectPath, harness, configPath)
 	if err != nil {
 		return nil, err
+	}
+	if harness == "copilot" {
+		return writeCopilotInstructions(projectPath, rules)
 	}
 	return writeCursorRules(projectPath, rules)
 }
@@ -185,7 +194,7 @@ func loadCompiledRules(home, projectPath, harness, configPath string) ([]compile
 	libraryPath := filepath.Join(home, "library")
 	var rules []compiledRule
 	for _, name := range names {
-		rule, err := buildCompiledRule(filepath.Join(libraryPath, name, "SKILL.md"), name, tagsByName[name])
+		rule, err := buildCompiledRule(filepath.Join(libraryPath, name, "SKILL.md"), name, tagsByName[name], harness)
 		if err != nil {
 			continue // skip skills we can't read; don't fail the whole compile
 		}
@@ -258,8 +267,10 @@ func skillHasUnmetRequirements(req requirements) bool {
 }
 
 // buildCompiledRule parses a SKILL.md into the neutral rule, applying tag-based
-// glob inference and any explicit `cursor:` frontmatter override.
-func buildCompiledRule(skillMd, name string, catalogTags []string) (compiledRule, error) {
+// glob inference. Harness-specific frontmatter overrides are applied only for
+// the harness being compiled, so a `cursor:` block never reshapes Copilot
+// output (and vice versa).
+func buildCompiledRule(skillMd, name string, catalogTags []string, harness string) (compiledRule, error) {
 	data, err := os.ReadFile(skillMd)
 	if err != nil {
 		return compiledRule{}, err
@@ -275,6 +286,9 @@ func buildCompiledRule(skillMd, name string, catalogTags []string) (compiledRule
 			AlwaysApply *bool    `yaml:"alwaysApply"`
 			Description string   `yaml:"description"`
 		} `yaml:"cursor"`
+		Copilot *struct {
+			ApplyTo string `yaml:"applyTo"`
+		} `yaml:"copilot"`
 	}
 	if strings.HasPrefix(text, "---") {
 		if end := strings.Index(text[3:], "---"); end != -1 {
@@ -291,8 +305,9 @@ func buildCompiledRule(skillMd, name string, catalogTags []string) (compiledRule
 	rule.AlwaysApply = containsFold(rule.Tags, "always-on")
 	rule.Globs = inferGlobsFromTags(rule.Tags)
 
-	// Explicit override wins over heuristics.
-	if fm.Cursor != nil {
+	// Cursor overrides reshape Globs/AlwaysApply, so only apply them when
+	// compiling for cursor — otherwise they would leak into other harnesses.
+	if harness == "cursor" && fm.Cursor != nil {
 		if fm.Cursor.Description != "" {
 			rule.Description = fm.Cursor.Description
 		}
@@ -305,6 +320,9 @@ func buildCompiledRule(skillMd, name string, catalogTags []string) (compiledRule
 	}
 	if rule.AlwaysApply {
 		rule.Globs = nil // alwaysApply rules don't use globs
+	}
+	if fm.Copilot != nil {
+		rule.CopilotApplyTo = strings.TrimSpace(fm.Copilot.ApplyTo)
 	}
 	return rule, nil
 }
@@ -451,6 +469,178 @@ func renderCursorRule(r compiledRule) string {
 	b.WriteString(r.Body)
 	b.WriteString("\n")
 	return b.String()
+}
+
+const (
+	copilotBeginMarker = "<!-- skills-manager:begin (generated — managed by skills-manager) -->"
+	copilotEndMarker   = "<!-- skills-manager:end -->"
+)
+
+// copilotApplyTo derives a Copilot `applyTo` glob for a rule: an explicit
+// override wins, then always-on maps to `**`, then inferred globs are joined.
+// An empty result means the skill has no glob scope and belongs in the
+// single-file fallback (.github/copilot-instructions.md).
+func copilotApplyTo(r compiledRule) string {
+	if r.CopilotApplyTo != "" {
+		return r.CopilotApplyTo
+	}
+	if r.AlwaysApply {
+		return "**"
+	}
+	if len(r.Globs) > 0 {
+		return strings.Join(r.Globs, ", ")
+	}
+	return ""
+}
+
+// writeCopilotInstructions writes glob-scoped skills to
+// .github/instructions/<name>.instructions.md and folds skills without a glob
+// scope into .github/copilot-instructions.md (single-file fallback). Generated
+// per-file instructions are tracked/pruned via a manifest; the single-file
+// fallback uses a marker block so user-authored content is preserved.
+func writeCopilotInstructions(projectPath string, rules []compiledRule) ([]string, error) {
+	instrDir := filepath.Join(projectPath, ".github", "instructions")
+	manifestPath := filepath.Join(instrDir, cursorManifestName)
+	prior := readCursorManifest(manifestPath)
+
+	var perFile, general []compiledRule
+	for _, r := range rules {
+		if copilotApplyTo(r) != "" {
+			perFile = append(perFile, r)
+		} else {
+			general = append(general, r)
+		}
+	}
+
+	current := map[string]bool{}
+	for _, r := range perFile {
+		current[r.Name+".instructions.md"] = true
+	}
+	for _, old := range prior {
+		if !current[old] {
+			_ = os.Remove(filepath.Join(instrDir, old))
+		}
+	}
+
+	var written []string
+	if len(perFile) > 0 {
+		if err := os.MkdirAll(instrDir, 0o755); err != nil {
+			return nil, err
+		}
+		var names []string
+		for _, r := range perFile {
+			base := r.Name + ".instructions.md"
+			rel := filepath.Join(".github", "instructions", base)
+			if err := os.WriteFile(filepath.Join(projectPath, rel), []byte(renderCopilotInstruction(r)), 0o644); err != nil {
+				return written, err
+			}
+			written = append(written, rel)
+			names = append(names, base)
+		}
+		if err := writeCursorManifest(manifestPath, names); err != nil {
+			return written, err
+		}
+	} else {
+		_ = os.Remove(manifestPath)
+		_ = os.Remove(instrDir)
+	}
+
+	// Single-file fallback for skills with no glob scope.
+	singleRel := filepath.Join(".github", "copilot-instructions.md")
+	singlePath := filepath.Join(projectPath, singleRel)
+	existing := ""
+	if data, err := os.ReadFile(singlePath); err == nil {
+		existing = string(data)
+	} else if !os.IsNotExist(err) {
+		return written, err
+	}
+	if len(general) == 0 {
+		if strings.Contains(existing, copilotBeginMarker) {
+			cleaned := removeMarkedBlock(existing, copilotBeginMarker, copilotEndMarker)
+			if cleaned != existing {
+				if strings.TrimSpace(cleaned) == "" {
+					// File held only our generated block — remove it entirely
+					// rather than leaving an empty file behind.
+					_ = os.Remove(singlePath)
+				} else if err := os.WriteFile(singlePath, []byte(cleaned), 0o644); err != nil {
+					return written, err
+				}
+				written = append(written, singleRel)
+			}
+		}
+		return written, nil
+	}
+	block := buildCopilotGeneralBlock(general)
+	merged := mergeMarkedBlock(existing, block, copilotBeginMarker, copilotEndMarker)
+	if merged != existing {
+		if err := os.MkdirAll(filepath.Join(projectPath, ".github"), 0o755); err != nil {
+			return written, err
+		}
+		if err := os.WriteFile(singlePath, []byte(merged), 0o644); err != nil {
+			return written, err
+		}
+		written = append(written, singleRel)
+	}
+	return written, nil
+}
+
+func renderCopilotInstruction(r compiledRule) string {
+	var b strings.Builder
+	b.WriteString("---\n")
+	fmt.Fprintf(&b, "applyTo: %s\n", yamlScalar(copilotApplyTo(r)))
+	b.WriteString("---\n\n")
+	b.WriteString(r.Body)
+	b.WriteString("\n")
+	return b.String()
+}
+
+func buildCopilotGeneralBlock(rules []compiledRule) string {
+	var b strings.Builder
+	b.WriteString(copilotBeginMarker)
+	b.WriteString("\n_General instructions assembled by skills-manager. Edit the skills in your library; content outside this block is preserved._\n\n")
+	for _, r := range rules {
+		fmt.Fprintf(&b, "## %s\n\n%s\n\n", r.Name, r.Body)
+	}
+	return strings.TrimRight(b.String(), "\n") + "\n" + copilotEndMarker
+}
+
+// mergeMarkedBlock replaces the begin/end-delimited region in existing with
+// generated, preserving content outside it; appends if no markers are present.
+func mergeMarkedBlock(existing, generated, begin, end string) string {
+	start := strings.Index(existing, begin)
+	endIdx := strings.Index(existing, end)
+	if start != -1 && endIdx != -1 && endIdx > start {
+		before := existing[:start]
+		after := existing[endIdx+len(end):]
+		return strings.TrimRight(before, " \t") + generated + after
+	}
+	trimmed := strings.TrimRight(existing, "\n")
+	if trimmed == "" {
+		return generated + "\n"
+	}
+	return trimmed + "\n\n" + generated + "\n"
+}
+
+// removeMarkedBlock strips the begin/end-delimited region, preserving content
+// around it.
+func removeMarkedBlock(existing, begin, end string) string {
+	start := strings.Index(existing, begin)
+	endIdx := strings.Index(existing, end)
+	if start == -1 || endIdx == -1 || endIdx < start {
+		return existing
+	}
+	before := strings.TrimRight(existing[:start], " \t\n")
+	after := strings.TrimLeft(existing[endIdx+len(end):], "\n")
+	switch {
+	case before == "" && after == "":
+		return ""
+	case before == "":
+		return after
+	case after == "":
+		return before + "\n"
+	default:
+		return before + "\n\n" + after
+	}
 }
 
 // yamlScalar quotes a scalar when needed so the emitted frontmatter is valid.

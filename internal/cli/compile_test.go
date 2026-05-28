@@ -356,3 +356,130 @@ func TestInferGlobsFromTags(t *testing.T) {
 		t.Fatalf("unknown tags should infer no globs, got %v", g)
 	}
 }
+
+func TestCompileCopilotPerFileAndSingleFile(t *testing.T) {
+	skills := []sampleSkill{
+		{name: "react-rule", tags: []string{"react"}},      // glob → per-file applyTo
+		{name: "always-rule", tags: []string{"always-on"}}, // always → applyTo "**"
+		{name: "general-rule", tags: []string{"misc"}},     // no scope → single-file fallback
+	}
+	home, projectPath := setupCompileProject(t, skills)
+
+	written, err := compileForHarness(home, projectPath, "copilot", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(written) != 3 {
+		t.Fatalf("wrote %d outputs, want 3 (2 per-file + 1 single-file): %v", len(written), written)
+	}
+
+	readFM := func(name string) map[string]interface{} {
+		raw := readFile(t, filepath.Join(projectPath, ".github", "instructions", name+".instructions.md"))
+		end := strings.Index(raw[4:], "---")
+		if !strings.HasPrefix(raw, "---\n") || end == -1 {
+			t.Fatalf("%s missing frontmatter:\n%s", name, raw)
+		}
+		var fm map[string]interface{}
+		if err := yaml.Unmarshal([]byte(raw[4:end+4]), &fm); err != nil {
+			t.Fatalf("%s invalid frontmatter: %v", name, err)
+		}
+		return fm
+	}
+	if got := readFM("react-rule")["applyTo"]; got == nil || !strings.Contains(got.(string), "*.tsx") {
+		t.Fatalf("react-rule applyTo = %v, want a tsx glob", got)
+	}
+	if got := readFM("always-rule")["applyTo"]; got != "**" {
+		t.Fatalf("always-rule applyTo = %v, want **", got)
+	}
+	// general-rule has no scope → single file, not per-file.
+	if _, err := os.Stat(filepath.Join(projectPath, ".github", "instructions", "general-rule.instructions.md")); !os.IsNotExist(err) {
+		t.Fatal("general-rule should fold into the single file, not a per-file instruction")
+	}
+	single := readFile(t, filepath.Join(projectPath, ".github", "copilot-instructions.md"))
+	if !strings.Contains(single, copilotBeginMarker) || !strings.Contains(single, "## general-rule") {
+		t.Fatalf("single-file fallback missing general-rule:\n%s", single)
+	}
+}
+
+func TestCompileCopilotOverrideAndPreserveAndPrune(t *testing.T) {
+	skills := []sampleSkill{
+		{name: "ovr", tags: []string{"misc"}, frontMore: "copilot:\n  applyTo: \"**/*.go\"\n"}, // override → per-file
+		{name: "gen", tags: []string{"misc"}},
+	}
+	home, projectPath := setupCompileProject(t, skills)
+	// Pre-existing user content in the single file.
+	writeFile(t, filepath.Join(projectPath, ".github", "copilot-instructions.md"), "# Team rules\n\nAlways write tests.\n")
+
+	if _, err := compileForHarness(home, projectPath, "copilot", ""); err != nil {
+		t.Fatal(err)
+	}
+	// ovr → per-file via override.
+	raw := readFile(t, filepath.Join(projectPath, ".github", "instructions", "ovr.instructions.md"))
+	if !strings.Contains(raw, "**/*.go") {
+		t.Fatalf("override applyTo not applied:\n%s", raw)
+	}
+	single := readFile(t, filepath.Join(projectPath, ".github", "copilot-instructions.md"))
+	if !strings.Contains(single, "Always write tests.") || !strings.Contains(single, "## gen") {
+		t.Fatalf("user content not preserved alongside generated block:\n%s", single)
+	}
+
+	// Narrow to just ovr (gen removed): single-file block cleared, user content kept.
+	writeFile(t, filepath.Join(projectPath, ".skills", "installed.lock"), "version: 1\nskills:\n  - name: ovr\n")
+	if _, err := compileForHarness(home, projectPath, "copilot", ""); err != nil {
+		t.Fatal(err)
+	}
+	single = readFile(t, filepath.Join(projectPath, ".github", "copilot-instructions.md"))
+	if strings.Contains(single, "## gen") || strings.Contains(single, copilotBeginMarker) {
+		t.Fatalf("stale general block should be cleared:\n%s", single)
+	}
+	if !strings.Contains(single, "Always write tests.") {
+		t.Fatalf("user content must remain:\n%s", single)
+	}
+
+	// Disable copilot entirely → per-file instructions pruned.
+	pruneAllCompileHarnesses(projectPath)
+	if _, err := os.Stat(filepath.Join(projectPath, ".github", "instructions", "ovr.instructions.md")); !os.IsNotExist(err) {
+		t.Fatal("per-file instruction should be pruned")
+	}
+}
+
+func TestCompileCopilotIgnoresCursorOverride(t *testing.T) {
+	// A skill with a cursor-only override and a react tag must scope Copilot by
+	// the tag-inferred glob, not the Cursor override.
+	skills := []sampleSkill{{
+		name:      "x",
+		tags:      []string{"react"},
+		frontMore: "cursor:\n  globs:\n    - \"**/*.custom\"\n",
+	}}
+	home, projectPath := setupCompileProject(t, skills)
+	if _, err := compileForHarness(home, projectPath, "copilot", ""); err != nil {
+		t.Fatal(err)
+	}
+	raw := readFile(t, filepath.Join(projectPath, ".github", "instructions", "x.instructions.md"))
+	if strings.Contains(raw, "**/*.custom") {
+		t.Fatalf("cursor override leaked into copilot applyTo:\n%s", raw)
+	}
+	if !strings.Contains(raw, "*.tsx") {
+		t.Fatalf("copilot applyTo should use the react-inferred glob:\n%s", raw)
+	}
+}
+
+func TestCompileCopilotRemovesGeneratedOnlyFallbackFile(t *testing.T) {
+	// Single-file fallback created solely by the compiler must be removed (not
+	// left empty) when nothing qualifies anymore.
+	skills := []sampleSkill{{name: "gen", tags: []string{"misc"}}}
+	home, projectPath := setupCompileProject(t, skills)
+	singlePath := filepath.Join(projectPath, ".github", "copilot-instructions.md")
+
+	if _, err := compileForHarness(home, projectPath, "copilot", ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(singlePath); err != nil {
+		t.Fatalf("expected generated fallback file: %v", err)
+	}
+	// Disable copilot → file should be removed entirely (no user content).
+	pruneAllCompileHarnesses(projectPath)
+	if _, err := os.Stat(singlePath); !os.IsNotExist(err) {
+		t.Fatalf("generated-only fallback file should be removed, not left empty (err=%v)", err)
+	}
+}
