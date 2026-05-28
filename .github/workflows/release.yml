@@ -27,7 +27,13 @@ jobs:
         uses: goreleaser/goreleaser-action@v6
         with:
           version: "~> v2"
-          args: release --clean
+          # Skip the cosign and Homebrew pipes when their secrets aren't set,
+          # so a plain tagged release succeeds without them; they activate
+          # automatically once the secrets are configured.
+          args: >-
+            release --clean
+            ${{ secrets.COSIGN_KEY == '' && '--skip=sign' || '' }}
+            ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN == '' && '--skip=homebrew' || '' }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # Optional secrets enable extras when present:

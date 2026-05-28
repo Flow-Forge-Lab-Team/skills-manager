@@ -28,6 +28,9 @@ builds:
 
 archives:
   - id: default
+    # Version-less names so `install.sh` and the npm postinstall can fetch a
+    # stable asset path (skills-manager_<os>_<arch>.<ext>).
+    name_template: "skills-manager_{{ .Os }}_{{ .Arch }}"
     formats: [tar.gz]
     format_overrides:
       - goos: windows

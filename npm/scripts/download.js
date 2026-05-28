@@ -24,6 +24,10 @@ function target() {
   if (!["amd64", "arm64"].includes(arch)) {
     throw new Error(`unsupported architecture: ${os.arch()}`);
   }
+  // No windows/arm64 build is released; fail clearly instead of 404-ing.
+  if (goos === "windows" && arch === "arm64") {
+    throw new Error("windows/arm64 is not supported; use the linux or macOS build, or build from source");
+  }
   const ext = goos === "windows" ? "zip" : "tar.gz";
   return { goos, arch, ext, exe: goos === "windows" ? ".exe" : "" };
 }
