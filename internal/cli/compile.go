@@ -194,7 +194,7 @@ func loadCompiledRules(home, projectPath, harness, configPath string) ([]compile
 	libraryPath := filepath.Join(home, "library")
 	var rules []compiledRule
 	for _, name := range names {
-		rule, err := buildCompiledRule(filepath.Join(libraryPath, name, "SKILL.md"), name, tagsByName[name])
+		rule, err := buildCompiledRule(filepath.Join(libraryPath, name, "SKILL.md"), name, tagsByName[name], harness)
 		if err != nil {
 			continue // skip skills we can't read; don't fail the whole compile
 		}
@@ -267,8 +267,10 @@ func skillHasUnmetRequirements(req requirements) bool {
 }
 
 // buildCompiledRule parses a SKILL.md into the neutral rule, applying tag-based
-// glob inference and any explicit `cursor:` frontmatter override.
-func buildCompiledRule(skillMd, name string, catalogTags []string) (compiledRule, error) {
+// glob inference. Harness-specific frontmatter overrides are applied only for
+// the harness being compiled, so a `cursor:` block never reshapes Copilot
+// output (and vice versa).
+func buildCompiledRule(skillMd, name string, catalogTags []string, harness string) (compiledRule, error) {
 	data, err := os.ReadFile(skillMd)
 	if err != nil {
 		return compiledRule{}, err
@@ -303,8 +305,9 @@ func buildCompiledRule(skillMd, name string, catalogTags []string) (compiledRule
 	rule.AlwaysApply = containsFold(rule.Tags, "always-on")
 	rule.Globs = inferGlobsFromTags(rule.Tags)
 
-	// Explicit override wins over heuristics.
-	if fm.Cursor != nil {
+	// Cursor overrides reshape Globs/AlwaysApply, so only apply them when
+	// compiling for cursor — otherwise they would leak into other harnesses.
+	if harness == "cursor" && fm.Cursor != nil {
 		if fm.Cursor.Description != "" {
 			rule.Description = fm.Cursor.Description
 		}

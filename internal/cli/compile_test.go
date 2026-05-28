@@ -442,3 +442,24 @@ func TestCompileCopilotOverrideAndPreserveAndPrune(t *testing.T) {
 		t.Fatal("per-file instruction should be pruned")
 	}
 }
+
+func TestCompileCopilotIgnoresCursorOverride(t *testing.T) {
+	// A skill with a cursor-only override and a react tag must scope Copilot by
+	// the tag-inferred glob, not the Cursor override.
+	skills := []sampleSkill{{
+		name:      "x",
+		tags:      []string{"react"},
+		frontMore: "cursor:\n  globs:\n    - \"**/*.custom\"\n",
+	}}
+	home, projectPath := setupCompileProject(t, skills)
+	if _, err := compileForHarness(home, projectPath, "copilot", ""); err != nil {
+		t.Fatal(err)
+	}
+	raw := readFile(t, filepath.Join(projectPath, ".github", "instructions", "x.instructions.md"))
+	if strings.Contains(raw, "**/*.custom") {
+		t.Fatalf("cursor override leaked into copilot applyTo:\n%s", raw)
+	}
+	if !strings.Contains(raw, "*.tsx") {
+		t.Fatalf("copilot applyTo should use the react-inferred glob:\n%s", raw)
+	}
+}
