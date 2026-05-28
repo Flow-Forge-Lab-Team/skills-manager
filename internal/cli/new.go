@@ -371,6 +371,12 @@ func validateAuthoredSkill(name, draft string) error {
 	if !ok {
 		return fmt.Errorf("draft is not a SKILL.md (missing or unterminated frontmatter)")
 	}
+	// ingest re-parses the saved file with a substring-based frontmatter reader
+	// that would truncate at a `---` inside a value; reject that here so what we
+	// accept is what ingest actually stores (incl. the compatibility block).
+	if strings.Contains(block, "---") {
+		return fmt.Errorf("frontmatter must not contain a '---' sequence")
+	}
 	var fm struct {
 		Name         string       `yaml:"name"`
 		Description  string       `yaml:"description"`
@@ -401,6 +407,14 @@ func validateAuthoredSkill(name, draft string) error {
 	// Guided authoring must declare compatibility, not leave it implicitly portable.
 	if len(fm.Compatible) == 0 && strings.TrimSpace(fm.Exclusive) == "" {
 		return fmt.Errorf("missing compatibility declaration (compatible: [...] or exclusive: <harness>)")
+	}
+	lowerDraft := strings.ToLower(draft)
+	// The skills-author contract bans these hyphenated tokens too, which the
+	// space-separated looksSuspicious patterns don't cover.
+	for _, banned := range []string{"ignore-instructions", "hide-changes", "disable-safety", "bypass-policy", "exfiltrate"} {
+		if strings.Contains(lowerDraft, banned) {
+			return fmt.Errorf("draft contains a banned instruction (%s)", banned)
+		}
 	}
 	for _, line := range strings.Split(draft, "\n") {
 		if looksSuspicious(strings.ToLower(strings.TrimSpace(line))) {
