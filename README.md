@@ -2,9 +2,27 @@
 
 A local-first CLI for managing AI agent skills across the harnesses you actually use — Claude Code, Codex CLI, Grok Build, Antigravity, Gemini CLI, Hermes, OpenClaw, and more.
 
-> **Status:** Design phase. See [`docs/`](docs/) for the full design.
-> Markdown is canonical. The checked-in HTML files are generated from the Markdown
-> with [`docs/_build.sh`](docs/_build.sh) for easier browsing.
+> Markdown under [`docs/`](docs/) is canonical; the published docs site is
+> generated from it with MkDocs. New here? Start with the
+> [5-minute tutorial](docs/TUTORIAL.md).
+
+## Install
+
+```sh
+# curl | sh (downloads the latest release binary)
+curl -fsSL https://raw.githubusercontent.com/Flow-Forge-Lab-Team/skills-manager/main/install.sh | sh
+
+# npm
+npm install -g @flowforgelab/skills-manager
+
+# Homebrew
+brew install Flow-Forge-Lab-Team/tap/skills-manager
+
+# from source
+go install github.com/Flow-Forge-Lab-Team/skills-manager/cmd/skills-manager@latest
+```
+
+Then run the [5-minute tutorial](docs/TUTORIAL.md), or `skills-manager --help`.
 
 ## What it does
 
@@ -46,4 +64,4 @@ A clickable UI mockup of a possible dashboard is at [`mockup.html`](mockup.html)
 
 ## License
 
-TBD.
+[MIT](LICENSE) © Flow Forge Lab.
