@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -149,6 +150,69 @@ func TestCompileHarnessesForProject(t *testing.T) {
 	writeFile(t, filepath.Join(projectPath, ".skills", "project.yaml"), "version: 1\nharnesses: [claude, codex]\n")
 	if got := compileHarnessesForProject(projectPath); len(got) != 0 {
 		t.Fatalf("expected no compile harnesses, got %v", got)
+	}
+}
+
+func TestCompileCursorOnlyProjectUsesMatch(t *testing.T) {
+	// A cursor-only project records nothing in installed.lock (cursor has no
+	// copy target), so the compiler must fall back to the project match.
+	home := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+	libraryPath := filepath.Join(home, "library")
+	writeFile(t, filepath.Join(libraryPath, "go-rules", "SKILL.md"), "---\nname: go-rules\ndescription: Go conventions\n---\n# Go\n\nUse gofmt.\n")
+	writeFile(t, filepath.Join(libraryPath, "claude-only", "SKILL.md"), "---\nname: claude-only\ndescription: claude\n---\nbody\n")
+	cat := catalog{Version: 1, Skills: []catalogSkill{
+		{Name: "go-rules", Tags: []string{"go"}},
+		// exclusive to claude → not compiled for cursor
+		{Name: "claude-only", Tags: []string{"go"}, Compatibility: compatibility{Mode: "exclusive", Harness: "claude"}},
+	}}
+	if err := writeCatalog(filepath.Join(libraryPath, "catalog.yaml"), cat); err != nil {
+		t.Fatal(err)
+	}
+	projectPath := filepath.Join(home, "proj")
+	writeFile(t, filepath.Join(projectPath, ".skills", "project.yaml"), "version: 1\ncategories: []\ntags: [go]\nharnesses: [cursor]\n")
+	// no installed.lock on purpose
+
+	written, err := compileForHarness(home, projectPath, "cursor")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(written) != 1 {
+		t.Fatalf("cursor-only project compiled %d rules, want 1 (go-rules; claude-only excluded): %v", len(written), written)
+	}
+	if _, err := os.Stat(filepath.Join(projectPath, ".cursor", "rules", "go-rules.mdc")); err != nil {
+		t.Fatalf("go-rules.mdc not written: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(projectPath, ".cursor", "rules", "claude-only.mdc")); !os.IsNotExist(err) {
+		t.Fatal("claude-only is cursor-incompatible and must not be compiled")
+	}
+}
+
+func TestCompileCursorPrunesStaleRules(t *testing.T) {
+	home, projectPath := setupCompileProject(t, []sampleSkill{
+		{name: "alpha", tags: []string{"go"}},
+		{name: "beta", tags: []string{"react"}},
+	})
+	rulesDir := filepath.Join(projectPath, ".cursor", "rules")
+	// A user-authored rule that must never be deleted.
+	if _, err := compileForHarness(home, projectPath, "cursor"); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(rulesDir, "user-hand-written.mdc"), "---\ndescription: mine\n---\nkeep\n")
+
+	// Narrow the install set to just alpha and recompile.
+	writeFile(t, filepath.Join(projectPath, ".skills", "installed.lock"), "version: 1\nskills:\n  - name: alpha\n")
+	if _, err := compileForHarness(home, projectPath, "cursor"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(rulesDir, "beta.mdc")); !os.IsNotExist(err) {
+		t.Fatal("stale beta.mdc should have been pruned")
+	}
+	if _, err := os.Stat(filepath.Join(rulesDir, "alpha.mdc")); err != nil {
+		t.Fatalf("alpha.mdc should remain: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(rulesDir, "user-hand-written.mdc")); err != nil {
+		t.Fatal("user-authored rule must be preserved")
 	}
 }
 

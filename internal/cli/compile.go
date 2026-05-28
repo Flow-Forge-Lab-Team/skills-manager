@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -105,25 +106,19 @@ func compileHarnessesForProject(projectPath string) []string {
 // compileForHarness compiles every installed skill for the given harness and
 // returns the project-relative paths written.
 func compileForHarness(home, projectPath, harness string) ([]string, error) {
-	rules, err := loadCompiledRules(home, projectPath)
+	if harness != "cursor" {
+		return nil, fmt.Errorf("unsupported harness %q (supported: cursor)", harness)
+	}
+	rules, err := loadCompiledRules(home, projectPath, harness)
 	if err != nil {
 		return nil, err
 	}
-	switch harness {
-	case "cursor":
-		return writeCursorRules(projectPath, rules)
-	default:
-		return nil, fmt.Errorf("unsupported harness %q (supported: cursor)", harness)
-	}
+	return writeCursorRules(projectPath, rules)
 }
 
-// loadCompiledRules reads the project's installed skills and builds the neutral
-// intermediate for each.
-func loadCompiledRules(home, projectPath string) ([]compiledRule, error) {
-	lock, err := readInstallLock(filepath.Join(projectPath, ".skills", "installed.lock"))
-	if err != nil {
-		return nil, fmt.Errorf("read install lock: %w", err)
-	}
+// loadCompiledRules resolves the project's skills for the harness and builds the
+// neutral intermediate for each.
+func loadCompiledRules(home, projectPath, harness string) ([]compiledRule, error) {
 	cat, _, err := loadTriageCatalog(home)
 	if err != nil {
 		return nil, fmt.Errorf("load catalog: %w", err)
@@ -132,11 +127,14 @@ func loadCompiledRules(home, projectPath string) ([]compiledRule, error) {
 	for _, s := range cat.Skills {
 		tagsByName[s.Name] = s.Tags
 	}
+	names, err := projectCompileSkills(projectPath, cat, harness)
+	if err != nil {
+		return nil, err
+	}
 	libraryPath := filepath.Join(home, "library")
 	var rules []compiledRule
-	for _, locked := range lock.Skills {
-		skillMd := filepath.Join(libraryPath, locked.Name, "SKILL.md")
-		rule, err := buildCompiledRule(skillMd, locked.Name, tagsByName[locked.Name])
+	for _, name := range names {
+		rule, err := buildCompiledRule(filepath.Join(libraryPath, name, "SKILL.md"), name, tagsByName[name])
 		if err != nil {
 			continue // skip skills we can't read; don't fail the whole compile
 		}
@@ -144,6 +142,36 @@ func loadCompiledRules(home, projectPath string) ([]compiledRule, error) {
 	}
 	sort.Slice(rules, func(i, j int) bool { return rules[i].Name < rules[j].Name })
 	return rules, nil
+}
+
+// projectCompileSkills returns the skills to compile for a harness. It prefers
+// the install lock (the concrete installed set), but falls back to the project
+// match for compile-only harnesses like cursor, which have no copy target and
+// therefore record nothing in the lock.
+func projectCompileSkills(projectPath string, cat catalog, harness string) ([]string, error) {
+	lock, err := readInstallLock(filepath.Join(projectPath, ".skills", "installed.lock"))
+	if err != nil {
+		return nil, fmt.Errorf("read install lock: %w", err)
+	}
+	if len(lock.Skills) > 0 {
+		names := make([]string, 0, len(lock.Skills))
+		for _, e := range lock.Skills {
+			names = append(names, e.Name)
+		}
+		return names, nil
+	}
+	// Fallback: matched candidates compatible with this harness.
+	cfg, err := readProjectConfig(filepath.Join(projectPath, ".skills", "project.yaml"))
+	if err != nil {
+		return nil, nil
+	}
+	var names []string
+	for _, c := range selectInstallCandidates(cat, cfg, "") {
+		if len(compatibleHarnesses(c.Skill.Compatibility, []string{harness})) > 0 {
+			names = append(names, c.Skill.Name)
+		}
+	}
+	return names, nil
 }
 
 // buildCompiledRule parses a SKILL.md into the neutral rule, applying tag-based
@@ -253,25 +281,73 @@ func inferGlobsFromTags(tags []string) []string {
 	return globs
 }
 
+// cursorManifestName tracks which .mdc files skills-manager generated, so stale
+// rules for removed skills can be pruned without touching user-authored rules.
+const cursorManifestName = ".skills-manager.json"
+
 // writeCursorRules renders each rule as a Cursor `.mdc` file under
-// <project>/.cursor/rules/<name>.mdc.
+// <project>/.cursor/rules/<name>.mdc, and prunes previously-generated rules that
+// are no longer present (without deleting user-authored .mdc files).
 func writeCursorRules(projectPath string, rules []compiledRule) ([]string, error) {
+	dir := filepath.Join(projectPath, ".cursor", "rules")
+	manifestPath := filepath.Join(dir, cursorManifestName)
+	prior := readCursorManifest(manifestPath)
+
+	current := map[string]bool{}
+	for _, r := range rules {
+		current[r.Name+".mdc"] = true
+	}
+
+	// Prune previously-generated rules that are no longer compiled.
+	for _, oldFile := range prior {
+		if !current[oldFile] {
+			_ = os.Remove(filepath.Join(dir, oldFile))
+		}
+	}
+
 	if len(rules) == 0 {
+		// Nothing to generate: drop the manifest (and the dir if now empty).
+		_ = os.Remove(manifestPath)
+		_ = os.Remove(dir)
 		return nil, nil
 	}
-	dir := filepath.Join(projectPath, ".cursor", "rules")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, err
 	}
 	var written []string
+	var names []string
 	for _, r := range rules {
-		rel := filepath.Join(".cursor", "rules", r.Name+".mdc")
+		base := r.Name + ".mdc"
+		rel := filepath.Join(".cursor", "rules", base)
 		if err := os.WriteFile(filepath.Join(projectPath, rel), []byte(renderCursorRule(r)), 0o644); err != nil {
 			return written, err
 		}
 		written = append(written, rel)
+		names = append(names, base)
+	}
+	if err := writeCursorManifest(manifestPath, names); err != nil {
+		return written, err
 	}
 	return written, nil
+}
+
+func readCursorManifest(path string) []string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	var names []string
+	_ = json.Unmarshal(data, &names)
+	return names
+}
+
+func writeCursorManifest(path string, names []string) error {
+	sort.Strings(names)
+	data, err := json.MarshalIndent(names, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, data, 0o644)
 }
 
 func renderCursorRule(r compiledRule) string {
