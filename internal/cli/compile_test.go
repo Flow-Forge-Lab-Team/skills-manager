@@ -56,7 +56,7 @@ func TestCompileCursorProducesReasonableRules(t *testing.T) {
 	}
 	home, projectPath := setupCompileProject(t, skills)
 
-	written, err := compileForHarness(home, projectPath, "cursor")
+	written, err := compileForHarness(home, projectPath, "cursor", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -115,7 +115,7 @@ func TestCompileCursorFrontmatterOverride(t *testing.T) {
 		frontMore: "cursor:\n  globs:\n    - \"**/*.custom\"\n  alwaysApply: false\n  description: Custom desc\n",
 	}}
 	home, projectPath := setupCompileProject(t, skills)
-	if _, err := compileForHarness(home, projectPath, "cursor"); err != nil {
+	if _, err := compileForHarness(home, projectPath, "cursor", ""); err != nil {
 		t.Fatal(err)
 	}
 	raw := readFile(t, filepath.Join(projectPath, ".cursor", "rules", "override.mdc"))
@@ -132,7 +132,7 @@ func TestCompileCursorFrontmatterOverride(t *testing.T) {
 
 func TestCompileUnsupportedHarness(t *testing.T) {
 	home, projectPath := setupCompileProject(t, []sampleSkill{{name: "x", tags: []string{"go"}}})
-	if _, err := compileForHarness(home, projectPath, "emacs"); err == nil || !strings.Contains(err.Error(), "unsupported") {
+	if _, err := compileForHarness(home, projectPath, "emacs", ""); err == nil || !strings.Contains(err.Error(), "unsupported") {
 		t.Fatalf("expected unsupported-harness error, got %v", err)
 	}
 }
@@ -142,13 +142,13 @@ func TestCompileHarnessesForProject(t *testing.T) {
 	t.Setenv("SKILLS_MANAGER_HOME", home)
 	projectPath := filepath.Join(home, "proj")
 	writeFile(t, filepath.Join(projectPath, ".skills", "project.yaml"), "version: 1\nharnesses: [claude, cursor, codex]\n")
-	got := compileHarnessesForProject(projectPath)
+	got := compileHarnessesForProject(projectPath, "")
 	if len(got) != 1 || got[0] != "cursor" {
 		t.Fatalf("compileHarnessesForProject = %v, want [cursor]", got)
 	}
 	// A project without cursor yields nothing.
 	writeFile(t, filepath.Join(projectPath, ".skills", "project.yaml"), "version: 1\nharnesses: [claude, codex]\n")
-	if got := compileHarnessesForProject(projectPath); len(got) != 0 {
+	if got := compileHarnessesForProject(projectPath, ""); len(got) != 0 {
 		t.Fatalf("expected no compile harnesses, got %v", got)
 	}
 }
@@ -171,7 +171,7 @@ func TestCompileCursorFiltersLockByCompatibility(t *testing.T) {
 	projectPath := filepath.Join(home, "proj")
 	writeFile(t, filepath.Join(projectPath, ".skills", "installed.lock"), "version: 1\nskills:\n  - name: portable-skill\n  - name: claude-skill\n")
 
-	written, err := compileForHarness(home, projectPath, "cursor")
+	written, err := compileForHarness(home, projectPath, "cursor", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -203,7 +203,7 @@ func TestCompileCursorOnlyProjectUsesMatch(t *testing.T) {
 	writeFile(t, filepath.Join(projectPath, ".skills", "project.yaml"), "version: 1\ncategories: []\ntags: [go]\nharnesses: [cursor]\n")
 	// no installed.lock on purpose
 
-	written, err := compileForHarness(home, projectPath, "cursor")
+	written, err := compileForHarness(home, projectPath, "cursor", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -225,14 +225,14 @@ func TestCompileCursorPrunesStaleRules(t *testing.T) {
 	})
 	rulesDir := filepath.Join(projectPath, ".cursor", "rules")
 	// A user-authored rule that must never be deleted.
-	if _, err := compileForHarness(home, projectPath, "cursor"); err != nil {
+	if _, err := compileForHarness(home, projectPath, "cursor", ""); err != nil {
 		t.Fatal(err)
 	}
 	writeFile(t, filepath.Join(rulesDir, "user-hand-written.mdc"), "---\ndescription: mine\n---\nkeep\n")
 
 	// Narrow the install set to just alpha and recompile.
 	writeFile(t, filepath.Join(projectPath, ".skills", "installed.lock"), "version: 1\nskills:\n  - name: alpha\n")
-	if _, err := compileForHarness(home, projectPath, "cursor"); err != nil {
+	if _, err := compileForHarness(home, projectPath, "cursor", ""); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(rulesDir, "beta.mdc")); !os.IsNotExist(err) {
@@ -243,6 +243,22 @@ func TestCompileCursorPrunesStaleRules(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(rulesDir, "user-hand-written.mdc")); err != nil {
 		t.Fatal("user-authored rule must be preserved")
+	}
+}
+
+func TestRenderCursorRuleEscapesBackslashes(t *testing.T) {
+	r := compiledRule{Name: "win", Description: `Use C:\Users\path`, Globs: []string{`a\b`}, Body: "x"}
+	out := renderCursorRule(r)
+	end := strings.Index(out[4:], "---")
+	if end == -1 {
+		t.Fatalf("no frontmatter terminator:\n%s", out)
+	}
+	var fm map[string]interface{}
+	if err := yaml.Unmarshal([]byte(out[4:end+4]), &fm); err != nil {
+		t.Fatalf("frontmatter with backslashes must be valid yaml: %v\n%s", err, out)
+	}
+	if fm["description"] != `Use C:\Users\path` {
+		t.Fatalf("backslash description round-trip wrong: %v", fm["description"])
 	}
 }
 

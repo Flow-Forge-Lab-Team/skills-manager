@@ -55,7 +55,7 @@ func runCompile(args []string, realStdout io.Writer, stderr io.Writer, gf global
 		return ExitOpError
 	}
 
-	written, err := compileForHarness(home, projectPath, harness)
+	written, err := compileForHarness(home, projectPath, harness, gf.Config)
 	if err != nil {
 		fmt.Fprintf(stderr, "compile %s: %v\n", harness, err)
 		if strings.Contains(err.Error(), "unsupported") {
@@ -88,9 +88,10 @@ func runCompile(args []string, realStdout io.Writer, stderr io.Writer, gf global
 var compileOnlyHarnesses = map[string]bool{"cursor": true}
 
 // compileHarnessesForProject returns the compile-only harnesses listed in the
-// project's config (so install/sync know what to recompile).
-func compileHarnessesForProject(projectPath string) []string {
-	cfg, err := readProjectConfig(filepath.Join(projectPath, ".skills", "project.yaml"))
+// project's config (so install/sync know what to recompile). configPath may
+// override the default <project>/.skills/project.yaml (e.g. via --config).
+func compileHarnessesForProject(projectPath, configPath string) []string {
+	cfg, err := readProjectConfig(projectConfigPathOrDefault(projectPath, configPath))
 	if err != nil {
 		return nil
 	}
@@ -105,20 +106,27 @@ func compileHarnessesForProject(projectPath string) []string {
 
 // compileForHarness compiles every installed skill for the given harness and
 // returns the project-relative paths written.
-func compileForHarness(home, projectPath, harness string) ([]string, error) {
+func compileForHarness(home, projectPath, harness, configPath string) ([]string, error) {
 	if harness != "cursor" {
 		return nil, fmt.Errorf("unsupported harness %q (supported: cursor)", harness)
 	}
-	rules, err := loadCompiledRules(home, projectPath, harness)
+	rules, err := loadCompiledRules(home, projectPath, harness, configPath)
 	if err != nil {
 		return nil, err
 	}
 	return writeCursorRules(projectPath, rules)
 }
 
+func projectConfigPathOrDefault(projectPath, configPath string) string {
+	if strings.TrimSpace(configPath) != "" {
+		return configPath
+	}
+	return filepath.Join(projectPath, ".skills", "project.yaml")
+}
+
 // loadCompiledRules resolves the project's skills for the harness and builds the
 // neutral intermediate for each.
-func loadCompiledRules(home, projectPath, harness string) ([]compiledRule, error) {
+func loadCompiledRules(home, projectPath, harness, configPath string) ([]compiledRule, error) {
 	cat, _, err := loadTriageCatalog(home)
 	if err != nil {
 		return nil, fmt.Errorf("load catalog: %w", err)
@@ -127,7 +135,7 @@ func loadCompiledRules(home, projectPath, harness string) ([]compiledRule, error
 	for _, s := range cat.Skills {
 		tagsByName[s.Name] = s.Tags
 	}
-	names, err := projectCompileSkills(projectPath, cat, harness)
+	names, err := projectCompileSkills(projectPath, configPath, cat, harness)
 	if err != nil {
 		return nil, err
 	}
@@ -148,7 +156,7 @@ func loadCompiledRules(home, projectPath, harness string) ([]compiledRule, error
 // the install lock (the concrete installed set), but falls back to the project
 // match for compile-only harnesses like cursor, which have no copy target and
 // therefore record nothing in the lock.
-func projectCompileSkills(projectPath string, cat catalog, harness string) ([]string, error) {
+func projectCompileSkills(projectPath, configPath string, cat catalog, harness string) ([]string, error) {
 	lock, err := readInstallLock(filepath.Join(projectPath, ".skills", "installed.lock"))
 	if err != nil {
 		return nil, fmt.Errorf("read install lock: %w", err)
@@ -169,7 +177,7 @@ func projectCompileSkills(projectPath string, cat catalog, harness string) ([]st
 		return names, nil
 	}
 	// Fallback: matched candidates compatible with this harness.
-	cfg, err := readProjectConfig(filepath.Join(projectPath, ".skills", "project.yaml"))
+	cfg, err := readProjectConfig(projectConfigPathOrDefault(projectPath, configPath))
 	if err != nil {
 		return nil, nil
 	}
@@ -384,8 +392,12 @@ func yamlScalar(s string) string {
 	if s == "" {
 		return `""`
 	}
-	if strings.ContainsAny(s, ":#\"'[]{}>|*&!%@`") || strings.HasPrefix(s, "- ") {
-		return `"` + strings.ReplaceAll(s, `"`, `\"`) + `"`
+	if strings.ContainsAny(s, ":#\"'[]{}>|*&!%@`\\") || strings.HasPrefix(s, "- ") {
+		// Escape backslashes first, then quotes, so YAML double-quoted escape
+		// sequences stay valid.
+		s = strings.ReplaceAll(s, `\`, `\\`)
+		s = strings.ReplaceAll(s, `"`, `\"`)
+		return `"` + s + `"`
 	}
 	return s
 }

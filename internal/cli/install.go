@@ -733,9 +733,10 @@ func runInstall(args []string, realStdout io.Writer, stderr io.Writer, syncMode 
 			fmt.Fprintf(stderr, "warning: regenerate AGENTS.md: %v\n", err)
 		}
 		// Recompile harness-specific formats for any compile-only harness the
-		// project opts into (e.g. cursor). Best-effort.
-		for _, h := range compileHarnessesForProject(projectPath) {
-			if _, err := compileForHarness(home, projectPath, h); err != nil {
+		// project opts into (e.g. cursor). Uses the same (possibly --config
+		// overridden) project config the install resolved. Best-effort.
+		for _, h := range compileHarnessesForProject(projectPath, projectConfigPath) {
+			if _, err := compileForHarness(home, projectPath, h, projectConfigPath); err != nil {
 				fmt.Fprintf(stderr, "warning: compile %s: %v\n", h, err)
 			}
 		}
