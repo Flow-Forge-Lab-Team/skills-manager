@@ -108,6 +108,10 @@ func watchPIDPath(home string) string { return filepath.Join(home, "watch.pid") 
 // startWatchDaemon launches the watcher as a detached background process and
 // records its PID. The child runs the same command without --daemon.
 func startWatchDaemon(home string, args []string, stdout, stderr io.Writer) int {
+	if !daemonSupported() {
+		fmt.Fprintln(stderr, "daemon mode is not supported on this platform; run `skills-manager watch` in the foreground")
+		return ExitUsageError
+	}
 	if pid, running := readWatchPID(home); running {
 		fmt.Fprintf(stderr, "watcher already running (pid %d); use --stop first\n", pid)
 		return ExitOpError
@@ -156,18 +160,17 @@ func startWatchDaemon(home string, args []string, stdout, stderr io.Writer) int 
 }
 
 func stopWatchDaemon(home string, stdout, stderr io.Writer) int {
+	if !daemonSupported() {
+		fmt.Fprintln(stderr, "daemon mode is not supported on this platform")
+		return ExitUsageError
+	}
 	pid, running := readWatchPID(home)
 	if !running {
 		fmt.Fprintln(stdout, "No watcher running.")
 		_ = os.Remove(watchPIDPath(home))
 		return ExitSuccess
 	}
-	proc, err := os.FindProcess(pid)
-	if err != nil {
-		fmt.Fprintf(stderr, "find process %d: %v\n", pid, err)
-		return ExitOpError
-	}
-	if err := proc.Signal(syscall.SIGTERM); err != nil {
+	if err := stopProcess(pid); err != nil {
 		fmt.Fprintf(stderr, "stop watcher %d: %v\n", pid, err)
 		return ExitOpError
 	}
@@ -186,15 +189,7 @@ func readWatchPID(home string) (int, bool) {
 	if err != nil || pid <= 0 {
 		return 0, false
 	}
-	proc, err := os.FindProcess(pid)
-	if err != nil {
-		return pid, false
-	}
-	// Signal 0 probes liveness without affecting the process.
-	if err := proc.Signal(syscall.Signal(0)); err != nil {
-		return pid, false
-	}
-	return pid, true
+	return pid, processAlive(pid)
 }
 
 func runWatchLoop(opts watchOptions, home string, gf globalFlags, stdout, stderr io.Writer) int {

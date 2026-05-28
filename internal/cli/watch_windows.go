@@ -13,3 +13,12 @@ func detachSysProcAttr() *syscall.SysProcAttr {
 	)
 	return &syscall.SysProcAttr{CreationFlags: detachedProcess | createNewProcessGroup}
 }
+
+// daemonSupported is false on Windows: os.Process.Signal only supports Kill, so
+// the signal-based liveness/stop the daemon relies on is unavailable. Windows
+// users run `skills-manager watch` in the foreground instead.
+func daemonSupported() bool { return false }
+
+func processAlive(pid int) bool { return false }
+
+func stopProcess(pid int) error { return nil }
