@@ -353,6 +353,17 @@ Flags:
   --reason "<text>"          optional human note (exclusive mode)
 
 ` + globalFlagHelp()
+	case "serve":
+		return `skills-manager serve [flags]
+
+Start the local triage web UI and REST API. Reads on-disk state on every request;
+UI actions invoke CLI-equivalent commands via POST /api/v1/run.
+
+Flags:
+  --port <n>    listen port (default: 7777)
+  --host <addr> bind address (default: 127.0.0.1; use 0.0.0.0 for LAN/Tailscale)
+
+` + globalFlagHelp()
 	case "status":
 		return `skills-manager status
 
@@ -432,6 +443,7 @@ Commands:
   config      configure opt-in provider settings and usage accounting
   seed-catalog apply seed taxonomy metadata to the library
   status      show library counts, pending, unregistered, scheduled state
+  serve       local triage web UI + REST API (localhost by default)
   doctor      diagnose problems; --rebuild-state --rebuild-catalog
   set         update a skill's compatibility declaration
   help        show help for a command

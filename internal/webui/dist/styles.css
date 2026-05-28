@@ -1,0 +1,76 @@
+* { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --bg: #0a0a0a;
+  --bg-panel: #131316;
+  --bg-elev: #1a1a1f;
+  --bg-hover: #1f1f25;
+  --border: #26262d;
+  --text: #e5e5e5;
+  --text-muted: #888;
+  --text-faint: #555;
+  --accent: #7c7cff;
+  --accent-dim: rgba(124, 124, 255, 0.15);
+  --warn: #f59e0b;
+  --ok: #10b981;
+  --danger: #ef4444;
+}
+html, body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "Inter", system-ui, sans-serif;
+  font-size: 13px;
+  line-height: 1.5;
+  min-height: 100vh;
+}
+.app { display: grid; grid-template-columns: 220px 1fr; min-height: 100vh; }
+.sidebar {
+  background: var(--bg-panel);
+  border-right: 1px solid var(--border);
+  padding: 16px 12px;
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+.brand { display: flex; align-items: center; gap: 8px; padding: 4px 8px 20px; }
+.brand-logo {
+  width: 24px; height: 24px; border-radius: 6px;
+  background: linear-gradient(135deg, var(--accent), #b07cff);
+  display: flex; align-items: center; justify-content: center;
+  color: white; font-weight: 700; font-size: 13px;
+}
+.brand-name { font-weight: 600; }
+.nav-item {
+  display: flex; justify-content: space-between;
+  padding: 6px 10px; border-radius: 6px; cursor: pointer;
+  color: var(--text-muted); margin-bottom: 2px;
+}
+.nav-item:hover { background: var(--bg-hover); color: var(--text); }
+.nav-item.active { background: var(--accent-dim); color: var(--accent); font-weight: 500; }
+.machine-pill { margin-top: auto; padding: 8px 10px; border: 1px solid var(--border);
+  border-radius: 8px; font-size: 11px; color: var(--text-muted); word-break: break-all; }
+.main { padding: 24px 28px; max-width: 1400px; width: 100%; }
+.page-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 20px; }
+.page-header h1 { font-size: 20px; font-weight: 600; }
+.subtitle { color: var(--text-muted); margin-top: 4px; }
+.stats { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 12px; margin-bottom: 24px; }
+.stat { background: var(--bg-panel); border: 1px solid var(--border); border-radius: 8px; padding: 14px; }
+.stat .label { font-size: 11px; color: var(--text-faint); text-transform: uppercase; }
+.stat .value { font-size: 22px; font-weight: 600; margin-top: 4px; }
+table { width: 100%; border-collapse: collapse; font-size: 12px; }
+th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); }
+th { color: var(--text-faint); font-weight: 500; font-size: 11px; text-transform: uppercase; }
+tr:hover td { background: var(--bg-hover); }
+.btn {
+  background: var(--accent-dim); color: var(--accent); border: 1px solid var(--border);
+  padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 12px;
+}
+.btn:hover { background: var(--bg-hover); }
+.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+pre.diff {
+  background: var(--bg-panel); border: 1px solid var(--border); border-radius: 8px;
+  padding: 12px; overflow: auto; max-height: 480px; font-size: 11px; white-space: pre-wrap;
+}
+.matrix-wrap { overflow: auto; max-height: 70vh; }
+.matrix-wrap td.installed { background: var(--accent-dim); text-align: center; }
+.error { color: var(--danger); padding: 12px; border: 1px solid var(--danger); border-radius: 8px; }
+.muted { color: var(--text-muted); }
