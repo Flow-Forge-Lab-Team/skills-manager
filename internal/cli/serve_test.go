@@ -117,6 +117,51 @@ func TestServeAPIReadsFreshDiskState(t *testing.T) {
 		}
 	})
 
+	t.Run("overview activity and usage", func(t *testing.T) {
+		db, err := state.Open(home)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer db.Close()
+		now := time.Now().UTC()
+		if _, err := db.Exec(`INSERT INTO invocations (skill_name, project_slug, harness, trigger, invoked_at, source) VALUES (?, ?, ?, ?, ?, ?)`,
+			"skill-0", "proj-0", "claude", "user", now.Format(time.RFC3339), "otel"); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.Exec(`INSERT INTO detected (path, skill_name, detected_at, source_guess, action) VALUES (?, ?, ?, ?, ?)`,
+			"/tmp/new-skill/SKILL.md", "new-skill", now.Add(-time.Minute).Format(time.RFC3339), "ai-authored", "pending"); err != nil {
+			t.Fatal(err)
+		}
+		if err := db.InsertUpdate("skill-2", "old", "new", "github"); err != nil {
+			t.Fatal(err)
+		}
+
+		resp, err := http.Get(ts.URL + "/api/v1/overview")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		var overview triageOverview
+		if err := json.NewDecoder(resp.Body).Decode(&overview); err != nil {
+			t.Fatal(err)
+		}
+		if len(overview.MostUsed) == 0 || overview.MostUsed[0].SkillName != "skill-0" || overview.MostUsed[0].Count != 1 {
+			t.Fatalf("most_used = %+v, want skill-0 count 1", overview.MostUsed)
+		}
+		var hasDetected, hasUpdate bool
+		for _, item := range overview.Activity {
+			if item.Kind == "detected" && item.SkillName == "new-skill" {
+				hasDetected = true
+			}
+			if item.Kind == "update" && item.SkillName == "skill-2" {
+				hasUpdate = true
+			}
+		}
+		if !hasDetected || !hasUpdate {
+			t.Fatalf("activity = %+v, want detected and update entries", overview.Activity)
+		}
+	})
+
 	t.Run("matrix under one second", func(t *testing.T) {
 		start := time.Now()
 		resp, err := http.Get(ts.URL + "/api/v1/matrix")
@@ -144,11 +189,11 @@ func TestServeAPIReadsFreshDiskState(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		var skills1 []triageSkill
+		var skills1 triageSkillList
 		json.NewDecoder(resp1.Body).Decode(&skills1)
 		resp1.Body.Close()
-		if len(skills1) != skillCount {
-			t.Fatalf("initial skills = %d", len(skills1))
+		if skills1.Total != skillCount {
+			t.Fatalf("initial skills = %d", skills1.Total)
 		}
 
 		extra := filepath.Join(libraryPath, "skill-extra")
@@ -161,11 +206,32 @@ func TestServeAPIReadsFreshDiskState(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		var skills2 []triageSkill
+		var skills2 triageSkillList
 		json.NewDecoder(resp2.Body).Decode(&skills2)
 		resp2.Body.Close()
-		if len(skills2) != skillCount+1 {
-			t.Fatalf("after write skills = %d, want %d", len(skills2), skillCount+1)
+		if skills2.Total != skillCount+1 {
+			t.Fatalf("after write skills = %d, want %d", skills2.Total, skillCount+1)
+		}
+	})
+
+	t.Run("library filters sort and paginates from disk state", func(t *testing.T) {
+		resp, err := http.Get(ts.URL + "/api/v1/skills?search=skill-1&category=Engineering&tag=fixture&sort=name&page_size=5&page=2")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		var list triageSkillList
+		if err := json.NewDecoder(resp.Body).Decode(&list); err != nil {
+			t.Fatal(err)
+		}
+		if list.Total != 111 {
+			t.Fatalf("total = %d, want 111", list.Total)
+		}
+		if list.Page != 2 || list.PageSize != 5 || len(list.Skills) != 5 {
+			t.Fatalf("page response = %+v", list)
+		}
+		if list.Skills[0].Name != "skill-103" {
+			t.Fatalf("first page-2 skill = %q, want skill-103", list.Skills[0].Name)
 		}
 	})
 
