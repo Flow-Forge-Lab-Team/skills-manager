@@ -207,6 +207,29 @@ func TestServeRunCLIWhitelist(t *testing.T) {
 	if resp.StatusCode != http.StatusForbidden {
 		t.Fatalf("status = %d, want 403", resp.StatusCode)
 	}
+
+	resp2, err := http.Get(ts.URL + "/api/v1/session")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp2.Body.Close()
+	var sess struct {
+		Token string `json:"token"`
+	}
+	if err := json.NewDecoder(resp2.Body).Decode(&sess); err != nil {
+		t.Fatal(err)
+	}
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/v1/run", strings.NewReader(`{"args":["status"]}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Skills-Manager-Token", sess.Token)
+	resp3, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp3.Body.Close()
+	if resp3.StatusCode != http.StatusOK {
+		t.Fatalf("authorized status run = %d, want 200", resp3.StatusCode)
+	}
 }
 
 func TestServeBindsLocalhostByDefault(t *testing.T) {

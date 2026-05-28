@@ -2,25 +2,36 @@ package cli
 
 import (
 	"bytes"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/fs"
 	"net/http"
 	"os"
 	"path"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Flow-Forge-Lab-Team/skills-manager/internal/webui"
 )
 
 type serveServer struct {
-	home string
-	mux  *http.ServeMux
+	home      string
+	token     string
+	runMu     sync.Mutex
+	mux       *http.ServeMux
 }
 
 func newServeServer(home string) *serveServer {
-	s := &serveServer{home: home, mux: http.NewServeMux()}
+	token, err := randomServeToken()
+	if err != nil {
+		token = "dev-insecure-token"
+	}
+	s := &serveServer{home: home, token: token, mux: http.NewServeMux()}
+	s.mux.HandleFunc("/api/v1/session", s.handleSession)
 	s.mux.HandleFunc("/api/v1/overview", s.handleOverview)
 	s.mux.HandleFunc("/api/v1/skills", s.handleSkills)
 	s.mux.HandleFunc("/api/v1/skills/", s.handleSkillDetail)
@@ -33,9 +44,28 @@ func newServeServer(home string) *serveServer {
 	return s
 }
 
+func randomServeToken() (string, error) {
+	buf := make([]byte, 32)
+	if _, err := rand.Read(buf); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(buf), nil
+}
+
 func (s *serveServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	s.mux.ServeHTTP(w, r)
+}
+
+func (s *serveServer) handleSession(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	writeJSONResponse(w, map[string]string{
+		"token": s.token,
+		"home":  s.home,
+	})
 }
 
 func (s *serveServer) handleOverview(w http.ResponseWriter, r *http.Request) {
@@ -179,6 +209,10 @@ func (s *serveServer) handleRunCLI(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	if r.Header.Get("X-Skills-Manager-Token") != s.token {
+		writeAPIError(w, http.StatusForbidden, fmt.Errorf("invalid or missing session token"))
+		return
+	}
 	var req cliRunRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeAPIError(w, http.StatusBadRequest, fmt.Errorf("invalid JSON body: %w", err))
@@ -196,19 +230,26 @@ func (s *serveServer) handleRunCLI(w http.ResponseWriter, r *http.Request) {
 
 	args := append([]string{"--json", "--non-interactive", "--quiet"}, req.Args...)
 	var stdoutBuf, stderrBuf bytes.Buffer
-	prevHome := os.Getenv("SKILLS_MANAGER_HOME")
-	os.Setenv("SKILLS_MANAGER_HOME", s.home)
-	code := Run(args, &stdoutBuf, &stderrBuf)
-	if prevHome == "" {
-		os.Unsetenv("SKILLS_MANAGER_HOME")
-	} else {
-		os.Setenv("SKILLS_MANAGER_HOME", prevHome)
-	}
+	code := s.runCLIInHome(args, &stdoutBuf, &stderrBuf)
 	writeJSONResponse(w, cliRunResponse{
 		ExitCode: code,
 		Stdout:   stdoutBuf.String(),
 		Stderr:   stderrBuf.String(),
 	})
+}
+
+func (s *serveServer) runCLIInHome(args []string, stdout, stderr io.Writer) int {
+	s.runMu.Lock()
+	defer s.runMu.Unlock()
+	prevHome := os.Getenv("SKILLS_MANAGER_HOME")
+	os.Setenv("SKILLS_MANAGER_HOME", s.home)
+	code := Run(args, stdout, stderr)
+	if prevHome == "" {
+		os.Unsetenv("SKILLS_MANAGER_HOME")
+	} else {
+		os.Setenv("SKILLS_MANAGER_HOME", prevHome)
+	}
+	return code
 }
 
 func (s *serveServer) handleStatic() http.Handler {

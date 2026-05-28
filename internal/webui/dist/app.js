@@ -8,6 +8,13 @@ const views = [
 
 let currentView = "overview";
 let cacheBust = () => Date.now();
+let sessionToken = null;
+
+async function ensureSession() {
+  if (sessionToken) return;
+  const s = await api("/api/v1/session");
+  sessionToken = s.token;
+}
 
 async function api(path, opts) {
   const sep = path.includes("?") ? "&" : "?";
@@ -30,9 +37,13 @@ async function api(path, opts) {
 }
 
 async function runCLI(args) {
+  await ensureSession();
   return api("/api/v1/run", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      "X-Skills-Manager-Token": sessionToken,
+    },
     body: JSON.stringify({ args }),
   });
 }
@@ -213,6 +224,12 @@ async function renderMatrix(content) {
 }
 
 async function render() {
+  try {
+    await ensureSession();
+  } catch (e) {
+    document.getElementById("content").replaceChildren(el("div", { className: "error", text: e.message }));
+    return;
+  }
   renderNav();
   const view = views.find((v) => v.id === currentView);
   document.getElementById("page-title").textContent = view.label;
