@@ -804,3 +804,162 @@ requirements:
 		t.Fatalf("gh requirement lost: %+v", meta.Requirements.Tools)
 	}
 }
+
+// TestServeNotificationsEndpoint covers the watcher-notification surface for the
+// Overview UI: GET lists unresolved detections (pruning ones whose fingerprint
+// is now in the library) and the gated DELETE dismisses a single file.
+func TestServeNotificationsEndpoint(t *testing.T) {
+	home := t.TempDir()
+	libraryPath := filepath.Join(home, "library")
+	notifDir := filepath.Join(home, "notifications")
+	if err := os.MkdirAll(notifDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	// A library skill whose fingerprint resolves one of the notifications.
+	resolvedFP := "resolvedfp0000000000000000000000000000000000000000000000000000000"
+	resolvedDir := filepath.Join(libraryPath, "resolved-skill")
+	if err := os.MkdirAll(resolvedDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	metaBytes, _ := yaml.Marshal(skillMeta{Version: 1, Fingerprint: skillFingerprint{SHA256: resolvedFP, Size: 10}})
+	if err := os.WriteFile(filepath.Join(resolvedDir, ".skill-meta.yaml"), metaBytes, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	writeNotif := func(name string, n watchNotification) {
+		raw, _ := json.MarshalIndent(n, "", "  ")
+		if err := os.WriteFile(filepath.Join(notifDir, name), raw, 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	pendingFile := "watch-ingest-candidate-pendingfp1234.json"
+	writeNotif(pendingFile, watchNotification{
+		Type: "ingest-candidate", Skill: "new-skill", Path: "/tmp/new-skill",
+		Fingerprint: "pendingfp456", DetectedAt: "2026-05-28T12:00:00Z",
+	})
+	writeNotif("watch-drift-resolvedfp000.json", watchNotification{
+		Type: "drift", Skill: "resolved-skill", Path: "/tmp/resolved-skill",
+		Fingerprint: resolvedFP, DetectedAt: "2026-05-28T11:00:00Z",
+	})
+	// Non-watch file must be ignored entirely.
+	if err := os.WriteFile(filepath.Join(notifDir, "unrelated.json"), []byte("{}"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	srv := newServeServer(home)
+	ts := httptest.NewServer(srv)
+	defer ts.Close()
+
+	getNotifs := func() []watcherNotificationView {
+		resp, err := http.Get(ts.URL + "/api/v1/notifications")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("GET notifications status = %d, want 200", resp.StatusCode)
+		}
+		var out []watcherNotificationView
+		if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+			t.Fatal(err)
+		}
+		return out
+	}
+
+	// GET returns only the unresolved notification; the resolved one is pruned.
+	notifs := getNotifs()
+	if len(notifs) != 1 {
+		t.Fatalf("GET returned %d notifications, want 1: %+v", len(notifs), notifs)
+	}
+	if notifs[0].File != pendingFile || notifs[0].Skill != "new-skill" || notifs[0].Type != "ingest-candidate" {
+		t.Fatalf("unexpected notification: %+v", notifs[0])
+	}
+	if _, err := os.Stat(filepath.Join(notifDir, "watch-drift-resolvedfp000.json")); !os.IsNotExist(err) {
+		t.Fatalf("resolved notification was not pruned from disk")
+	}
+
+	// Session token for gated DELETE.
+	sessResp, err := http.Get(ts.URL + "/api/v1/session")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sess struct {
+		Token string `json:"token"`
+	}
+	json.NewDecoder(sessResp.Body).Decode(&sess)
+	sessResp.Body.Close()
+
+	// DELETE without token → 403.
+	noTok, _ := http.NewRequest(http.MethodDelete, ts.URL+"/api/v1/notifications/"+pendingFile, nil)
+	r1, err := http.DefaultClient.Do(noTok)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r1.Body.Close()
+	if r1.StatusCode != http.StatusForbidden {
+		t.Fatalf("DELETE without token = %d, want 403", r1.StatusCode)
+	}
+
+	// DELETE a name that isn't a watch-*.json file → 400.
+	badReq, _ := http.NewRequest(http.MethodDelete, ts.URL+"/api/v1/notifications/unrelated.json", nil)
+	badReq.Header.Set("X-Skills-Manager-Token", sess.Token)
+	r2, err := http.DefaultClient.Do(badReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r2.Body.Close()
+	if r2.StatusCode != http.StatusBadRequest {
+		t.Fatalf("DELETE invalid name = %d, want 400", r2.StatusCode)
+	}
+
+	// DELETE the valid pending notification → 204, and it's gone from GET.
+	okReq, _ := http.NewRequest(http.MethodDelete, ts.URL+"/api/v1/notifications/"+pendingFile, nil)
+	okReq.Header.Set("X-Skills-Manager-Token", sess.Token)
+	r3, err := http.DefaultClient.Do(okReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r3.Body.Close()
+	if r3.StatusCode != http.StatusNoContent {
+		t.Fatalf("DELETE valid file = %d, want 204", r3.StatusCode)
+	}
+	if got := getNotifs(); len(got) != 0 {
+		t.Fatalf("after dismiss GET returned %d, want 0", len(got))
+	}
+
+	// DELETE the same file again → 404 (already gone).
+	goneReq, _ := http.NewRequest(http.MethodDelete, ts.URL+"/api/v1/notifications/"+pendingFile, nil)
+	goneReq.Header.Set("X-Skills-Manager-Token", sess.Token)
+	r4, err := http.DefaultClient.Do(goneReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r4.Body.Close()
+	if r4.StatusCode != http.StatusNotFound {
+		t.Fatalf("DELETE missing file = %d, want 404", r4.StatusCode)
+	}
+}
+
+func TestValidateNotificationFile(t *testing.T) {
+	valid := []string{"watch-drift-abc123.json", "watch-ingest-candidate-0.json", "watch-user-edit-ff.json"}
+	for _, name := range valid {
+		if err := validateNotificationFile(name); err != nil {
+			t.Errorf("validateNotificationFile(%q) = %v, want nil", name, err)
+		}
+	}
+	invalid := []string{
+		"",                         // empty
+		"watch-drift-abc.txt",      // wrong suffix
+		"notes.json",               // wrong prefix
+		"../watch-drift-abc.json",  // parent traversal
+		"sub/watch-drift-abc.json", // path separator
+		`watch-drift-..\evil.json`, // backslash + dotdot
+		"watch-..-abc.json",        // embedded dotdot
+	}
+	for _, name := range invalid {
+		if err := validateNotificationFile(name); err == nil {
+			t.Errorf("validateNotificationFile(%q) = nil, want error", name)
+		}
+	}
+}
