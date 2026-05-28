@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/Flow-Forge-Lab-Team/skills-manager/internal/state"
@@ -129,19 +130,26 @@ func countPendingUpdates(libraryPath string) int {
 	return count
 }
 
-// countWatcherNotifications counts unresolved watcher detections written under
-// ~/.skills-manager/notifications/ by `skills-manager watch`. A notification is
-// resolved once its fingerprint appears in the library (e.g. after ingest), so
-// resolved files are pruned and not counted — otherwise status would report
-// handled alerts forever.
-func countWatcherNotifications(home string) int {
+// watcherNotificationView is one unresolved watcher notification plus the
+// basename of the file it was read from, so the UI can target it for dismissal.
+type watcherNotificationView struct {
+	watchNotification
+	File string `json:"file"`
+}
+
+// loadWatcherNotifications returns the unresolved watcher detections written
+// under ~/.skills-manager/notifications/ by `skills-manager watch`, newest
+// first. A notification is resolved once its fingerprint appears in the library
+// (e.g. after ingest), so resolved files are pruned and not returned —
+// otherwise the UI would surface handled alerts forever.
+func loadWatcherNotifications(home string) []watcherNotificationView {
 	dir := filepath.Join(home, "notifications")
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return 0
+		return []watcherNotificationView{}
 	}
 	inLibrary := buildFingerprintIndex(filepath.Join(home, "library"))
-	count := 0
+	out := []watcherNotificationView{}
 	for _, e := range entries {
 		if e.IsDir() || !strings.HasPrefix(e.Name(), "watch-") || !strings.HasSuffix(e.Name(), ".json") {
 			continue
@@ -152,15 +160,26 @@ func countWatcherNotifications(home string) int {
 			continue
 		}
 		var n watchNotification
-		if json.Unmarshal(data, &n) == nil && n.Fingerprint != "" {
+		if json.Unmarshal(data, &n) != nil {
+			continue
+		}
+		if n.Fingerprint != "" {
 			if _, ok := inLibrary[n.Fingerprint]; ok {
 				_ = os.Remove(path) // resolved (now in library) — prune
 				continue
 			}
 		}
-		count++
+		out = append(out, watcherNotificationView{watchNotification: n, File: e.Name()})
 	}
-	return count
+	sort.Slice(out, func(i, j int) bool { return out[i].DetectedAt > out[j].DetectedAt })
+	return out
+}
+
+// countWatcherNotifications counts unresolved watcher detections. It shares the
+// read/prune logic with loadWatcherNotifications so the status count and the UI
+// list never disagree.
+func countWatcherNotifications(home string) int {
+	return len(loadWatcherNotifications(home))
 }
 
 func checkScheduledState(db *state.DB) string {

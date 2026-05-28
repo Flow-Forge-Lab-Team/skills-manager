@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"path"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -45,6 +46,8 @@ func newServeServer(home string) *serveServer {
 	s.mux.HandleFunc("/api/v1/machines", s.handleMachines)
 	s.mux.HandleFunc("/api/v1/sync", s.handleSync)
 	s.mux.HandleFunc("/api/v1/settings", s.handleSettings)
+	s.mux.HandleFunc("/api/v1/notifications", s.handleNotifications)
+	s.mux.HandleFunc("/api/v1/notifications/", s.handleNotificationDelete)
 	s.mux.HandleFunc("/api/v1/run", s.handleRunCLI)
 	s.mux.Handle("/", s.handleStatic())
 	return s
@@ -505,6 +508,53 @@ func (s *serveServer) applySettings(body triageSettingsUpdate) error {
 	return saveManagerConfig(s.home, cfg)
 }
 
+func (s *serveServer) handleNotifications(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	writeJSONResponse(w, loadWatcherNotifications(s.home))
+}
+
+// handleNotificationDelete dismisses a single watcher notification by deleting
+// its file. The file name is validated to a watch-*.json basename so a caller
+// can't traverse out of the notifications directory.
+func (s *serveServer) handleNotificationDelete(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodDelete {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !s.authorizeAPIWrite(w, r) {
+		return
+	}
+	name := strings.TrimPrefix(r.URL.Path, "/api/v1/notifications/")
+	if err := validateNotificationFile(name); err != nil {
+		writeAPIError(w, http.StatusBadRequest, err)
+		return
+	}
+	if err := os.Remove(filepath.Join(s.home, "notifications", name)); err != nil {
+		if os.IsNotExist(err) {
+			writeAPIError(w, http.StatusNotFound, fmt.Errorf("notification not found"))
+			return
+		}
+		writeAPIError(w, http.StatusInternalServerError, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// validateNotificationFile ensures name is a bare watch-*.json file with no path
+// separators or parent references, so deletion stays inside notifications/.
+func validateNotificationFile(name string) error {
+	if name == "" || strings.ContainsAny(name, `/\`) || strings.Contains(name, "..") {
+		return fmt.Errorf("invalid notification file")
+	}
+	if !strings.HasPrefix(name, "watch-") || !strings.HasSuffix(name, ".json") {
+		return fmt.Errorf("invalid notification file")
+	}
+	return nil
+}
+
 var serveAllowedCLI = map[string]bool{
 	"status": true,
 	"list":   true,
@@ -513,6 +563,10 @@ var serveAllowedCLI = map[string]bool{
 	"doctor": true,
 	"scan":   true,
 	"match":  true,
+	// `add` backs the Overview "Ingest" action for a single watcher
+	// notification path. `scan --ingest` can't be used here because it requires
+	// interactive stdin, which the non-interactive run endpoint never provides.
+	"add": true,
 }
 
 type cliRunRequest struct {

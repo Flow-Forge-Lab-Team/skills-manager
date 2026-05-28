@@ -64,6 +64,14 @@ async function updateAction(skill, action, body) {
   });
 }
 
+async function deleteNotification(file) {
+  await ensureSession();
+  return api("/api/v1/notifications/" + encodeURIComponent(file), {
+    method: "DELETE",
+    headers: { "X-Skills-Manager-Token": sessionToken },
+  });
+}
+
 function el(tag, attrs, children) {
   const n = document.createElement(tag);
   if (attrs) {
@@ -145,8 +153,65 @@ function jsonBlock(value) {
   return el("pre", { className: "diff compact", text: JSON.stringify(value || {}, null, 2) });
 }
 
+function watcherTone(type) {
+  // drift/user-edit mean a tracked skill changed unexpectedly — flag amber.
+  return (type === "drift" || type === "user-edit") ? "warn" : "";
+}
+
+// renderWatcherPanel builds the Overview panel for filesystem-watcher detections
+// (~/.skills-manager/notifications/). Returns null when there are none so the
+// Overview stays uncluttered. Ingest runs `add <path> --yes`; Dismiss deletes
+// the notification file via the gated endpoint. Both re-render on success.
+function renderWatcherPanel(notifications) {
+  if (!notifications || notifications.length === 0) return null;
+  const panel = el("section", { className: "panel" }, [
+    el("div", { className: "panel-title", text: "Watcher alerts (" + notifications.length + ")" }),
+  ]);
+  const list = el("div", { className: "activity-list" });
+  notifications.forEach((n) => {
+    const actions = el("div", { className: "update-actions" });
+    if (n.type === "ingest-candidate") {
+      const ingestBtn = el("button", { className: "btn confirm", text: "Ingest" });
+      ingestBtn.onclick = async () => {
+        if (!confirm("Ingest skill from " + n.path + " into the library?")) return;
+        ingestBtn.disabled = true;
+        try {
+          const r = await runCLI(["add", n.path, "--yes"]);
+          if (r.exit_code !== 0) { alert(r.stderr || r.stdout || "Ingest failed"); ingestBtn.disabled = false; return; }
+          render();
+        } catch (e) { alert(e.message); ingestBtn.disabled = false; }
+      };
+      actions.appendChild(ingestBtn);
+    }
+    const dismissBtn = el("button", { className: "btn danger", text: "Dismiss" });
+    dismissBtn.onclick = async () => {
+      if (!confirm("Dismiss this watcher alert? This deletes the notification file.")) return;
+      dismissBtn.disabled = true;
+      try {
+        await deleteNotification(n.file);
+        render();
+      } catch (e) { alert(e.message); dismissBtn.disabled = false; }
+    };
+    actions.appendChild(dismissBtn);
+
+    list.appendChild(el("div", { className: "activity-row", style: "grid-template-columns: auto 1fr auto;" }, [
+      badge(n.type || "watch", watcherTone(n.type)),
+      el("div", null, [
+        el("div", { className: "row-title", text: n.skill || "(unknown skill)" }),
+        el("div", { className: "muted", text: [n.path, n.note].filter(Boolean).join(" · ") }),
+      ]),
+      actions,
+    ]));
+  });
+  panel.appendChild(list);
+  return panel;
+}
+
 async function renderOverview(content) {
-  const o = await api("/api/v1/overview");
+  const [o, notifications] = await Promise.all([
+    api("/api/v1/overview"),
+    api("/api/v1/notifications").catch(() => []),
+  ]);
   document.getElementById("page-subtitle").textContent =
     "Live state from disk · " + (o.generated_at || "");
   setHomePill(o.home || "");
@@ -156,6 +221,8 @@ async function renderOverview(content) {
     statCard("Pending updates", o.pending_updates),
     statCard("Unregistered", o.unregistered),
   ]));
+  const watcherPanel = renderWatcherPanel(notifications);
+  if (watcherPanel) content.appendChild(watcherPanel);
   const grid = el("div", { className: "overview-grid" });
   const activity = el("section", { className: "panel" }, [
     el("div", { className: "panel-title", text: "Recent activity" }),
