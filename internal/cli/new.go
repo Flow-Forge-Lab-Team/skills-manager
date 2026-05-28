@@ -282,18 +282,14 @@ func ingestAuthoredSkill(name, home, draft string, stdout, stderr io.Writer, gf 
 // authored draft's frontmatter into the ingested skill's sidecar (the local
 // detectors may not catch explicit tools/credentials), then refreshes the catalog.
 func preserveAuthoredRequirements(draft, libraryPath, home string) error {
-	trimmed := strings.TrimSpace(draft)
-	if !strings.HasPrefix(trimmed, "---") {
-		return nil
-	}
-	end := strings.Index(trimmed[3:], "---")
-	if end == -1 {
+	block, ok := splitFrontmatterBlock(draft)
+	if !ok {
 		return nil
 	}
 	var fm struct {
 		Requirements requirements `yaml:"requirements"`
 	}
-	if err := yaml.Unmarshal([]byte(trimmed[3:end+3]), &fm); err != nil {
+	if err := yaml.Unmarshal([]byte(block), &fm); err != nil {
 		return nil // requirements are optional; ignore parse issues
 	}
 	if !fm.Requirements.hasExplicitFields() || libraryPath == "" {
@@ -330,6 +326,23 @@ func preserveAuthoredRequirements(draft, libraryPath, home string) error {
 	return writeCatalog(filepath.Join(home, "library", "catalog.yaml"), cat)
 }
 
+// splitFrontmatterBlock returns the YAML between the opening `---` and the next
+// `---` that appears on its own line, so a `---` inside a quoted/block scalar
+// (e.g. a skill that documents frontmatter) is not mistaken for the closing
+// fence. The bool is false when there is no well-formed frontmatter.
+func splitFrontmatterBlock(content string) (string, bool) {
+	lines := strings.Split(strings.TrimSpace(content), "\n")
+	if len(lines) == 0 || strings.TrimRight(lines[0], "\r") != "---" {
+		return "", false
+	}
+	for i := 1; i < len(lines); i++ {
+		if strings.TrimRight(lines[i], "\r") == "---" {
+			return strings.Join(lines[1:i], "\n"), true
+		}
+	}
+	return "", false
+}
+
 // mergeModelRequirements prefers authored model fields, filling empty ones from
 // inferred (so an inferred tool_use augments rather than replaces authored
 // reasoning / context constraints).
@@ -354,13 +367,9 @@ func mergeModelRequirements(authored, inferred modelRequirement) modelRequiremen
 // activation-safe (non-stub, specific) description, valid frontmatter, and no
 // hostile instructions.
 func validateAuthoredSkill(name, draft string) error {
-	trimmed := strings.TrimSpace(draft)
-	if !strings.HasPrefix(trimmed, "---") {
-		return fmt.Errorf("draft is not a SKILL.md (missing frontmatter)")
-	}
-	end := strings.Index(trimmed[3:], "---")
-	if end == -1 {
-		return fmt.Errorf("unterminated frontmatter")
+	block, ok := splitFrontmatterBlock(draft)
+	if !ok {
+		return fmt.Errorf("draft is not a SKILL.md (missing or unterminated frontmatter)")
 	}
 	var fm struct {
 		Name         string       `yaml:"name"`
@@ -371,7 +380,7 @@ func validateAuthoredSkill(name, draft string) error {
 	}
 	// Decoding requirements here means a malformed requirements block (wrong
 	// shape) is rejected rather than silently dropped during preservation.
-	if err := yaml.Unmarshal([]byte(trimmed[3:end+3]), &fm); err != nil {
+	if err := yaml.Unmarshal([]byte(block), &fm); err != nil {
 		return fmt.Errorf("invalid frontmatter: %w", err)
 	}
 	if fm.Name != name {

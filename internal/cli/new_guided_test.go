@@ -157,3 +157,18 @@ func TestNewGuidedRejectsConflictingModes(t *testing.T) {
 		t.Fatalf("conflicting modes should be a usage error, got %d", code)
 	}
 }
+
+func TestNewGuidedAcceptsFrontmatterDelimiterInBody(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+	// Body documents the --- delimiter; must not be treated as the fence.
+	draft := "---\nname: fm-doc\ndescription: Use when authoring SKILL.md frontmatter blocks.\ncompatible: [claude]\n---\n# fm-doc\n\nA SKILL.md starts with a --- line, then YAML, then another --- line.\n\n---\n\nThat horizontal rule above is fine.\n"
+	f := filepath.Join(t.TempDir(), "d.md")
+	if err := os.WriteFile(f, []byte(draft), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var o, e bytes.Buffer
+	if code := Run([]string{"new", "fm-doc", "--guided", "--apply", f}, &o, &e); code != ExitSuccess {
+		t.Fatalf("draft with --- in body should be accepted, got %d\nstderr:%s", code, e.String())
+	}
+}
