@@ -245,6 +245,14 @@ func ingestAuthoredSkill(name, home, draft string, stdout, stderr io.Writer, gf 
 	}
 	src := ingestSource{kind: "authored", raw: name, path: tmpDir, label: name}
 	result := ingestFromSource(src, ingestOptions{yes: true, interactive: false}, home, gf.outWriter(stdout))
+	if !result.Skipped {
+		// The local detectors are coarse; preserve any execution requirements
+		// the author explicitly declared in the draft frontmatter so they
+		// aren't silently dropped from the sidecar.
+		if err := preserveAuthoredRequirements(draft, result.LibraryPath, home); err != nil {
+			fmt.Fprintf(stderr, "warning: preserve authored requirements: %v\n", err)
+		}
+	}
 	if gf.JSON {
 		writeJSON(stdout, result)
 		if result.Skipped {
@@ -258,6 +266,41 @@ func ingestAuthoredSkill(name, home, draft string, stdout, stderr io.Writer, gf 
 	}
 	fmt.Fprintf(gf.outWriter(stdout), "Authored and ingested %s to %s\n", result.Name, result.LibraryPath)
 	return ExitSuccess
+}
+
+// preserveAuthoredRequirements merges execution requirements declared in the
+// authored draft's frontmatter into the ingested skill's sidecar (the local
+// detectors may not catch explicit tools/credentials), then refreshes the catalog.
+func preserveAuthoredRequirements(draft, libraryPath, home string) error {
+	trimmed := strings.TrimSpace(draft)
+	if !strings.HasPrefix(trimmed, "---") {
+		return nil
+	}
+	end := strings.Index(trimmed[3:], "---")
+	if end == -1 {
+		return nil
+	}
+	var fm struct {
+		Requirements requirements `yaml:"requirements"`
+	}
+	if err := yaml.Unmarshal([]byte(trimmed[3:end+3]), &fm); err != nil {
+		return nil // requirements are optional; ignore parse issues
+	}
+	if !fm.Requirements.hasExplicitFields() || libraryPath == "" {
+		return nil
+	}
+	metaPath := filepath.Join(libraryPath, ".skill-meta.yaml")
+	meta, _ := readSkillMeta(metaPath)
+	meta.Requirements = fm.Requirements
+	meta.Requirements.Inferred = false
+	if err := writeSeedSkillMeta(metaPath, meta); err != nil {
+		return err
+	}
+	cat, err := rebuildCatalogFromLibrary(filepath.Join(home, "library"))
+	if err != nil {
+		return err
+	}
+	return writeCatalog(filepath.Join(home, "library", "catalog.yaml"), cat)
 }
 
 // validateAuthoredSkill enforces the skills-author rules: name match, an
