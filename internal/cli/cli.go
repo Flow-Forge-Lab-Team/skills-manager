@@ -113,6 +113,8 @@ func Run(args []string, stdout io.Writer, stderr io.Writer) int {
 		code = runCompile(cmdArgs, stdout, stderr, gf)
 	case "variants":
 		code = runVariants(cmdArgs, stdout, stderr, gf)
+	case "port":
+		code = runPort(cmdArgs, stdout, stderr, gf)
 	default:
 		fmt.Fprintf(stderr, "unknown argument: %s\n", cmd)
 		fmt.Fprintln(stderr, "Usage: skills-manager <command>")
