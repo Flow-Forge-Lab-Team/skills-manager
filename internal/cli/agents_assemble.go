@@ -75,12 +75,12 @@ func assembleAgentsMd(home, projectPath string) (bool, string, error) {
 	// A missing lock means the project has nothing installed (no-op); a malformed
 	// lock is a real error worth surfacing rather than silently leaving AGENTS.md
 	// stale.
+	// A missing lock yields zero skills (no error); it then flows through the
+	// same "no qualifying skills" path below, which clears any stale generated
+	// block left from a previous install.
 	lock, err := readInstallLock(filepath.Join(projectPath, ".skills", "installed.lock"))
 	if err != nil {
 		return false, agentsPath, fmt.Errorf("read install lock: %w", err)
-	}
-	if len(lock.Skills) == 0 {
-		return false, agentsPath, nil
 	}
 	cat, _, err := loadTriageCatalog(home)
 	if err != nil {

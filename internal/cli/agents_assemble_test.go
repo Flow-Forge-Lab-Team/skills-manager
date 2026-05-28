@@ -153,6 +153,36 @@ func TestAssembleClearsStaleBlockWhenNothingQualifies(t *testing.T) {
 	}
 }
 
+func TestAssembleClearsStaleBlockWhenLockRemoved(t *testing.T) {
+	home, projectPath := setupAssembleProject(t)
+	agentsPath := filepath.Join(projectPath, "AGENTS.md")
+	writeFile(t, agentsPath, "# Notes\n\nUser content.\n")
+	if _, _, err := assembleAgentsMd(home, projectPath); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(readFile(t, agentsPath), agentsBeginMarker) {
+		t.Fatal("expected a generated block on first pass")
+	}
+	// Simulate uninstall removing the lock entirely.
+	if err := os.Remove(filepath.Join(projectPath, ".skills", "installed.lock")); err != nil {
+		t.Fatal(err)
+	}
+	wrote, _, err := assembleAgentsMd(home, projectPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !wrote {
+		t.Fatal("expected stale block to be cleared after the lock was removed")
+	}
+	content := readFile(t, agentsPath)
+	if strings.Contains(content, agentsBeginMarker) {
+		t.Fatalf("stale generated block should be cleared when the lock is gone:\n%s", content)
+	}
+	if !strings.Contains(content, "User content.") {
+		t.Fatalf("user content must be preserved:\n%s", content)
+	}
+}
+
 func TestAssembleSurfacesMalformedLock(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("SKILLS_MANAGER_HOME", home)
