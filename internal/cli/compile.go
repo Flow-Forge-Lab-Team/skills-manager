@@ -513,7 +513,9 @@ func copilotApplyTo(r compiledRule) string {
 		return "**"
 	}
 	if len(r.Globs) > 0 {
-		return strings.Join(r.Globs, ", ")
+		// Copilot's applyTo is a comma-separated glob list; a space after the
+		// comma would make the next pattern start with a space and never match.
+		return strings.Join(r.Globs, ",")
 	}
 	return ""
 }
