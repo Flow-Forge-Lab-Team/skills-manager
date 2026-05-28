@@ -139,7 +139,7 @@ func startWatchDaemon(home string, args []string, stdout, stderr io.Writer) int 
 	cmd.Env = append(os.Environ(), "SKILLS_MANAGER_HOME="+home)
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	cmd.SysProcAttr = detachSysProcAttr() // platform-specific (see watch_unix.go / watch_windows.go)
 	if err := cmd.Start(); err != nil {
 		fmt.Fprintf(stderr, "start watcher: %v\n", err)
 		return ExitOpError
