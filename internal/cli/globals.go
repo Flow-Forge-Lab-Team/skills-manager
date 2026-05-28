@@ -413,14 +413,18 @@ Subcommands:
 
 Translate the project's installed skills into a harness-specific format.
 
-Supported harness:
+Supported harnesses:
   cursor   write .cursor/rules/<name>.mdc with description + globs +
            alwaysApply. always-on skills become alwaysApply; stack tags
            (react, nextjs, python, go, …) infer globs; a ` + "`cursor:`" + ` block in
            skill frontmatter (globs / alwaysApply / description) overrides.
+  copilot  write .github/instructions/<name>.instructions.md with an applyTo
+           glob (always-on → "**"; stack tags infer globs; a ` + "`copilot:`" + ` block
+           overrides). Skills with no glob scope fold into
+           .github/copilot-instructions.md.
 
-Add the harness (e.g. ` + "`cursor`" + `) to your project's harnesses list to have
-install/sync recompile automatically.
+Add the harness (e.g. ` + "`cursor`" + ` or ` + "`copilot`" + `) to your project's harnesses
+list to have install/sync recompile automatically.
 
 ` + globalFlagHelp()
 	case "assemble":
@@ -541,7 +545,7 @@ Commands:
   usage       track and view skill usage (OTEL receiver, hook, matrix)
   watch       poll harness paths for new skills; --daemon/--stop/--auto-ingest
   assemble    regenerate project AGENTS.md from installed always-on skills
-  compile     translate installed skills to a harness format (cursor .mdc)
+  compile     translate installed skills to a harness format (cursor, copilot)
   doctor      diagnose problems; --rebuild-state --rebuild-catalog
   set         update a skill's compatibility declaration
   help        show help for a command
