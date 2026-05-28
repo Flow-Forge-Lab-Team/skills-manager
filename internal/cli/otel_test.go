@@ -130,6 +130,34 @@ func TestParseOTLPNoDoubleCountForBridgedActivation(t *testing.T) {
 	}
 }
 
+func TestParseOTLPPairsRepeatedSameSkillInPrompt(t *testing.T) {
+	// One prompt invokes "brainstorming" twice. Each skill_activated must pair
+	// with a distinct tool_result (FIFO), not collapse onto the last tool_use_id.
+	const payload = `{"resourceLogs":[{"scopeLogs":[{"logRecords":[
+	  {"attributes":[{"key":"event.name","value":{"stringValue":"skill_activated"}},{"key":"prompt.id","value":{"stringValue":"p1"}},{"key":"skill.name","value":{"stringValue":"brainstorming"}},{"key":"invocation_trigger","value":{"stringValue":"user-slash"}}]},
+	  {"attributes":[{"key":"event.name","value":{"stringValue":"skill_activated"}},{"key":"prompt.id","value":{"stringValue":"p1"}},{"key":"skill.name","value":{"stringValue":"brainstorming"}},{"key":"invocation_trigger","value":{"stringValue":"claude-proactive"}}]},
+	  {"attributes":[{"key":"event.name","value":{"stringValue":"tool_result"}},{"key":"prompt.id","value":{"stringValue":"p1"}},{"key":"tool_name","value":{"stringValue":"Skill"}},{"key":"skill_name","value":{"stringValue":"brainstorming"}},{"key":"tool_use_id","value":{"stringValue":"tA"}}]},
+	  {"attributes":[{"key":"event.name","value":{"stringValue":"tool_result"}},{"key":"prompt.id","value":{"stringValue":"p1"}},{"key":"tool_name","value":{"stringValue":"Skill"}},{"key":"skill_name","value":{"stringValue":"brainstorming"}},{"key":"tool_use_id","value":{"stringValue":"tB"}}]}
+	]}]}]}`
+
+	invs, err := parseOTLPSkillInvocations([]byte(payload))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Two activations, paired to the two distinct tool_use_ids; tool_results not
+	// re-counted.
+	if len(invs) != 2 {
+		t.Fatalf("got %d invocations, want 2: %+v", len(invs), invs)
+	}
+	got := map[string]string{} // tool_use_id -> trigger
+	for _, inv := range invs {
+		got[inv.ToolUseID] = inv.Trigger
+	}
+	if got["tA"] != "user-initiated" || got["tB"] != "proactive" {
+		t.Fatalf("pairing = %+v, want tA->user-initiated, tB->proactive", got)
+	}
+}
+
 func TestParseOTLPInvalidJSON(t *testing.T) {
 	if _, err := parseOTLPSkillInvocations([]byte("not json")); err == nil {
 		t.Fatal("expected error for invalid JSON")

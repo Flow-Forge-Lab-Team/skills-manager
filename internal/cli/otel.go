@@ -70,13 +70,12 @@ func (v otlpAnyValue) asString() string {
 }
 
 // parseOTLPSkillInvocations walks an OTLP/JSON logs export and returns the
-// skill activations it can derive from claude_code.tool_result events with
-// tool_name="Skill" — the canonical signal emitted by Claude Code (skill_name
-// requires OTEL_LOG_TOOL_DETAILS=1).
+// skill activations it can derive from Claude Code's events.
 //
 // claude_code.skill_activated is the canonical event: it fires for both Skill
 // tool calls and /-command invocations and carries the real invocation_trigger
-// taxonomy. It has no tool_use_id, so to let the project-attributing PreToolUse
+// taxonomy (skill names require OTEL_LOG_TOOL_DETAILS=1). It has no tool_use_id,
+// so to let the project-attributing PreToolUse
 // hook enrich it, each skill_activated is bridged to the corresponding Skill
 // tool_result (they share prompt.id + skill name) and adopts its tool_use_id.
 // The matching tool_result is then not emitted on its own, so a single Skill
@@ -117,9 +116,11 @@ func parseOTLPSkillInvocations(data []byte) ([]state.Invocation, error) {
 		}
 	}
 
-	// First pass: index Skill tool_result tool_use_ids by (prompt.id, skill) so
-	// a skill_activated can adopt the id of its corresponding tool call.
-	tuidByPromptSkill := map[string]string{}
+	// First pass: collect Skill tool_result tool_use_ids in order, keyed by
+	// (prompt.id, skill), so a skill_activated can adopt the id of its
+	// corresponding tool call. A FIFO queue per key pairs repeated invocations
+	// of the same skill within one prompt 1:1 rather than overwriting.
+	tuidsByPromptSkill := map[string][]string{}
 	for _, e := range events {
 		if !isToolResult(e.event) || !strings.EqualFold(e.attrs["tool_name"], "Skill") {
 			continue
@@ -129,10 +130,12 @@ func parseOTLPSkillInvocations(data []byte) ([]state.Invocation, error) {
 		if skill == "" || tuid == "" {
 			continue
 		}
-		tuidByPromptSkill[bridgeKey(e.attrs["prompt.id"], skill)] = tuid
+		key := bridgeKey(e.attrs["prompt.id"], skill)
+		tuidsByPromptSkill[key] = append(tuidsByPromptSkill[key], tuid)
 	}
 
 	var invs []state.Invocation
+	consumed := map[string]int{} // per-key index into the tool_use_id queue
 	adopted := map[string]bool{} // tool_use_ids represented by a skill_activated row
 	for _, e := range events {
 		switch {
@@ -141,8 +144,11 @@ func parseOTLPSkillInvocations(data []byte) ([]state.Invocation, error) {
 			if skill == "" {
 				continue
 			}
-			tuid := tuidByPromptSkill[bridgeKey(e.attrs["prompt.id"], skill)]
-			if tuid != "" {
+			key := bridgeKey(e.attrs["prompt.id"], skill)
+			tuid := ""
+			if queue := tuidsByPromptSkill[key]; consumed[key] < len(queue) {
+				tuid = queue[consumed[key]]
+				consumed[key]++
 				adopted[tuid] = true
 			}
 			invs = append(invs, state.Invocation{
