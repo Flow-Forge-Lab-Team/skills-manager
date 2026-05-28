@@ -732,6 +732,13 @@ func runInstall(args []string, realStdout io.Writer, stderr io.Writer, syncMode 
 		if _, _, err := assembleAgentsMd(home, projectPath); err != nil {
 			fmt.Fprintf(stderr, "warning: regenerate AGENTS.md: %v\n", err)
 		}
+		// Reconcile compile-only harnesses (e.g. cursor): recompile active ones
+		// and prune artifacts for any the project no longer opts into. Uses the
+		// same (possibly --config overridden) config the install resolved.
+		// Best-effort.
+		if err := reconcileCompileHarnesses(home, projectPath, projectConfigPath); err != nil {
+			fmt.Fprintf(stderr, "warning: compile harness outputs: %v\n", err)
+		}
 	}
 
 	exit := ExitSuccess
@@ -918,6 +925,10 @@ func runUninstall(args []string, realStdout io.Writer, stderr io.Writer, gf glob
 		removed = append(removed, rel)
 		fmt.Fprintf(stdout, "- removed %s\n", rel)
 	}
+
+	// Compile-only harness outputs (e.g. .cursor/rules) aren't tracked in the
+	// install manifest, so prune them explicitly on uninstall.
+	pruneAllCompileHarnesses(projectPath)
 
 	exit := ExitSuccess
 	if len(remaining) > 0 {
