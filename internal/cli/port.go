@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"os"
@@ -230,6 +231,12 @@ func applyPort(skillDir, skill, harness, canonName, canonDesc, ported, canonical
 		fmt.Fprintf(stderr, "write variants: %v\n", err)
 		return ExitOpError
 	}
+	// Promote the skill's compatibility so match/install/compile actually select
+	// the ported variant for the target harness; without this an exclusive skill
+	// stays filtered out by canonical compatibility.
+	if err := promotePortedCompatibility(skillDir, skill, harness, stderr); err != nil {
+		fmt.Fprintf(stderr, "warning: port saved but compatibility not promoted for %s: %v\n", harness, err)
+	}
 	if gf.JSON {
 		_ = writeJSON(realStdout, map[string]interface{}{"skill": skill, "harness": harness, "variant": variantFile, "saved": true})
 		return ExitSuccess
@@ -299,6 +306,49 @@ func ensureTrailingNewline(s string) string {
 		return s
 	}
 	return s + "\n"
+}
+
+// promotePortedCompatibility ensures the skill's effective compatibility
+// includes the ported harness, so selectors (match/install/compile) stop
+// filtering it out. Portable skills already match all harnesses; exclusive and
+// compatible skills are promoted to compatible with the union via the `set`
+// command (which rewrites frontmatter + meta and rebuilds the catalog).
+func promotePortedCompatibility(skillDir, skill, harness string, stderr io.Writer) error {
+	meta, _ := readSkillMeta(filepath.Join(skillDir, ".skill-meta.yaml"))
+	var union []string
+	switch compatibilityLabel(meta.Compatibility) {
+	case "portable", "unknown":
+		return nil // already compatible with every harness
+	case "exclusive":
+		union = dedupeStrings([]string{meta.Compatibility.Harness, harness})
+	case "compatible":
+		if containsFold(meta.Compatibility.Harnesses, harness) {
+			return nil // target already declared
+		}
+		union = dedupeStrings(append(append([]string{}, meta.Compatibility.Harnesses...), harness))
+	default:
+		return nil
+	}
+	var out, errBuf bytes.Buffer
+	code := Run([]string{"--non-interactive", "--quiet", "set", skill, "--compatibility", "compatible", "--harnesses", strings.Join(union, ",")}, &out, &errBuf)
+	if code != ExitSuccess {
+		return fmt.Errorf("%s", strings.TrimSpace(errBuf.String()))
+	}
+	return nil
+}
+
+func dedupeStrings(in []string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, s := range in {
+		s = strings.TrimSpace(s)
+		if s == "" || seen[s] {
+			continue
+		}
+		seen[s] = true
+		out = append(out, s)
+	}
+	return out
 }
 
 func writePortHandoffPrompt(home, skill, harness, prompt string) (string, error) {

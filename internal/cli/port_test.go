@@ -95,3 +95,26 @@ func TestPortHandoffWritesPrompt(t *testing.T) {
 		t.Fatalf("handoff output should mention --apply import:\n%s", o.String())
 	}
 }
+
+func TestPortPromotesCompatibilityForSelection(t *testing.T) {
+	home, skillDir := setupPortSkill(t) // reviewer is exclusive: claude
+	// Need a catalog so set/rebuild has something; rebuildCatalogFromLibrary
+	// reads the library, so just ensure the skill dir exists (it does).
+	ported := "---\nname: reviewer\ndescription: Review code; ask scope as plain questions.\ncompatible: [codex]\n---\n# reviewer\n\nAsk scope as a numbered list.\n"
+	f := filepath.Join(t.TempDir(), "p.md")
+	if err := os.WriteFile(f, []byte(ported), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var o, e bytes.Buffer
+	if code := Run([]string{"port", "reviewer", "--to", "codex", "--apply", f}, &o, &e); code != ExitSuccess {
+		t.Fatalf("port returned %d\nstderr:%s", code, e.String())
+	}
+	// After porting, the skill's effective compatibility must include codex so
+	// selectors no longer filter it out.
+	meta, _ := readSkillMeta(filepath.Join(skillDir, ".skill-meta.yaml"))
+	hs := compatibleHarnesses(meta.Compatibility, []string{"codex"})
+	if len(hs) == 0 {
+		t.Fatalf("ported skill should be compatible with codex after promotion: %+v", meta.Compatibility)
+	}
+	_ = home
+}
