@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -119,6 +120,20 @@ func TestAssembleNoIncludedSkillsLeavesFileUntouched(t *testing.T) {
 	}
 	if got := readFile(t, agentsPath); got != "untouched\n" {
 		t.Fatalf("AGENTS.md should be untouched, got: %q", got)
+	}
+}
+
+func TestAssembleSurfacesMalformedLock(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+	if err := os.MkdirAll(filepath.Join(home, "library"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	projectPath := filepath.Join(home, "proj")
+	// A malformed lock must surface an error, not a silent no-op.
+	writeFile(t, filepath.Join(projectPath, ".skills", "installed.lock"), "version: 1\nskills: : : not yaml\n  - [unbalanced\n")
+	if _, _, err := assembleAgentsMd(home, projectPath); err == nil {
+		t.Fatal("expected an error for a malformed install lock")
 	}
 }
 

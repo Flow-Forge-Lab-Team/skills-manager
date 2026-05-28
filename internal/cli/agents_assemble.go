@@ -72,11 +72,21 @@ func assembleAgentsMd(home, projectPath string) (bool, string, error) {
 	agentsPath := filepath.Join(projectPath, "AGENTS.md")
 	libraryPath := filepath.Join(home, "library")
 
+	// A missing lock means the project has nothing installed (no-op); a malformed
+	// lock is a real error worth surfacing rather than silently leaving AGENTS.md
+	// stale.
 	lock, err := readInstallLock(filepath.Join(projectPath, ".skills", "installed.lock"))
 	if err != nil {
-		return false, agentsPath, nil // no install lock → nothing to assemble
+		return false, agentsPath, fmt.Errorf("read install lock: %w", err)
 	}
-	cat, _, _ := loadTriageCatalog(home)
+	if len(lock.Skills) == 0 {
+		return false, agentsPath, nil
+	}
+	cat, _, err := loadTriageCatalog(home)
+	if err != nil {
+		// Surface rather than silently dropping catalog-tagged always-on skills.
+		return false, agentsPath, fmt.Errorf("load catalog: %w", err)
+	}
 	tagsByName := map[string][]string{}
 	for _, s := range cat.Skills {
 		tagsByName[s.Name] = s.Tags
