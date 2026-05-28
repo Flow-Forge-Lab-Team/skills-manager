@@ -104,6 +104,49 @@ func compileHarnessesForProject(projectPath, configPath string) []string {
 	return out
 }
 
+// reconcileCompileHarnesses brings every compile-only harness's output in sync
+// with the project: active harnesses are (re)compiled, inactive ones have their
+// previously-generated artifacts pruned. Used by install/sync so disabling a
+// harness clears its stale generated rules. Best-effort; returns the first error.
+func reconcileCompileHarnesses(home, projectPath, configPath string) error {
+	active := map[string]bool{}
+	for _, h := range compileHarnessesForProject(projectPath, configPath) {
+		active[h] = true
+	}
+	var firstErr error
+	for h := range compileOnlyHarnesses {
+		if active[h] {
+			if _, err := compileForHarness(home, projectPath, h, configPath); err != nil && firstErr == nil {
+				firstErr = err
+			}
+		} else if err := pruneCompileHarness(projectPath, h); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
+}
+
+// pruneCompileHarness removes any artifacts a compile-only harness previously
+// generated for the project (used when the harness is disabled or uninstalled).
+func pruneCompileHarness(projectPath, harness string) error {
+	switch harness {
+	case "cursor":
+		_, err := writeCursorRules(projectPath, nil) // nil rules → prune-only
+		return err
+	default:
+		return nil
+	}
+}
+
+// pruneAllCompileHarnesses removes generated artifacts for every compile-only
+// harness (used by uninstall, which doesn't track compile outputs in the
+// install manifest).
+func pruneAllCompileHarnesses(projectPath string) {
+	for h := range compileOnlyHarnesses {
+		_ = pruneCompileHarness(projectPath, h)
+	}
+}
+
 // compileForHarness compiles every installed skill for the given harness and
 // returns the project-relative paths written.
 func compileForHarness(home, projectPath, harness, configPath string) ([]string, error) {

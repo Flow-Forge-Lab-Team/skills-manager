@@ -246,6 +246,47 @@ func TestCompileCursorPrunesStaleRules(t *testing.T) {
 	}
 }
 
+func TestReconcileCompileHarnessesPrunesWhenDisabled(t *testing.T) {
+	home, projectPath := setupCompileProject(t, []sampleSkill{{name: "alpha", tags: []string{"go"}}})
+	cfgPath := filepath.Join(projectPath, ".skills", "project.yaml")
+	rulesDir := filepath.Join(projectPath, ".cursor", "rules")
+
+	// Cursor enabled → reconcile compiles.
+	writeFile(t, cfgPath, "version: 1\nharnesses: [cursor]\n")
+	if err := reconcileCompileHarnesses(home, projectPath, ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(rulesDir, "alpha.mdc")); err != nil {
+		t.Fatalf("expected alpha.mdc after enable: %v", err)
+	}
+	// Cursor disabled → reconcile prunes generated rules.
+	writeFile(t, cfgPath, "version: 1\nharnesses: [claude]\n")
+	if err := reconcileCompileHarnesses(home, projectPath, ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(rulesDir, "alpha.mdc")); !os.IsNotExist(err) {
+		t.Fatal("generated cursor rule should be pruned when cursor is disabled")
+	}
+}
+
+func TestPruneAllCompileHarnessesRemovesGenerated(t *testing.T) {
+	home, projectPath := setupCompileProject(t, []sampleSkill{{name: "alpha", tags: []string{"go"}}})
+	rulesDir := filepath.Join(projectPath, ".cursor", "rules")
+	if _, err := compileForHarness(home, projectPath, "cursor", ""); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(rulesDir, "user.mdc"), "---\ndescription: mine\n---\nkeep\n")
+
+	pruneAllCompileHarnesses(projectPath)
+
+	if _, err := os.Stat(filepath.Join(rulesDir, "alpha.mdc")); !os.IsNotExist(err) {
+		t.Fatal("generated rule should be removed on prune")
+	}
+	if _, err := os.Stat(filepath.Join(rulesDir, "user.mdc")); err != nil {
+		t.Fatal("user-authored rule must be preserved on prune")
+	}
+}
+
 func TestRenderCursorRuleEscapesBackslashes(t *testing.T) {
 	r := compiledRule{Name: "win", Description: `Use C:\Users\path`, Globs: []string{`a\b`}, Body: "x"}
 	out := renderCursorRule(r)
