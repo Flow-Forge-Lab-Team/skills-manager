@@ -254,3 +254,26 @@ func TestInstallDryRunValidatesVariant(t *testing.T) {
 		t.Fatalf("dry-run should surface the missing variant, got success\nstdout:%s", o.String())
 	}
 }
+
+func TestInstallPreservesUnmanagedTargetDespiteBadVariant(t *testing.T) {
+	home := t.TempDir()
+	project := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+	writeFile(t, filepath.Join(project, ".skills", "project.yaml"), "version: 1\nname: demo\ncategories: [Engineering]\nharnesses: [claude]\n")
+	writeFile(t, filepath.Join(home, "library", "catalog.yaml"), "version: 1\nskills:\n  - name: rev\n    categories: [Engineering]\n    compatibility:\n      mode: portable\n    requirements:\n      tools: []\n")
+	skillDir := filepath.Join(home, "library", "rev")
+	writeFile(t, filepath.Join(skillDir, "SKILL.md"), "---\nname: rev\n---\nbody\n")
+	writeFile(t, filepath.Join(skillDir, ".variants.yaml"), "version: 1\noverrides:\n  claude: SKILL.claude.md\n") // missing file
+	// Pre-existing UNMANAGED target — should be preserved, not validated/aborted.
+	existing := "---\nname: rev\n---\nUSER OWNED\n"
+	writeFile(t, filepath.Join(project, ".claude", "skills", "rev", "SKILL.md"), existing)
+
+	var o, e bytes.Buffer
+	code := Run([]string{"install", "--project", project}, &o, &e)
+	if code != 0 && code != ExitPartial {
+		t.Fatalf("install should not hard-fail on a preserved target with bad variant metadata; code=%d stderr=%s", code, e.String())
+	}
+	if got := readFile(t, filepath.Join(project, ".claude", "skills", "rev", "SKILL.md")); got != existing {
+		t.Fatalf("unmanaged target must be preserved untouched, got %q", got)
+	}
+}
