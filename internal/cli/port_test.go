@@ -109,12 +109,26 @@ func TestPortPromotesCompatibilityForSelection(t *testing.T) {
 	if code := Run([]string{"port", "reviewer", "--to", "codex", "--apply", f}, &o, &e); code != ExitSuccess {
 		t.Fatalf("port returned %d\nstderr:%s", code, e.String())
 	}
-	// After porting, the skill's effective compatibility must include codex so
-	// selectors no longer filter it out.
-	meta, _ := readSkillMeta(filepath.Join(skillDir, ".skill-meta.yaml"))
-	hs := compatibleHarnesses(meta.Compatibility, []string{"codex"})
-	if len(hs) == 0 {
-		t.Fatalf("ported skill should be compatible with codex after promotion: %+v", meta.Compatibility)
+	// The rebuilt catalog (what match/install/compile filter on) must now treat
+	// the skill as compatible with codex.
+	cat, err := readCatalog(filepath.Join(home, "library", "catalog.yaml"))
+	if err != nil {
+		t.Fatalf("read catalog: %v", err)
 	}
-	_ = home
+	var entry *catalogSkill
+	for i := range cat.Skills {
+		if cat.Skills[i].Name == "reviewer" {
+			entry = &cat.Skills[i]
+		}
+	}
+	if entry == nil {
+		t.Fatal("reviewer missing from rebuilt catalog")
+	}
+	if len(compatibleHarnesses(entry.Compatibility, []string{"codex"})) == 0 {
+		t.Fatalf("rebuilt catalog should make reviewer compatible with codex: %+v", entry.Compatibility)
+	}
+	// The freshly-ported variant must not be reported stale.
+	if stale, _ := variantsStale(skillDir); stale {
+		t.Fatal("freshly ported variant should not be stale")
+	}
 }

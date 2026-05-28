@@ -207,6 +207,16 @@ func applyPort(skillDir, skill, harness, canonName, canonDesc, ported, canonical
 		fmt.Fprintf(stderr, "write variant: %v\n", err)
 		return ExitOpError
 	}
+	// Promote the skill's compatibility so match/install/compile actually select
+	// the ported variant for the target harness; without this an exclusive skill
+	// stays filtered out by canonical compatibility. This rewrites the canonical
+	// SKILL.md, so it must happen before we fingerprint below.
+	if err := promotePortedCompatibility(canonicalPath, skill, harness, stderr); err != nil {
+		fmt.Fprintf(stderr, "port %s: compatibility not promoted for %s: %v\n", skill, harness, err)
+		return ExitOpError
+	}
+	// Fingerprint the canonical AFTER promotion so the variant isn't immediately
+	// reported stale.
 	fp, _, err := fingerprintSkillMd(canonicalPath)
 	if err != nil {
 		fmt.Fprintf(stderr, "fingerprint canonical: %v\n", err)
@@ -230,12 +240,6 @@ func applyPort(skillDir, skill, harness, canonName, canonDesc, ported, canonical
 	if err := writeVariants(skillDir, vf); err != nil {
 		fmt.Fprintf(stderr, "write variants: %v\n", err)
 		return ExitOpError
-	}
-	// Promote the skill's compatibility so match/install/compile actually select
-	// the ported variant for the target harness; without this an exclusive skill
-	// stays filtered out by canonical compatibility.
-	if err := promotePortedCompatibility(skillDir, skill, harness, stderr); err != nil {
-		fmt.Fprintf(stderr, "warning: port saved but compatibility not promoted for %s: %v\n", harness, err)
 	}
 	if gf.JSON {
 		_ = writeJSON(realStdout, map[string]interface{}{"skill": skill, "harness": harness, "variant": variantFile, "saved": true})
@@ -313,19 +317,25 @@ func ensureTrailingNewline(s string) string {
 // filtering it out. Portable skills already match all harnesses; exclusive and
 // compatible skills are promoted to compatible with the union via the `set`
 // command (which rewrites frontmatter + meta and rebuilds the catalog).
-func promotePortedCompatibility(skillDir, skill, harness string, stderr io.Writer) error {
-	meta, _ := readSkillMeta(filepath.Join(skillDir, ".skill-meta.yaml"))
+func promotePortedCompatibility(canonicalPath, skill, harness string, stderr io.Writer) error {
+	// Use the canonical SKILL.md frontmatter — it's the source of truth the
+	// catalog (and thus selectors) is rebuilt from, even when there is no
+	// .skill-meta.yaml yet.
+	_, compDecl, err := parseSkillFrontmatterFull(canonicalPath)
+	if err != nil {
+		return err
+	}
 	var union []string
-	switch compatibilityLabel(meta.Compatibility) {
-	case "portable", "unknown":
+	switch compDecl.Mode {
+	case "", "portable":
 		return nil // already compatible with every harness
 	case "exclusive":
-		union = dedupeStrings([]string{meta.Compatibility.Harness, harness})
+		union = dedupeStrings([]string{compDecl.Harness, harness})
 	case "compatible":
-		if containsFold(meta.Compatibility.Harnesses, harness) {
+		if containsFold(compDecl.Harnesses, harness) {
 			return nil // target already declared
 		}
-		union = dedupeStrings(append(append([]string{}, meta.Compatibility.Harnesses...), harness))
+		union = dedupeStrings(append(append([]string{}, compDecl.Harnesses...), harness))
 	default:
 		return nil
 	}
