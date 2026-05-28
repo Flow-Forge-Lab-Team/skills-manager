@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"path"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -42,6 +43,9 @@ func newServeServer(home string) *serveServer {
 	s.mux.HandleFunc("/api/v1/updates/", s.handleUpdateSub)
 	s.mux.HandleFunc("/api/v1/matrix", s.handleMatrix)
 	s.mux.HandleFunc("/api/v1/usage", s.handleUsage)
+	s.mux.HandleFunc("/api/v1/machines", s.handleMachines)
+	s.mux.HandleFunc("/api/v1/sync", s.handleSync)
+	s.mux.HandleFunc("/api/v1/settings", s.handleSettings)
 	s.mux.HandleFunc("/api/v1/run", s.handleRunCLI)
 	s.mux.Handle("/", s.handleStatic())
 	return s
@@ -372,6 +376,119 @@ func (s *serveServer) handleUsage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSONResponse(w, view)
+}
+
+func (s *serveServer) handleMachines(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	view, err := loadTriageCrossMachine(s.home)
+	if err != nil {
+		writeAPIError(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSONResponse(w, view)
+}
+
+func (s *serveServer) handleSync(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !s.authorizeAPIWrite(w, r) {
+		return
+	}
+	var body struct {
+		Action string `json:"action"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&body)
+	var flag string
+	switch body.Action {
+	case "pull", "":
+		flag = "--pull"
+	case "push":
+		flag = "--push"
+	case "status":
+		flag = "--status"
+	default:
+		writeAPIError(w, http.StatusBadRequest, fmt.Errorf("unknown sync action: %s", body.Action))
+		return
+	}
+	args := []string{"--json", "--non-interactive", "--quiet", "sync-library", flag}
+	var stdoutBuf, stderrBuf bytes.Buffer
+	code := s.runCLIInHome(args, &stdoutBuf, &stderrBuf)
+	writeJSONResponse(w, cliRunResponse{ExitCode: code, Stdout: stdoutBuf.String(), Stderr: stderrBuf.String()})
+}
+
+func (s *serveServer) handleSettings(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		view, err := loadTriageSettings(s.home)
+		if err != nil {
+			writeAPIError(w, http.StatusInternalServerError, err)
+			return
+		}
+		writeJSONResponse(w, view)
+	case http.MethodPatch:
+		if !s.authorizeAPIWrite(w, r) {
+			return
+		}
+		var body triageSettingsUpdate
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			writeAPIError(w, http.StatusBadRequest, fmt.Errorf("invalid JSON body: %w", err))
+			return
+		}
+		// Apply each provided field through the same `config set` path the CLI
+		// uses, so validation stays in one place.
+		updates := body.configSetArgs()
+		for _, kv := range updates {
+			args := []string{"--json", "--non-interactive", "--quiet", "config", "set", kv[0], kv[1]}
+			var outBuf, errBuf bytes.Buffer
+			if code := s.runCLIInHome(args, &outBuf, &errBuf); code != ExitSuccess {
+				writeAPIError(w, http.StatusBadRequest, fmt.Errorf("%s: %s", kv[0], strings.TrimSpace(errBuf.String())))
+				return
+			}
+		}
+		view, err := loadTriageSettings(s.home)
+		if err != nil {
+			writeAPIError(w, http.StatusInternalServerError, err)
+			return
+		}
+		writeJSONResponse(w, view)
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// triageSettingsUpdate carries optional settings changes from the UI. Only
+// non-nil fields are applied.
+type triageSettingsUpdate struct {
+	Mode                 *string `json:"mode,omitempty"`
+	LLMProvider          *string `json:"llm_provider,omitempty"`
+	LLMModel             *string `json:"llm_model,omitempty"`
+	LLMAPIKeyEnv         *string `json:"llm_api_key_env,omitempty"`
+	UpdateFrequencyHours *int    `json:"update_frequency_hours,omitempty"`
+}
+
+func (u triageSettingsUpdate) configSetArgs() [][2]string {
+	var out [][2]string
+	if u.Mode != nil {
+		out = append(out, [2]string{"mode", *u.Mode})
+	}
+	if u.LLMProvider != nil {
+		out = append(out, [2]string{"llm.provider", *u.LLMProvider})
+	}
+	if u.LLMModel != nil {
+		out = append(out, [2]string{"llm.model", *u.LLMModel})
+	}
+	if u.LLMAPIKeyEnv != nil {
+		out = append(out, [2]string{"llm.api_key_env", *u.LLMAPIKeyEnv})
+	}
+	if u.UpdateFrequencyHours != nil {
+		out = append(out, [2]string{"update.frequency_hours", strconv.Itoa(*u.UpdateFrequencyHours)})
+	}
+	return out
 }
 
 var serveAllowedCLI = map[string]bool{

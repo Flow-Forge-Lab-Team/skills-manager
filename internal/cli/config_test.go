@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestConfigSetGetAndShowLLM(t *testing.T) {
@@ -64,6 +65,38 @@ func TestConfigRejectsUnsupportedProvider(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "anthropic or openai") {
 		t.Fatalf("stderr missing provider guidance:\n%s", stderr.String())
+	}
+}
+
+func TestConfigUpdateFrequencyRoundTrip(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+
+	var stdout, stderr bytes.Buffer
+	if code := Run([]string{"config", "set", "update.frequency_hours", "6"}, &stdout, &stderr); code != ExitSuccess {
+		t.Fatalf("set returned %d\nstderr:%s", code, stderr.String())
+	}
+	stdout.Reset()
+	stderr.Reset()
+	if code := Run([]string{"config", "get", "update.frequency_hours"}, &stdout, &stderr); code != ExitSuccess {
+		t.Fatalf("get returned %d\nstderr:%s", code, stderr.String())
+	}
+	if strings.TrimSpace(stdout.String()) != "6" {
+		t.Fatalf("get = %q, want 6", strings.TrimSpace(stdout.String()))
+	}
+	cfg, err := loadManagerConfig(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.updateFrequency() != 6*time.Hour {
+		t.Fatalf("updateFrequency = %v, want 6h", cfg.updateFrequency())
+	}
+
+	// Invalid values are rejected.
+	stdout.Reset()
+	stderr.Reset()
+	if code := Run([]string{"config", "set", "update.frequency_hours", "0"}, &stdout, &stderr); code == ExitSuccess {
+		t.Fatal("expected non-zero frequency to be rejected")
 	}
 }
 

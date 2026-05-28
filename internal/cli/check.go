@@ -101,6 +101,10 @@ func runCheckWithPoller(args []string, stdout io.Writer, stderr io.Writer, gf gl
 	var results []checkResult
 	outWriter := gf.outWriter(stdout)
 
+	// Re-poll interval is configurable (Settings → update frequency); defaults to 24h.
+	cfg, _ := loadManagerConfig(home)
+	recheckInterval := cfg.updateFrequency()
+
 	for _, entry := range entries {
 		if !entry.IsDir() {
 			continue
@@ -138,7 +142,7 @@ func runCheckWithPoller(args []string, stdout io.Writer, stderr io.Writer, gf gl
 			continue
 		}
 
-		// Check if we should skip due to 24h lazy rule
+		// Check if we should skip due to the lazy re-poll rule (default 24h).
 		if !forceCheck {
 			poll, err := stateDB.GetSkillPoll(skillName)
 			if err != nil {
@@ -146,9 +150,8 @@ func runCheckWithPoller(args []string, stdout io.Writer, stderr io.Writer, gf gl
 				return ExitOpError
 			}
 			if poll != nil && poll.LastCheckedAt != "" {
-				// Parse the RFC3339 timestamp and check if < 24h old
 				lastCheck, err := time.Parse(time.RFC3339, poll.LastCheckedAt)
-				if err == nil && time.Since(lastCheck) < 24*time.Hour {
+				if err == nil && time.Since(lastCheck) < recheckInterval {
 					fmt.Fprintf(outWriter, "%s: skipped (checked recently)\n", skillName)
 					continue
 				}
