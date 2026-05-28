@@ -146,3 +146,14 @@ func TestNewGuidedRejectsMalformedRequirements(t *testing.T) {
 		t.Fatal("malformed-requirements draft must not be ingested")
 	}
 }
+
+func TestNewGuidedRejectsConflictingModes(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+	f := filepath.Join(t.TempDir(), "d.md")
+	os.WriteFile(f, []byte("x"), 0o644)
+	var o, e bytes.Buffer
+	if code := Run([]string{"new", "foo-skill", "--auto", "--apply", f}, &o, &e); code != ExitUsageError {
+		t.Fatalf("conflicting modes should be a usage error, got %d", code)
+	}
+}

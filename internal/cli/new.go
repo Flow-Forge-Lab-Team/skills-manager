@@ -52,6 +52,16 @@ func runNew(args []string, stdout io.Writer, stderr io.Writer, gf globalFlags) i
 	if (auto || handoff || applyFile != "") && !guided {
 		guided = true // --auto/--handoff/--apply imply guided authoring
 	}
+	modes := 0
+	for _, on := range []bool{auto, handoff, applyFile != ""} {
+		if on {
+			modes++
+		}
+	}
+	if modes > 1 {
+		fmt.Fprintln(stderr, "choose at most one of --auto, --handoff, --apply")
+		return ExitUsageError
+	}
 
 	// Validate name: alphanumeric + dashes, 3..64 chars
 	if !isValidSkillName(name) {
