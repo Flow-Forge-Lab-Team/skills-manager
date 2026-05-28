@@ -408,6 +408,21 @@ Subcommands:
   setup             print OTEL + PreToolUse hook setup instructions
 
 ` + globalFlagHelp()
+	case "compile":
+		return `skills-manager compile <harness> [project-path]
+
+Translate the project's installed skills into a harness-specific format.
+
+Supported harness:
+  cursor   write .cursor/rules/<name>.mdc with description + globs +
+           alwaysApply. always-on skills become alwaysApply; stack tags
+           (react, nextjs, python, go, …) infer globs; a ` + "`cursor:`" + ` block in
+           skill frontmatter (globs / alwaysApply / description) overrides.
+
+Add the harness (e.g. ` + "`cursor`" + `) to your project's harnesses list to have
+install/sync recompile automatically.
+
+` + globalFlagHelp()
 	case "assemble":
 		return `skills-manager assemble [project-path]
 
@@ -526,6 +541,7 @@ Commands:
   usage       track and view skill usage (OTEL receiver, hook, matrix)
   watch       poll harness paths for new skills; --daemon/--stop/--auto-ingest
   assemble    regenerate project AGENTS.md from installed always-on skills
+  compile     translate installed skills to a harness format (cursor .mdc)
   doctor      diagnose problems; --rebuild-state --rebuild-catalog
   set         update a skill's compatibility declaration
   help        show help for a command

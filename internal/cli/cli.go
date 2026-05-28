@@ -109,6 +109,8 @@ func Run(args []string, stdout io.Writer, stderr io.Writer) int {
 		code = runWatch(cmdArgs, stdout, stderr, gf)
 	case "assemble":
 		code = runAssemble(cmdArgs, stdout, stderr, gf)
+	case "compile":
+		code = runCompile(cmdArgs, stdout, stderr, gf)
 	default:
 		fmt.Fprintf(stderr, "unknown argument: %s\n", cmd)
 		fmt.Fprintln(stderr, "Usage: skills-manager <command>")
