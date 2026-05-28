@@ -53,11 +53,26 @@ func writeVariants(skillDir string, vf variantsFile) error {
 	return writeYAMLFile(variantsPath(skillDir), vf)
 }
 
+// isLocalFile reports whether name is a single local filename (no directory
+// separators, no traversal). Variant files must live inside the skill directory,
+// so synced/hand-edited metadata can't read or delete files elsewhere.
+func isLocalFile(name string) bool {
+	name = strings.TrimSpace(name)
+	if name == "" || name == "." || name == ".." {
+		return false
+	}
+	if strings.ContainsAny(name, `/\`) {
+		return false
+	}
+	return filepath.Base(name) == name
+}
+
 // selectVariantFile returns the override file for the first harness (in the
-// given order) that has one, or "" to mean the canonical SKILL.md.
+// given order) that has one, or "" to mean the canonical SKILL.md. Unsafe
+// (non-local) filenames are ignored.
 func selectVariantFile(vf variantsFile, harnesses []string) string {
 	for _, h := range harnesses {
-		if file, ok := vf.Overrides[h]; ok && strings.TrimSpace(file) != "" {
+		if file, ok := vf.Overrides[h]; ok && isLocalFile(file) {
 			return file
 		}
 	}
@@ -87,13 +102,15 @@ func applyVariantToTarget(srcSkillDir, target string, harnesses []string) error 
 		}
 	}
 	// Strip variant sources + the variants manifest from the harness copy.
+	// Only touch safe local filenames so malformed metadata can't delete
+	// siblings outside the copied skill directory.
 	_ = os.Remove(filepath.Join(target, ".variants.yaml"))
 	for _, file := range vf.Overrides {
-		if file != "SKILL.md" {
+		if file != "SKILL.md" && isLocalFile(file) {
 			_ = os.Remove(filepath.Join(target, file))
 		}
 	}
-	if vf.Default != "" && vf.Default != "SKILL.md" {
+	if vf.Default != "" && vf.Default != "SKILL.md" && isLocalFile(vf.Default) {
 		_ = os.Remove(filepath.Join(target, vf.Default))
 	}
 	return nil

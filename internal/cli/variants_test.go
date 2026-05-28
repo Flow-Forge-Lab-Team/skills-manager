@@ -124,3 +124,44 @@ func TestSelectVariantFileAndHarnessesForBase(t *testing.T) {
 		t.Fatalf("harnessesForBase = %v, want [antigravity gemini]", got)
 	}
 }
+
+func TestCompileHonorsVariantOverride(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+	libraryPath := filepath.Join(home, "library")
+	skillDir := filepath.Join(libraryPath, "ruler")
+	writeFile(t, filepath.Join(skillDir, "SKILL.md"), "---\nname: ruler\ndescription: canonical\n---\nCANONICAL\n")
+	writeFile(t, filepath.Join(skillDir, "SKILL.cursor.md"), "---\nname: ruler\ndescription: cursor port\n---\nCURSOR PORTED BODY\n")
+	writeFile(t, filepath.Join(skillDir, ".variants.yaml"), "version: 1\noverrides:\n  cursor: SKILL.cursor.md\ncanonical_fingerprint: x\n")
+	cat := catalog{Version: 1, Skills: []catalogSkill{{Name: "ruler", Tags: []string{"go"}}}}
+	if err := writeCatalog(filepath.Join(libraryPath, "catalog.yaml"), cat); err != nil {
+		t.Fatal(err)
+	}
+	projectPath := filepath.Join(home, "proj")
+	writeFile(t, filepath.Join(projectPath, ".skills", "installed.lock"), "version: 1\nskills:\n  - name: ruler\n")
+
+	if _, err := compileForHarness(home, projectPath, "cursor", ""); err != nil {
+		t.Fatal(err)
+	}
+	got := readFile(t, filepath.Join(projectPath, ".cursor", "rules", "ruler.mdc"))
+	if !strings.Contains(got, "CURSOR PORTED BODY") {
+		t.Fatalf("compile should use the cursor variant body:\n%s", got)
+	}
+	if strings.Contains(got, "CANONICAL") {
+		t.Fatalf("compile should not use canonical when a cursor variant exists:\n%s", got)
+	}
+}
+
+func TestVariantPathTraversalIsRejected(t *testing.T) {
+	if isLocalFile("../evil.md") || isLocalFile("a/b.md") || isLocalFile("..") || isLocalFile("") {
+		t.Fatal("traversal/non-local names must be rejected")
+	}
+	if !isLocalFile("SKILL.claude.md") {
+		t.Fatal("a plain local filename must be accepted")
+	}
+	// A malicious override is ignored by selection rather than escaping the dir.
+	vf := variantsFile{Overrides: map[string]string{"claude": "../../etc/passwd"}}
+	if got := selectVariantFile(vf, []string{"claude"}); got != "" {
+		t.Fatalf("unsafe override should be ignored, got %q", got)
+	}
+}

@@ -271,6 +271,16 @@ func skillHasUnmetRequirements(req requirements) bool {
 // the harness being compiled, so a `cursor:` block never reshapes Copilot
 // output (and vice versa).
 func buildCompiledRule(skillMd, name string, catalogTags []string, harness string) (compiledRule, error) {
+	// Honor a per-harness ported variant: if the skill declares an override for
+	// this harness, compile from the ported file instead of the canonical.
+	skillDir := filepath.Dir(skillMd)
+	if vf, ok, _ := readVariants(skillDir); ok {
+		if chosen := selectVariantFile(vf, []string{harness}); chosen != "" && chosen != "SKILL.md" {
+			if candidate := filepath.Join(skillDir, chosen); pathExists(candidate) {
+				skillMd = candidate
+			}
+		}
+	}
 	data, err := os.ReadFile(skillMd)
 	if err != nil {
 		return compiledRule{}, err
