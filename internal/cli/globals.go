@@ -366,6 +366,17 @@ skills-manager check --non-interactive --quiet --json.
 Remove the local OS scheduler installed by setup-schedule.
 
 ` + globalFlagHelp()
+	case "serve":
+		return `skills-manager serve [flags]
+
+Start the local triage web UI and REST API. Reads on-disk state on every request;
+UI actions invoke CLI-equivalent commands via POST /api/v1/run.
+
+Flags:
+  --port <n>    listen port (default: 7777)
+  --host <addr> bind address (default: 127.0.0.1; use 0.0.0.0 for LAN/Tailscale)
+
+` + globalFlagHelp()
 	case "status":
 		return `skills-manager status
 
@@ -447,6 +458,7 @@ Commands:
   setup-schedule  install local OS daily check (launchd/cron)
   unschedule      remove local OS scheduler
   status      show library counts, pending, unregistered, scheduled state
+  serve       local triage web UI + REST API (localhost by default)
   doctor      diagnose problems; --rebuild-state --rebuild-catalog
   set         update a skill's compatibility declaration
   help        show help for a command
