@@ -120,6 +120,22 @@ func TestWatchOnceNoDuplicatePrompts(t *testing.T) {
 	if total != 2 {
 		t.Fatalf("got %d notifications, want 2 (newbie ingest-candidate + installed drift)", total)
 	}
+
+	// status surfaces the watcher notification count so the daemon's output is
+	// visible without inspecting the notifications directory by hand.
+	var sout, serr bytes.Buffer
+	if code := Run([]string{"--json", "status"}, &sout, &serr); code != ExitSuccess {
+		t.Fatalf("status returned %d\nstderr:%s", code, serr.String())
+	}
+	var st struct {
+		WatcherNotifications int `json:"watcher_notifications"`
+	}
+	if err := json.Unmarshal(sout.Bytes(), &st); err != nil {
+		t.Fatalf("decode status json: %v\n%s", err, sout.String())
+	}
+	if st.WatcherNotifications != 2 {
+		t.Fatalf("status watcher_notifications = %d, want 2", st.WatcherNotifications)
+	}
 }
 
 func TestWatchAutoIngestSkipsSuspicious(t *testing.T) {

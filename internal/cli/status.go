@@ -57,15 +57,18 @@ func runStatus(args []string, stdout io.Writer, stderr io.Writer, gf globalFlags
 	var unregCount int
 	db.QueryRow("SELECT COUNT(*) FROM detected WHERE action IS NULL OR action = '' OR action = 'pending'").Scan(&unregCount)
 
+	watcherCount := countWatcherNotifications(home)
+
 	sched := formatScheduledCheckStatus(db, home)
 
 	if gf.JSON {
 		out := map[string]interface{}{
-			"library_skills":  libCount,
-			"projects":        projCount,
-			"pending_updates": pendingCount,
-			"unregistered":    unregCount,
-			"scheduled_check": sched,
+			"library_skills":        libCount,
+			"projects":              projCount,
+			"pending_updates":       pendingCount,
+			"unregistered":          unregCount,
+			"watcher_notifications": watcherCount,
+			"scheduled_check":       sched,
 		}
 		if err := writeJSON(stdout, out); err != nil {
 			fmt.Fprintln(stderr, err)
@@ -84,6 +87,9 @@ func runStatus(args []string, stdout io.Writer, stderr io.Writer, gf globalFlags
 			fmt.Fprintf(humanOut, " (outside library; `scan` will be added with ingest)")
 		}
 		fmt.Fprintln(humanOut)
+		if watcherCount > 0 {
+			fmt.Fprintf(humanOut, "Watcher alerts:   %d (in ~/.skills-manager/notifications/; run `scan --ingest` to review)\n", watcherCount)
+		}
 		fmt.Fprintf(humanOut, "Scheduled checks: %s\n", sched)
 	}
 
@@ -117,6 +123,22 @@ func countPendingUpdates(libraryPath string) int {
 			if _, err := os.Stat(filepath.Join(libraryPath, e.Name(), ".update-pending")); err == nil {
 				count++
 			}
+		}
+	}
+	return count
+}
+
+// countWatcherNotifications counts pending watcher detections written under
+// ~/.skills-manager/notifications/ by `skills-manager watch`.
+func countWatcherNotifications(home string) int {
+	entries, err := os.ReadDir(filepath.Join(home, "notifications"))
+	if err != nil {
+		return 0
+	}
+	count := 0
+	for _, e := range entries {
+		if !e.IsDir() && strings.HasPrefix(e.Name(), "watch-") && strings.HasSuffix(e.Name(), ".json") {
+			count++
 		}
 	}
 	return count
