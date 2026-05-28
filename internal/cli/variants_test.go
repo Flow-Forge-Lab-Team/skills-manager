@@ -239,3 +239,18 @@ func TestInstallPreservesTargetOnMissingVariant(t *testing.T) {
 		t.Fatal(".variants.yaml must not be left in the harness copy")
 	}
 }
+
+func TestInstallDryRunValidatesVariant(t *testing.T) {
+	home := t.TempDir()
+	project := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+	writeFile(t, filepath.Join(project, ".skills", "project.yaml"), "version: 1\nname: demo\ncategories: [Engineering]\nharnesses: [claude]\n")
+	writeFile(t, filepath.Join(home, "library", "catalog.yaml"), "version: 1\nskills:\n  - name: rev\n    categories: [Engineering]\n    compatibility:\n      mode: portable\n    requirements:\n      tools: []\n")
+	skillDir := filepath.Join(home, "library", "rev")
+	writeFile(t, filepath.Join(skillDir, "SKILL.md"), "---\nname: rev\n---\nbody\n")
+	writeFile(t, filepath.Join(skillDir, ".variants.yaml"), "version: 1\noverrides:\n  claude: SKILL.claude.md\n") // missing file
+	var o, e bytes.Buffer
+	if code := Run([]string{"install", "--project", project, "--dry-run"}, &o, &e); code == 0 {
+		t.Fatalf("dry-run should surface the missing variant, got success\nstdout:%s", o.String())
+	}
+}

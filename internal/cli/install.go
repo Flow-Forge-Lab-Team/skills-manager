@@ -582,6 +582,17 @@ func runInstall(args []string, realStdout io.Writer, stderr io.Writer, syncMode 
 		for _, targetBase := range targetBases(candidate.Harnesses) {
 			relTarget := filepath.ToSlash(filepath.Join(targetBase, candidate.Skill.Name))
 			target := filepath.Join(projectPath, relTarget)
+			// Validate the per-harness variant up front so it's caught in both
+			// dry-run (preflight) and real install before any destructive copy.
+			if err := validateVariantForHarnesses(src, harnessesForBase(candidate.Harnesses, targetBase)); err != nil {
+				if !opts.dryRun && installed > 0 {
+					if writeErr := saveInstallManifest(manifestPath, manifest, managed, preserved, files); writeErr != nil {
+						fmt.Fprintf(stderr, "write manifest after variant error: %v\n", writeErr)
+					}
+				}
+				fmt.Fprintf(stderr, "install %s: %v\n", relTarget, err)
+				return 3
+			}
 			if opts.dryRun {
 				if _, err := os.Stat(target); err == nil {
 					if _, ok := managed[relTarget]; !ok {
@@ -607,19 +618,6 @@ func runInstall(args []string, realStdout io.Writer, stderr io.Writer, syncMode 
 				}
 				fmt.Fprintf(stdout, "  copy %s -> %s\n", candidate.Skill.Name, relTarget)
 				continue
-			}
-
-			// Validate the per-harness variant before installSkillCopy
-			// destructively replaces the target, so a missing declared variant
-			// can't leave a managed install as a raw library copy.
-			if err := validateVariantForHarnesses(src, harnessesForBase(candidate.Harnesses, targetBase)); err != nil {
-				if installed > 0 {
-					if writeErr := saveInstallManifest(manifestPath, manifest, managed, preserved, files); writeErr != nil {
-						fmt.Fprintf(stderr, "write manifest after variant error: %v\n", writeErr)
-					}
-				}
-				fmt.Fprintf(stderr, "install %s: %v\n", relTarget, err)
-				return 3
 			}
 
 			wrote, err := installSkillCopy(src, target, relTarget, manifest, managed)
