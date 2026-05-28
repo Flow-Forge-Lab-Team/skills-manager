@@ -291,8 +291,21 @@ func preserveAuthoredRequirements(draft, libraryPath, home string) error {
 	}
 	metaPath := filepath.Join(libraryPath, ".skill-meta.yaml")
 	meta, _ := readSkillMeta(metaPath)
-	meta.Requirements = fm.Requirements
-	meta.Requirements.Inferred = false
+	// Merge: authored explicit requirements take precedence, but inferred
+	// requirements the detectors found (e.g. a `gh pr` in the body) are kept.
+	merged := fm.Requirements
+	mergeSeedRequirements(&merged, meta.Requirements) // adds inferred tools/mcp/model not already present
+	credSeen := map[string]bool{}
+	for _, c := range merged.Credentials {
+		credSeen[c.Name] = true
+	}
+	for _, c := range meta.Requirements.Credentials {
+		if !credSeen[c.Name] {
+			merged.Credentials = append(merged.Credentials, c)
+		}
+	}
+	merged.Inferred = false // contains explicit authored requirements
+	meta.Requirements = merged
 	if err := writeSeedSkillMeta(metaPath, meta); err != nil {
 		return err
 	}

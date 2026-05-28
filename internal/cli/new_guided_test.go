@@ -87,7 +87,9 @@ func TestNewGuidedHandoffWritesPrompt(t *testing.T) {
 func TestNewGuidedPreservesAuthoredRequirements(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("SKILLS_MANAGER_HOME", home)
-	draft := "---\nname: gh-helper\ndescription: Use when opening or reviewing GitHub pull requests for this repo.\ncompatible: [claude, codex]\nrequirements:\n  tools:\n    - name: gh\n      required: true\n      check: gh auth status\n---\n# gh-helper\n\nUse gh to open PRs.\n\n## How to verify\nRun gh auth status.\n"
+	// Author declares rg explicitly; body also references `gh` which the local
+	// detectors infer. Both must survive (merge, not replace).
+	draft := "---\nname: gh-helper\ndescription: Use when opening or reviewing GitHub pull requests for this repo.\ncompatible: [claude, codex]\nrequirements:\n  tools:\n    - name: rg\n      required: true\n      check: rg --version\n---\n# gh-helper\n\nRun gh pr create to open PRs and rg to search.\n\n## How to verify\nRun gh auth status.\n"
 	f := filepath.Join(t.TempDir(), "d.md")
 	if err := os.WriteFile(f, []byte(draft), 0o644); err != nil {
 		t.Fatal(err)
@@ -100,7 +102,10 @@ func TestNewGuidedPreservesAuthoredRequirements(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if !hasToolRequirement(meta.Requirements.Tools, "rg") {
+		t.Fatalf("authored rg requirement not preserved: %+v", meta.Requirements)
+	}
 	if !hasToolRequirement(meta.Requirements.Tools, "gh") {
-		t.Fatalf("authored gh requirement not preserved in sidecar: %+v", meta.Requirements)
+		t.Fatalf("inferred gh requirement dropped by authored-requirements merge: %+v", meta.Requirements)
 	}
 }
