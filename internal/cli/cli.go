@@ -67,6 +67,8 @@ func Run(args []string, stdout io.Writer, stderr io.Writer) int {
 		code = runList(cmdArgs, stdout, stderr, gf)
 	case "match":
 		code = runMatch(cmdArgs, stdout, stderr, gf)
+	case "cleanup", "dedupe":
+		code = runCleanup(cmdArgs, stdout, stderr, gf)
 	case "show":
 		code = runShow(cmdArgs, stdout, stderr, gf)
 	case "update":

@@ -258,6 +258,23 @@ Flags:
   --suggest          hide skills already present in .skills/installed.lock
 
 ` + globalFlagHelp()
+	case "cleanup", "dedupe":
+		return `skills-manager cleanup (--auto | --handoff | --from <file>)
+
+Analyze the canonical ingested skill library for duplicate, similar, or
+confusingly overlapping skills. Advisory only; no library files are changed.
+
+Forms:
+  --auto          run the configured LLM provider
+  --handoff       write a prompt file for Codex, Cursor, or another agent
+  --from <file>   validate and print saved agent/provider recommendations
+
+Recommendations may propose keep_as_is, archive, merge, or rename_split.
+Archive and merge are not applied by this command.
+
+Alias: dedupe
+
+` + globalFlagHelp()
 	case "show":
 		return `skills-manager show <skill> [flags]
 
@@ -570,6 +587,7 @@ Commands:
   uninstall   remove managed skills from a project
   list        list skills in the canonical library
   match       preview ranked skills matching project categories+tags (with --explain --suggest)
+  cleanup     recommend duplicate/overlap cleanup for library skills
   show        show details for a single skill
   update      review and accept pending library updates
   summarize   generate or import advisory update summaries
