@@ -14,7 +14,7 @@ directories you choose.
 The verified path today is to install from the public Go module:
 
 ```sh
-go install github.com/Flow-Forge-Lab-Team/skills-manager/cmd/skills-manager@latest
+go install github.com/Flow-Forge-Lab-Team/skills-manager/cmd/skills-manager@v0.1.0
 ```
 
 This requires Go 1.26 or newer and puts the binary in `$(go env GOPATH)/bin`.
@@ -24,10 +24,11 @@ Add that directory to `PATH` if needed, then run:
 skills-manager --help
 ```
 
-Pre-release channels are intentionally not the happy path yet:
+Release assets are checksum-verified by the installer. The checksum protects
+artifact integrity after download; it is not a signed authenticity guarantee
+unless you separately verify the signed checksum artifact from the release.
 
 ```sh
-# Planned after signed release assets exist.
 curl -fsSL https://raw.githubusercontent.com/Flow-Forge-Lab-Team/skills-manager/main/install.sh | sh
 
 # Inspect first, then run. The installer verifies the release tarball against
@@ -35,10 +36,8 @@ curl -fsSL https://raw.githubusercontent.com/Flow-Forge-Lab-Team/skills-manager/
 curl -fsSLO https://raw.githubusercontent.com/Flow-Forge-Lab-Team/skills-manager/main/install.sh
 sh install.sh
 
-# Planned after @flowforgelab/skills-manager is published.
 npm install -g @flowforgelab/skills-manager
 
-# Planned after Flow-Forge-Lab-Team/homebrew-tap exists.
 brew install Flow-Forge-Lab-Team/tap/skills-manager
 ```
 
@@ -47,11 +46,18 @@ Then run the [5-minute tutorial](docs/TUTORIAL.md), or `skills-manager --help`.
 ## Real CLI Demo
 
 This transcript was generated from the current CLI with a temporary manager home
-and the committed [`examples/hello-skill`](examples/hello-skill) fixture:
+and the committed [`examples/hello-skill`](examples/hello-skill) and
+[`examples/python-skill`](examples/python-skill) fixtures. The transcript is
+checked by `TestReadmeDemoTranscriptMatchesGolden`; update
+[`docs/demo_transcript.txt`](docs/demo_transcript.txt) and rerun `go test ./...`
+when changing these commands or output.
 
 ```text
 $ skills-manager add ./examples/hello-skill --yes
 Ingested hello-skill to $SKILLS_MANAGER_HOME/library/hello-skill
+
+$ skills-manager add ./examples/python-skill --yes
+Ingested python-skill to $SKILLS_MANAGER_HOME/library/python-skill
 
 $ skills-manager init ./demo-project --non-interactive
 Initialized ./demo-project
@@ -60,8 +66,9 @@ Tags: nextjs, nodejs, react
 Harnesses: claude, codex, grok, antigravity, gemini, hermes, openclaw
 
 $ skills-manager match --project ./demo-project --explain
-hello-skill (score: 1) — category overlap: 1
+hello-skill (score: 1) - category overlap: 1
   harnesses: antigravity, claude, codex, gemini, grok, hermes, openclaw
+python-skill (rejected) - no category or tag overlap
 
 $ skills-manager install --project ./demo-project
 Installing skills:
@@ -85,6 +92,20 @@ Installing skills:
   and optionally generate guarded summaries before accepting.
 - **Execution-aware compatibility.** Skills declare harness support, model/tool assumptions, local binaries, MCP servers, scripts, and credentials.
 - **Cross-machine via git.** Sync your library between laptop, desktop, server.
+
+## Security model
+
+`skills-manager` installs executable agent instructions into local AI-tool
+directories, so review remains part of the trust boundary. Copy mode is the
+default: installs create manager-owned copies, preserve unmanaged local edits,
+record manifests, and uninstall only removes files that the manager owns.
+
+Updates and scans are review-first unless you choose an explicit automated path.
+Checksum verification in `install.sh` and the npm wrapper confirms that the
+downloaded archive matches the published release checksum. It does not prove who
+published that checksum unless you independently verify the release's signature
+artifact. See [`docs/SECURITY_MODEL.md`](docs/SECURITY_MODEL.md) for the full
+install, update, copy-mode, uninstall, and release-integrity boundaries.
 
 ## Why
 
@@ -110,6 +131,7 @@ Read in this order:
 10. [`docs/BUNDLED_SKILLS.md`](docs/BUNDLED_SKILLS.md) — manager skills
 11. [`docs/SCHEDULING.md`](docs/SCHEDULING.md) — scheduling design
 12. [`docs/CROSS_MACHINE.md`](docs/CROSS_MACHINE.md) — git sync
+13. [`docs/SECURITY_MODEL.md`](docs/SECURITY_MODEL.md) — install and release trust boundaries
 
 ## Naming
 

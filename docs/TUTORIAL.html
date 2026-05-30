@@ -60,19 +60,23 @@ The path below starts from an empty manager home and uses the committed
 never used an AI coding-tool skill before.</p>
 <h2 id="1-install-30s">1. Install (30s)</h2>
 <p>The verified install path today is the public Go module:</p>
-<div class="sourceCode" id="cb1"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="ex">go</span> install github.com/Flow-Forge-Lab-Team/skills-manager/cmd/skills-manager@latest</span>
+<div class="sourceCode" id="cb1"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="ex">go</span> install github.com/Flow-Forge-Lab-Team/skills-manager/cmd/skills-manager@v0.1.0</span>
 <span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="ex">skills-manager</span> <span class="at">--version</span></span></code></pre></div>
 <p>Expected output:</p>
-<pre class="text"><code>skills-manager 0.1.0-dev</code></pre>
-<p>The <code>curl | sh</code>, npm, and Homebrew commands are planned
-release channels. They are not the recommended public happy path until
-release assets, the npm package, and the Homebrew tap are live.</p>
+<pre class="text"><code>skills-manager 0.1.0</code></pre>
+<p>The <code>curl | sh</code>, npm, and Homebrew commands are also
+release channels after v0.1.0 is published. The shell installer and npm
+wrapper verify release archive checksums, which proves download
+integrity but not publisher authenticity unless you separately verify
+the signed checksum artifact from the GitHub release.</p>
 <h2 id="2-add-your-first-skill-1-min">2. Add your first skill (1
 min)</h2>
 <p>From a checkout of this repository, ingest the sample skill:</p>
-<div class="sourceCode" id="cb3"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="ex">skills-manager</span> add ./examples/hello-skill <span class="at">--yes</span></span></code></pre></div>
+<div class="sourceCode" id="cb3"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="ex">skills-manager</span> add ./examples/hello-skill <span class="at">--yes</span></span>
+<span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a><span class="ex">skills-manager</span> add ./examples/python-skill <span class="at">--yes</span></span></code></pre></div>
 <p>Expected output:</p>
-<pre class="text"><code>Ingested hello-skill to ~/.skills-manager/library/hello-skill</code></pre>
+<pre class="text"><code>Ingested hello-skill to ~/.skills-manager/library/hello-skill
+Ingested python-skill to ~/.skills-manager/library/python-skill</code></pre>
 <p>Check the library:</p>
 <div class="sourceCode" id="cb5"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a><span class="ex">skills-manager</span> list</span></code></pre></div>
 <p>Expected output:</p>
@@ -97,8 +101,9 @@ Harnesses: claude, codex, grok, antigravity, gemini, hermes, openclaw</code></pr
 <div class="sourceCode" id="cb10"><pre
 class="sourceCode sh"><code class="sourceCode bash"><span id="cb10-1"><a href="#cb10-1" aria-hidden="true" tabindex="-1"></a><span class="ex">skills-manager</span> match <span class="at">--project</span> /tmp/sm-demo <span class="at">--explain</span></span></code></pre></div>
 <p>Expected output:</p>
-<pre class="text"><code>hello-skill (score: 1) — category overlap: 1
-  harnesses: antigravity, claude, codex, gemini, grok, hermes, openclaw</code></pre>
+<pre class="text"><code>hello-skill (score: 1) - category overlap: 1
+  harnesses: antigravity, claude, codex, gemini, grok, hermes, openclaw
+python-skill (rejected) - no category or tag overlap</code></pre>
 <h2 id="4-install-into-the-project-1-min">4. Install into the project (1
 min)</h2>
 <div class="sourceCode" id="cb12"><pre
@@ -112,7 +117,8 @@ class="sourceCode sh"><code class="sourceCode bash"><span id="cb12-1"><a href="#
   copied .grok/skills/hello-skill
   copied skills/hello-skill</code></pre>
 <p>This copies matching skills into the active target directory and
-records the manager-owned files. Inspect the result:</p>
+records the manager-owned files. The unrelated Python sample is
+intentionally not installed. Inspect the result:</p>
 <div class="sourceCode" id="cb14"><pre
 class="sourceCode sh"><code class="sourceCode bash"><span id="cb14-1"><a href="#cb14-1" aria-hidden="true" tabindex="-1"></a><span class="fu">find</span> /tmp/sm-demo <span class="at">-maxdepth</span> 4 <span class="at">-type</span> f <span class="kw">|</span> <span class="fu">sort</span></span></code></pre></div>
 <p>Expected files include:</p>
@@ -174,6 +180,9 @@ across machines</li>
 <li>The <a
 href="https://github.com/Flow-Forge-Lab-Team/skills-manager/tree/main/examples/sample-project"><code>examples/sample-project</code></a>
 reference application shows a typical project setup end to end.</li>
+<li>The README demo transcript is CI-checked against
+<code>docs/demo_transcript.txt</code>; update that golden fixture and
+run <code>go test ./...</code> when changing demo output.</li>
 </ul>
     <footer class="doc-footer">
       <span>skills-manager · design doc</span>

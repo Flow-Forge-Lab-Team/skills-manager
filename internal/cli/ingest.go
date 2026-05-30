@@ -504,11 +504,19 @@ func ingestFromSource(src ingestSource, opts ingestOptions, home string, out io.
 	}
 
 	// Rebuild catalog
-	if _, err := rebuildCatalogFromLibrary(libraryPath); err != nil {
+	cat, err := rebuildCatalogFromLibrary(libraryPath)
+	if err != nil {
 		return ingestResult{
 			Name:    decl.name,
 			Skipped: true,
 			Reason:  "failed to rebuild catalog: " + err.Error(),
+		}
+	}
+	if err := writeCatalog(filepath.Join(libraryPath, "catalog.yaml"), cat); err != nil {
+		return ingestResult{
+			Name:    decl.name,
+			Skipped: true,
+			Reason:  "failed to write catalog: " + err.Error(),
 		}
 	}
 
