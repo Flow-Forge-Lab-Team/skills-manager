@@ -291,6 +291,167 @@ Known.
 	}
 }
 
+func TestScanAutoIngestPreflightGroupsMissingDependencies(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+	t.Setenv("PATH", t.TempDir())
+
+	skillsDir := filepath.Join(home, ".claude", "skills")
+	writeScanSkill(t, skillsDir, "needs-model", `---
+name: needs-model
+description: Use this skill when reviewing pull requests for security
+exclusive: claude
+---
+
+# needs-model
+
+Requires tool use.
+`)
+	writeScanSkill(t, skillsDir, "needs-mcp", `---
+name: needs-mcp
+description: Use this skill when reviewing pull requests for security
+exclusive: claude
+---
+
+# needs-mcp
+
+Call mcp__linear__ to update Linear.
+`)
+	writeScanSkill(t, skillsDir, "needs-tool", `---
+name: needs-tool
+description: Use this skill when reviewing pull requests for security
+exclusive: claude
+---
+
+# needs-tool
+
+Run ffmpeg before finishing.
+`)
+
+	args := []string{"--auto-ingest", "--paths=" + skillsDir}
+	var stdout, stderr bytes.Buffer
+	code := runScan(args, &stdout, &stderr, globalFlags{})
+
+	if code != ExitSuccess {
+		t.Fatalf("exit code = %d, want %d; stderr=%s", code, ExitSuccess, stderr.String())
+	}
+
+	output := stdout.String()
+	for _, want := range []string{
+		"Auto-ingest preflight:",
+		"Discovered candidates: 3",
+		"Eligible for auto-ingest: 0",
+		"Blocked by missing dependencies: 3",
+		"model=tool_use: needs-model (" + filepath.Join(skillsDir, "needs-model") + ")",
+		"mcp_servers=linear: needs-mcp (" + filepath.Join(skillsDir, "needs-mcp") + ")",
+		"tools=ffmpeg: needs-tool (" + filepath.Join(skillsDir, "needs-tool") + ")",
+		"Options:",
+	} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("expected output to contain %q, got:\n%s", want, output)
+		}
+	}
+}
+
+func TestScanAutoIngestPreflightContinuesWithEligibleOnly(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+
+	skillsDir := filepath.Join(home, ".claude", "skills")
+	writeScanSkill(t, skillsDir, "high-conf", `---
+name: high-conf
+description: Use this skill when reviewing pull requests for security
+exclusive: claude
+---
+
+# high-conf
+
+Secure.
+`)
+	writeScanSkill(t, skillsDir, "needs-model", `---
+name: needs-model
+description: Use this skill when reviewing pull requests for security
+exclusive: claude
+---
+
+# needs-model
+
+Requires tool use.
+`)
+
+	args := []string{"--auto-ingest", "--paths=" + skillsDir}
+	var stdout, stderr bytes.Buffer
+	code := runScan(args, &stdout, &stderr, globalFlags{})
+
+	if code != ExitSuccess {
+		t.Fatalf("exit code = %d, want %d; stderr=%s", code, ExitSuccess, stderr.String())
+	}
+	if _, err := os.Stat(filepath.Join(home, "library", "high-conf")); err != nil {
+		t.Fatalf("eligible skill was not ingested: %v\nstdout:\n%s", err, stdout.String())
+	}
+	if _, err := os.Stat(filepath.Join(home, "library", "needs-model")); err == nil {
+		t.Fatalf("dependency-blocked skill should not be ingested\nstdout:\n%s", stdout.String())
+	}
+
+	output := stdout.String()
+	for _, want := range []string{
+		"Eligible for auto-ingest: 1",
+		"Blocked by missing dependencies: 1",
+		"Blocked needs-model (" + filepath.Join(skillsDir, "needs-model") + "): missing required dependencies (model=tool_use)",
+		"Evaluating high-conf (" + filepath.Join(skillsDir, "high-conf") + ")",
+		"Ingested high-conf (" + filepath.Join(skillsDir, "high-conf") + ")",
+	} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("expected output to contain %q, got:\n%s", want, output)
+		}
+	}
+	if strings.Contains(output, "Evaluating needs-model") {
+		t.Fatalf("blocked candidate should not be evaluated after preflight:\n%s", output)
+	}
+}
+
+func TestScanAutoIngestPreflightAllBlockedDoesNotMutate(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+
+	skillsDir := filepath.Join(home, ".claude", "skills")
+	writeScanSkill(t, skillsDir, "needs-model", `---
+name: needs-model
+description: Use this skill when reviewing pull requests for security
+exclusive: claude
+---
+
+# needs-model
+
+Requires tool use.
+`)
+
+	args := []string{"--auto-ingest", "--paths=" + skillsDir}
+	var stdout, stderr bytes.Buffer
+	code := runScan(args, &stdout, &stderr, globalFlags{})
+
+	if code != ExitSuccess {
+		t.Fatalf("exit code = %d, want %d; stderr=%s", code, ExitSuccess, stderr.String())
+	}
+	if _, err := os.Stat(filepath.Join(home, "library", "needs-model")); err == nil {
+		t.Fatalf("dependency-blocked skill should not be ingested")
+	}
+
+	output := stdout.String()
+	for _, want := range []string{
+		"Eligible for auto-ingest: 0",
+		"Blocked by missing dependencies: 1",
+		"No eligible candidates remain after dependency preflight.",
+	} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("expected output to contain %q, got:\n%s", want, output)
+		}
+	}
+	if strings.Contains(output, "Evaluating needs-model") {
+		t.Fatalf("blocked candidate should not be evaluated after preflight:\n%s", output)
+	}
+}
+
 func TestScanAutoIngestJSONStdoutClean(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("SKILLS_MANAGER_HOME", home)

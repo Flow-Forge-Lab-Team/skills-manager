@@ -87,6 +87,28 @@ type ingestOutput struct {
 	Notes []string `json:"notes"`
 }
 
+func requirementsFromIngestOutput(out *ingestOutput) requirements {
+	reqs := requirements{Inferred: false}
+	for _, t := range out.Requirements.Tools {
+		reqs.Tools = append(reqs.Tools, toolRequirement{Name: t.Name, Required: t.Required, Check: t.Check})
+	}
+	for _, m := range out.Requirements.MCPServers {
+		reqs.MCPServers = append(reqs.MCPServers, mcpRequirement{Name: m.Name, Required: m.Required, ConfigHint: m.ConfigHint})
+	}
+	for _, c := range out.Requirements.Credentials {
+		reqs.Credentials = append(reqs.Credentials, credentialRequirement{Name: c.Name, Source: c.Source, Required: c.Required})
+	}
+	reqs.Scripts.AllowAutoRun = out.Requirements.Scripts.AllowAutoRun
+	reqs.Scripts.RequiredRuntimes = out.Requirements.Scripts.RequiredRuntimes
+	if tu := out.Requirements.Model.ToolUse; tu != "" {
+		reqs.Model.ToolUse = tu
+	}
+	reqs.Model.MinContextTokens = out.Requirements.Model.MinContextTokens
+	reqs.Model.Reasoning = out.Requirements.Model.Reasoning
+	reqs.Model.Notes = out.Requirements.Model.Notes
+	return reqs
+}
+
 func ingestFromSource(src ingestSource, opts ingestOptions, home string, out io.Writer) ingestResult {
 	result := ingestResult{Origin: map[string]interface{}{}}
 
@@ -225,24 +247,7 @@ func ingestFromSource(src ingestSource, opts ingestOptions, home string, out io.
 		tags = fromOut.Tags
 		confidence = fromOut.Confidence.Categories // primary signal for confirmation/auto flow
 		// Map requirements for auto-missing checks + later meta
-		reqs = requirements{Inferred: false}
-		for _, t := range fromOut.Requirements.Tools {
-			reqs.Tools = append(reqs.Tools, toolRequirement{Name: t.Name, Required: t.Required, Check: t.Check})
-		}
-		for _, m := range fromOut.Requirements.MCPServers {
-			reqs.MCPServers = append(reqs.MCPServers, mcpRequirement{Name: m.Name, Required: m.Required, ConfigHint: m.ConfigHint})
-		}
-		for _, c := range fromOut.Requirements.Credentials {
-			reqs.Credentials = append(reqs.Credentials, credentialRequirement{Name: c.Name, Source: c.Source, Required: c.Required})
-		}
-		reqs.Scripts.AllowAutoRun = fromOut.Requirements.Scripts.AllowAutoRun
-		reqs.Scripts.RequiredRuntimes = fromOut.Requirements.Scripts.RequiredRuntimes
-		if tu := fromOut.Requirements.Model.ToolUse; tu != "" {
-			reqs.Model.ToolUse = tu
-		}
-		reqs.Model.MinContextTokens = fromOut.Requirements.Model.MinContextTokens
-		reqs.Model.Reasoning = fromOut.Requirements.Model.Reasoning
-		reqs.Model.Notes = fromOut.Requirements.Model.Notes
+		reqs = requirementsFromIngestOutput(fromOut)
 		categorizationSource = "ingest-handoff"
 		// compatResults remains nil (handled in meta block using fromOut)
 	} else if opts.auto && llmProviderConfigured(home) {
@@ -266,24 +271,7 @@ func ingestFromSource(src ingestSource, opts ingestOptions, home string, out io.
 		cats = fromOut.Categories
 		tags = fromOut.Tags
 		confidence = fromOut.Confidence.Categories
-		reqs = requirements{Inferred: false}
-		for _, t := range fromOut.Requirements.Tools {
-			reqs.Tools = append(reqs.Tools, toolRequirement{Name: t.Name, Required: t.Required, Check: t.Check})
-		}
-		for _, m := range fromOut.Requirements.MCPServers {
-			reqs.MCPServers = append(reqs.MCPServers, mcpRequirement{Name: m.Name, Required: m.Required, ConfigHint: m.ConfigHint})
-		}
-		for _, c := range fromOut.Requirements.Credentials {
-			reqs.Credentials = append(reqs.Credentials, credentialRequirement{Name: c.Name, Source: c.Source, Required: c.Required})
-		}
-		reqs.Scripts.AllowAutoRun = fromOut.Requirements.Scripts.AllowAutoRun
-		reqs.Scripts.RequiredRuntimes = fromOut.Requirements.Scripts.RequiredRuntimes
-		if tu := fromOut.Requirements.Model.ToolUse; tu != "" {
-			reqs.Model.ToolUse = tu
-		}
-		reqs.Model.MinContextTokens = fromOut.Requirements.Model.MinContextTokens
-		reqs.Model.Reasoning = fromOut.Requirements.Model.Reasoning
-		reqs.Model.Notes = fromOut.Requirements.Model.Notes
+		reqs = requirementsFromIngestOutput(fromOut)
 		categorizationSource = "skills-ingest-provider"
 	} else {
 		detectors, _ := loadDetectors()
