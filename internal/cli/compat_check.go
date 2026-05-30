@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 )
 
 type compatCheckResult struct {
@@ -15,6 +16,34 @@ type compatCheckResult struct {
 	Mode       string `json:"mode"`
 	PromptPath string `json:"prompt_path,omitempty"`
 	Targets    string `json:"targets,omitempty"`
+}
+
+type compatCheckCacheEntry struct {
+	Skill        string           `json:"skill"`
+	Targets      []string         `json:"targets"`
+	Fingerprint  skillFingerprint `json:"fingerprint"`
+	ClassifiedAt string           `json:"classified_at"`
+	Provider     string           `json:"provider,omitempty"`
+	Model        string           `json:"model,omitempty"`
+	Output       json.RawMessage  `json:"output"`
+}
+
+type compatCheckBatchSummary struct {
+	Mode    string                   `json:"mode"`
+	Targets []string                 `json:"targets"`
+	Ran     int                      `json:"ran"`
+	Skipped int                      `json:"skipped"`
+	Stale   int                      `json:"stale"`
+	Failed  int                      `json:"failed"`
+	Results []compatCheckBatchResult `json:"results"`
+}
+
+type compatCheckBatchResult struct {
+	Skill      string `json:"skill"`
+	Status     string `json:"status"`
+	Reason     string `json:"reason,omitempty"`
+	ResultPath string `json:"result_path,omitempty"`
+	Error      string `json:"error,omitempty"`
 }
 
 type compatCheckOutput struct {
@@ -68,9 +97,12 @@ func runCompatCheck(args []string, realStdout io.Writer, stderr io.Writer, gf gl
 	mode := ""
 	fromFile := ""
 	toStr := ""
+	all := false
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
 		switch arg {
+		case "--all":
+			all = true
 		case "--auto", "--handoff":
 			if mode != "" {
 				fmt.Fprintln(stderr, "usage: choose exactly one of --auto, --handoff, or --from <file>")
@@ -108,8 +140,12 @@ func runCompatCheck(args []string, realStdout io.Writer, stderr io.Writer, gf gl
 			skill = arg
 		}
 	}
-	if skill == "" || mode == "" {
-		fmt.Fprintln(stderr, "usage: skills-manager compat-check <skill> [--to <h1,h2,...>] (--auto | --handoff | --from <file>)")
+	if mode == "" || (skill == "" && !all) || (skill != "" && all) {
+		fmt.Fprintln(stderr, "usage: skills-manager compat-check (<skill> | --all) [--to <h1,h2,...>] (--auto | --handoff | --from <file>)")
+		return ExitUsageError
+	}
+	if all && mode != "auto" {
+		fmt.Fprintln(stderr, "usage: skills-manager compat-check --all [--to <h1,h2,...>] --auto")
 		return ExitUsageError
 	}
 	if strings.Contains(skill, "/") || strings.Contains(skill, "\\") || strings.HasPrefix(skill, ".") {
@@ -128,6 +164,7 @@ func runCompatCheck(args []string, realStdout io.Writer, stderr io.Writer, gf gl
 	if len(targets) == 0 {
 		targets = []string{"claude", "codex", "grok", "hermes", "openclaw"}
 	}
+	targets = normalizeCompatCheckTargets(targets)
 
 	home, err := managerHome()
 	if err != nil {
@@ -138,6 +175,9 @@ func runCompatCheck(args []string, realStdout io.Writer, stderr io.Writer, gf gl
 	if err != nil {
 		fmt.Fprintf(stderr, "ensure library: %v\n", err)
 		return ExitOpError
+	}
+	if all {
+		return runCompatCheckBatchAll(home, libraryPath, targets, realStdout, stdout, stderr, gf)
 	}
 	skillMdPath := filepath.Join(libraryPath, skill, "SKILL.md")
 	skillBodyBytes, err := os.ReadFile(skillMdPath)
@@ -183,11 +223,12 @@ func runCompatCheck(args []string, realStdout io.Writer, stderr io.Writer, gf gl
 			fmt.Fprintf(stderr, "assessments: at least one harness required (per schema)\n")
 			return ExitUsageError
 		}
-		for _, t := range targets {
-			if _, ok := parsed.Assessments[t]; !ok {
-				fmt.Fprintf(stderr, "assessments: missing entry for requested target harness %q (per bundled skill contract)\n", t)
-				return ExitUsageError
-			}
+		if err := validateCompatCheckParsed(skill, targets, parsed, "--from output"); err != nil {
+			fmt.Fprintln(stderr, err)
+			return ExitUsageError
+		}
+		if fingerprint, err := skillFingerprintForFile(skillMdPath); err == nil {
+			_ = writeCompatCheckCache(home, skill, targets, fingerprint, parsed, "", "")
 		}
 		return printCompatCheckResult(realStdout, stdout, stderr, gf, parsed, mode)
 	case "auto":
@@ -195,33 +236,121 @@ func runCompatCheck(args []string, realStdout io.Writer, stderr io.Writer, gf gl
 			fmt.Fprintln(stderr, "no LLM provider configured; use --handoff or configure via skills-manager config set")
 			return ExitOpError
 		}
-		output, err := runConfiguredLLMProvider(home, prompt)
+		providerResult, err := runConfiguredLLMProviderWithMetadata(home, prompt)
 		if err != nil {
 			fmt.Fprintf(stderr, "run configured provider: %v\n", err)
 			return ExitOpError
 		}
-		parsed, err := parseCompatCheckOutput([]byte(output), "provider output")
+		parsed, err := parseCompatCheckOutput([]byte(providerResult.Output), "provider output")
 		if err != nil {
 			fmt.Fprintf(stderr, "validate provider output: %v\n", err)
 			return ExitUsageError
 		}
-		if parsed.Skill != skill {
-			fmt.Fprintf(stderr, "skill name mismatch: requested %q but provider output has %q (see schemas/compat-check-output.json)\n", skill, parsed.Skill)
+		if err := validateCompatCheckParsed(skill, targets, parsed, "provider output"); err != nil {
+			fmt.Fprintln(stderr, err)
 			return ExitUsageError
 		}
-		if len(parsed.Assessments) == 0 {
-			fmt.Fprintf(stderr, "assessments: at least one harness required (per schema)\n")
-			return ExitUsageError
-		}
-		for _, t := range targets {
-			if _, ok := parsed.Assessments[t]; !ok {
-				fmt.Fprintf(stderr, "assessments: missing entry for requested target harness %q (per bundled skill contract)\n", t)
-				return ExitUsageError
-			}
+		cfg, _ := loadManagerConfig(home)
+		if fingerprint, err := skillFingerprintForFile(skillMdPath); err == nil {
+			_ = writeCompatCheckCache(home, skill, targets, fingerprint, parsed, cfg.LLM.Provider, cfg.LLM.Model)
 		}
 		return printCompatCheckResult(realStdout, stdout, stderr, gf, parsed, mode)
 	}
 	return ExitUsageError
+}
+
+func runCompatCheckBatchAll(home, libraryPath string, targets []string, realStdout, stdout, stderr io.Writer, gf globalFlags) int {
+	if !llmProviderConfigured(home) {
+		fmt.Fprintln(stderr, "no LLM provider configured; use --handoff or configure via skills-manager config set")
+		return ExitOpError
+	}
+	skills, err := listCompatCheckLibrarySkills(libraryPath)
+	if err != nil {
+		fmt.Fprintf(stderr, "read library: %v\n", err)
+		return ExitOpError
+	}
+	cfg, _ := loadManagerConfig(home)
+	summary := compatCheckBatchSummary{Mode: "auto", Targets: targets}
+	for _, skill := range skills {
+		skillMdPath := filepath.Join(libraryPath, skill, "SKILL.md")
+		fingerprint, fpErr := skillFingerprintForFile(skillMdPath)
+		resultPath := compatCheckCachePath(home, skill)
+		if fpErr != nil {
+			summary.Failed++
+			summary.Results = append(summary.Results, compatCheckBatchResult{Skill: skill, Status: "failed", ResultPath: resultPath, Error: fpErr.Error()})
+			continue
+		}
+		current, reason := readCurrentCompatCheckCache(home, skill, targets, fingerprint)
+		if current {
+			summary.Skipped++
+			summary.Results = append(summary.Results, compatCheckBatchResult{Skill: skill, Status: "skipped", Reason: "current", ResultPath: resultPath})
+			continue
+		}
+		if reason != "missing" {
+			summary.Stale++
+		}
+		skillBodyBytes, err := os.ReadFile(skillMdPath)
+		if err != nil {
+			summary.Failed++
+			summary.Results = append(summary.Results, compatCheckBatchResult{Skill: skill, Status: "failed", Reason: reason, ResultPath: resultPath, Error: err.Error()})
+			continue
+		}
+		prompt, err := buildCompatCheckPrompt(skill, string(skillBodyBytes), targets)
+		if err != nil {
+			summary.Failed++
+			summary.Results = append(summary.Results, compatCheckBatchResult{Skill: skill, Status: "failed", Reason: reason, ResultPath: resultPath, Error: err.Error()})
+			continue
+		}
+		providerResult, err := runConfiguredLLMProviderWithMetadata(home, prompt)
+		if err != nil {
+			summary.Failed++
+			summary.Results = append(summary.Results, compatCheckBatchResult{Skill: skill, Status: "failed", Reason: reason, ResultPath: resultPath, Error: err.Error()})
+			continue
+		}
+		parsed, err := parseCompatCheckOutput([]byte(providerResult.Output), "provider output")
+		if err != nil {
+			summary.Failed++
+			summary.Results = append(summary.Results, compatCheckBatchResult{Skill: skill, Status: "failed", Reason: reason, ResultPath: resultPath, Error: err.Error()})
+			continue
+		}
+		if err := validateCompatCheckParsed(skill, targets, parsed, "provider output"); err != nil {
+			summary.Failed++
+			summary.Results = append(summary.Results, compatCheckBatchResult{Skill: skill, Status: "failed", Reason: reason, ResultPath: resultPath, Error: err.Error()})
+			continue
+		}
+		if err := writeCompatCheckCache(home, skill, targets, fingerprint, parsed, cfg.LLM.Provider, cfg.LLM.Model); err != nil {
+			summary.Failed++
+			summary.Results = append(summary.Results, compatCheckBatchResult{Skill: skill, Status: "failed", Reason: reason, ResultPath: resultPath, Error: err.Error()})
+			continue
+		}
+		summary.Ran++
+		summary.Results = append(summary.Results, compatCheckBatchResult{Skill: skill, Status: "ran", Reason: reason, ResultPath: resultPath})
+	}
+	if gf.JSON {
+		if err := writeJSON(realStdout, summary); err != nil {
+			fmt.Fprintln(stderr, err)
+			return ExitOpError
+		}
+	} else {
+		fmt.Fprintf(stdout, "compat-check --all: ran=%d skipped=%d stale=%d failed=%d\n", summary.Ran, summary.Skipped, summary.Stale, summary.Failed)
+		for _, result := range summary.Results {
+			fmt.Fprintf(stdout, "  %s: %s", result.Skill, result.Status)
+			if result.Reason != "" {
+				fmt.Fprintf(stdout, " (%s)", result.Reason)
+			}
+			if result.ResultPath != "" {
+				fmt.Fprintf(stdout, " %s", result.ResultPath)
+			}
+			if result.Error != "" {
+				fmt.Fprintf(stdout, " error=%s", result.Error)
+			}
+			fmt.Fprintln(stdout)
+		}
+	}
+	if summary.Failed > 0 {
+		return ExitPartial
+	}
+	return ExitSuccess
 }
 
 func writeCompatCheckJSON(realStdout, stderr io.Writer, gf globalFlags, result compatCheckResult) int {
@@ -253,6 +382,125 @@ func buildCompatCheckPrompt(skillName, skillBody string, targets []string) (stri
 
 func writeCompatCheckHandoffPrompt(skill, prompt string) (string, error) {
 	return writeHandoffPrompt(sanitizeFilePart(skill)+"-compat-check-prompt.md", prompt)
+}
+
+func normalizeCompatCheckTargets(targets []string) []string {
+	seen := map[string]bool{}
+	out := make([]string, 0, len(targets))
+	for _, target := range targets {
+		target = strings.TrimSpace(target)
+		if target == "" || seen[target] {
+			continue
+		}
+		seen[target] = true
+		out = append(out, target)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func validateCompatCheckParsed(skill string, targets []string, parsed *compatCheckOutput, sourceLabel string) error {
+	if parsed.Skill != skill {
+		return fmt.Errorf("skill name mismatch: requested %q but %s has %q (see schemas/compat-check-output.json)", skill, sourceLabel, parsed.Skill)
+	}
+	if len(parsed.Assessments) == 0 {
+		return fmt.Errorf("assessments: at least one harness required (per schema)")
+	}
+	for _, t := range targets {
+		if _, ok := parsed.Assessments[t]; !ok {
+			return fmt.Errorf("assessments: missing entry for requested target harness %q (per bundled skill contract)", t)
+		}
+	}
+	return nil
+}
+
+func listCompatCheckLibrarySkills(libraryPath string) ([]string, error) {
+	entries, err := os.ReadDir(libraryPath)
+	if err != nil {
+		return nil, err
+	}
+	var skills []string
+	for _, entry := range entries {
+		if !entry.IsDir() || strings.HasPrefix(entry.Name(), ".") {
+			continue
+		}
+		if _, err := os.Stat(filepath.Join(libraryPath, entry.Name(), "SKILL.md")); err == nil {
+			skills = append(skills, entry.Name())
+		}
+	}
+	sort.Strings(skills)
+	return skills, nil
+}
+
+func compatCheckCachePath(home, skill string) string {
+	return filepath.Join(home, "compat-check", sanitizeFilePart(skill)+".json")
+}
+
+func skillFingerprintForFile(path string) (skillFingerprint, error) {
+	sha, size, err := fingerprintSkillMd(path)
+	if err != nil {
+		return skillFingerprint{}, err
+	}
+	return skillFingerprint{SHA256: sha, Size: size}, nil
+}
+
+func readCurrentCompatCheckCache(home, skill string, targets []string, fingerprint skillFingerprint) (bool, string) {
+	data, err := os.ReadFile(compatCheckCachePath(home, skill))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, "missing"
+		}
+		return false, "unreadable"
+	}
+	var entry compatCheckCacheEntry
+	if err := json.Unmarshal(data, &entry); err != nil {
+		return false, "invalid"
+	}
+	if entry.Skill != skill {
+		return false, "skill-mismatch"
+	}
+	if entry.Fingerprint != fingerprint {
+		return false, "fingerprint-mismatch"
+	}
+	if !stringSlicesEqual(normalizeCompatCheckTargets(entry.Targets), targets) {
+		return false, "target-mismatch"
+	}
+	if len(entry.Output) == 0 {
+		return false, "invalid"
+	}
+	parsed, err := parseCompatCheckOutput(entry.Output, "cached compat-check output")
+	if err != nil {
+		return false, "invalid"
+	}
+	if err := validateCompatCheckParsed(skill, targets, parsed, "cached compat-check output"); err != nil {
+		return false, "invalid"
+	}
+	return true, "current"
+}
+
+func writeCompatCheckCache(home, skill string, targets []string, fingerprint skillFingerprint, parsed *compatCheckOutput, provider, model string) error {
+	output, err := json.Marshal(parsed)
+	if err != nil {
+		return err
+	}
+	entry := compatCheckCacheEntry{
+		Skill:        skill,
+		Targets:      normalizeCompatCheckTargets(targets),
+		Fingerprint:  fingerprint,
+		ClassifiedAt: time.Now().UTC().Format(time.RFC3339Nano),
+		Provider:     provider,
+		Model:        model,
+		Output:       output,
+	}
+	path := compatCheckCachePath(home, skill)
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return err
+	}
+	data, err := json.MarshalIndent(entry, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, append(data, '\n'), 0644)
 }
 
 func requiredKeys(raw map[string]json.RawMessage, schema string, keys ...string) error {
