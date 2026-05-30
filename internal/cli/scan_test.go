@@ -179,6 +179,187 @@ Content here.
 	}
 }
 
+func TestScanAutoIngestReportsPerSkillProgress(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+
+	skillsDir := filepath.Join(home, ".claude", "skills")
+	writeScanSkill(t, skillsDir, "high-conf", `---
+name: high-conf
+description: Use this skill when reviewing pull requests for security
+exclusive: claude
+---
+
+# high-conf
+
+Secure.
+`)
+	writeScanSkill(t, skillsDir, "low-conf", `---
+name: low-conf
+description: Generic skill with no keywords
+---
+
+# low-conf
+
+Content.
+`)
+	writeScanSkill(t, skillsDir, "bad-name", `---
+name: ../bad
+description: Invalid skill name
+---
+
+# bad-name
+
+Invalid.
+`)
+
+	args := []string{"--auto-ingest", "--paths=" + skillsDir}
+	var stdout, stderr bytes.Buffer
+	code := runScan(args, &stdout, &stderr, globalFlags{})
+
+	if code != ExitSuccess {
+		t.Fatalf("exit code = %d, want %d; stderr=%s", code, ExitSuccess, stderr.String())
+	}
+
+	output := stdout.String()
+	for _, want := range []string{
+		"Evaluating high-conf (" + filepath.Join(skillsDir, "high-conf") + ")",
+		"Ingested high-conf (" + filepath.Join(skillsDir, "high-conf") + ")",
+		"Evaluating low-conf (" + filepath.Join(skillsDir, "low-conf") + ")",
+		"Refused low-conf (" + filepath.Join(skillsDir, "low-conf") + "): auto-ingest refused",
+		"Evaluating bad-name (" + filepath.Join(skillsDir, "bad-name") + ")",
+		"Failed ../bad (" + filepath.Join(skillsDir, "bad-name") + "): invalid skill name",
+	} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("expected output to contain %q, got:\n%s", want, output)
+		}
+	}
+}
+
+func TestScanAutoIngestReportsAlreadyKnownSkills(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+
+	skillsDir := filepath.Join(home, ".claude", "skills")
+	skillMd := `---
+name: known
+description: Known skill
+---
+
+# known
+
+Known.
+`
+	skillDir := writeScanSkill(t, skillsDir, "known", skillMd)
+
+	libraryPath, err := ensureLibrary(home)
+	if err != nil {
+		t.Fatalf("ensureLibrary: %v", err)
+	}
+	libraryDir := filepath.Join(libraryPath, "known")
+	if err := os.MkdirAll(libraryDir, 0755); err != nil {
+		t.Fatalf("create library skill dir: %v", err)
+	}
+	librarySkillMd := filepath.Join(libraryDir, "SKILL.md")
+	if err := os.WriteFile(librarySkillMd, []byte(skillMd), 0644); err != nil {
+		t.Fatalf("write library SKILL.md: %v", err)
+	}
+	fp, size, err := fingerprintSkillMd(librarySkillMd)
+	if err != nil {
+		t.Fatalf("fingerprint library SKILL.md: %v", err)
+	}
+	if err := writeSkillMeta(filepath.Join(libraryDir, ".skill-meta.yaml"), skillMeta{
+		Version: 1,
+		Fingerprint: skillFingerprint{
+			SHA256: fp,
+			Size:   size,
+		},
+	}); err != nil {
+		t.Fatalf("write skill meta: %v", err)
+	}
+
+	args := []string{"--auto-ingest", "--paths=" + skillsDir}
+	var stdout, stderr bytes.Buffer
+	code := runScan(args, &stdout, &stderr, globalFlags{})
+
+	if code != ExitSuccess {
+		t.Fatalf("exit code = %d, want %d; stderr=%s", code, ExitSuccess, stderr.String())
+	}
+	want := "Already known: known (" + skillDir + ") - in library"
+	if !strings.Contains(stdout.String(), want) {
+		t.Fatalf("expected already-known progress %q, got:\n%s", want, stdout.String())
+	}
+}
+
+func TestScanAutoIngestJSONStdoutClean(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+
+	skillsDir := filepath.Join(home, ".claude", "skills")
+	writeScanSkill(t, skillsDir, "high-conf", `---
+name: high-conf
+description: Use this skill when reviewing pull requests for security
+exclusive: claude
+---
+
+# high-conf
+
+Secure.
+`)
+
+	args := []string{"--json", "scan", "--auto-ingest", "--paths=" + skillsDir}
+	var stdout, stderr bytes.Buffer
+	code := Run(args, &stdout, &stderr)
+
+	if code != ExitSuccess {
+		t.Fatalf("exit code = %d, want %d; stderr=%s", code, ExitSuccess, stderr.String())
+	}
+
+	var results []scanResult
+	if err := json.Unmarshal(stdout.Bytes(), &results); err != nil {
+		t.Fatalf("stdout is not clean JSON: %v\nstdout:\n%s", err, stdout.String())
+	}
+	if len(results) != 1 || results[0].Name != "high-conf" {
+		t.Fatalf("unexpected JSON results: %+v", results)
+	}
+}
+
+func TestScanIngestOutcomeClassifiesProviderFailures(t *testing.T) {
+	for _, reason := range []string{
+		"provider ingest failed: exit status 1",
+		"parse JSON from provider output: invalid character",
+		"categories: at least 1 required",
+		"invalid category \"Other\" (must be one of the 10 official categories)",
+		"compatibility.mode must be portable|compatible|exclusive (got \"\")",
+	} {
+		result := ingestResult{
+			Skipped: true,
+			Reason:  reason,
+		}
+		if got := scanIngestOutcome(result); got != "Failed" {
+			t.Fatalf("scanIngestOutcome(%q) = %q, want Failed", reason, got)
+		}
+	}
+}
+
+func TestScanIngestOutcomeKeepsIntentionalSkips(t *testing.T) {
+	for _, reason := range []string{
+		"duplicate fingerprint",
+		"declined",
+		"declined (no input)",
+		"edit requested",
+		"ingest requires confirmation; rerun with --auto (high-confidence cases) or --yes (accept suggestions)",
+	} {
+		result := ingestResult{
+			Skipped: true,
+			Reason:  reason,
+		}
+		if got := scanIngestOutcome(result); got != "Skipped" {
+			t.Fatalf("scanIngestOutcome(%q) = %q, want Skipped", reason, got)
+		}
+	}
+}
+
 func TestScanMatchesByFingerprint(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("SKILLS_MANAGER_HOME", home)
@@ -256,6 +437,19 @@ Library content.
 	if !strings.Contains(output, "in library") {
 		t.Errorf("expected 'in library' status for bar (matched by fingerprint), got: %s", output)
 	}
+}
+
+func writeScanSkill(t *testing.T, skillsDir, name, skillMd string) string {
+	t.Helper()
+
+	skillDir := filepath.Join(skillsDir, name)
+	if err := os.MkdirAll(skillDir, 0755); err != nil {
+		t.Fatalf("create %s dir: %v", name, err)
+	}
+	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte(skillMd), 0644); err != nil {
+		t.Fatalf("write %s SKILL.md: %v", name, err)
+	}
+	return skillDir
 }
 
 func TestScanJSONOutput(t *testing.T) {

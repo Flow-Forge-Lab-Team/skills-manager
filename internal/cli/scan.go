@@ -177,6 +177,7 @@ func runScan(args []string, stdout io.Writer, stderr io.Writer, gf globalFlags) 
 
 		for _, r := range results {
 			if r.Status != "unregistered" {
+				fmt.Fprintf(humanOut, "Already known: %s (%s) - %s\n", r.Name, r.Path, r.Status)
 				continue
 			}
 
@@ -199,25 +200,46 @@ func runScan(args []string, stdout io.Writer, stderr io.Writer, gf globalFlags) 
 				}
 				response = strings.ToLower(strings.TrimSpace(response))
 				if response == "n" {
-					fmt.Fprintf(humanOut, "Skipped %s\n", r.Name)
+					fmt.Fprintf(humanOut, "Skipped %s (%s)\n", r.Name, r.Path)
 					continue
 				}
 				if response == "s" {
 					// Skip forever
 					_ = appendScanIgnore(home, r.Path)
-					fmt.Fprintf(humanOut, "Skipped forever: %s\n", r.Name)
+					fmt.Fprintf(humanOut, "Skipped forever: %s (%s)\n", r.Name, r.Path)
 					continue
 				}
+				fmt.Fprintf(humanOut, "Accepted %s (%s)\n", r.Name, r.Path)
+			} else if autoIngest {
+				fmt.Fprintf(humanOut, "Evaluating %s (%s)\n", r.Name, r.Path)
+			} else {
+				fmt.Fprintf(humanOut, "Skipping %s (%s): ingest requires interactive confirmation; use --auto-ingest for high-confidence cases\n", r.Name, r.Path)
+				continue
 			}
 
 			result := ingestFromSource(src, opts, home, humanOut)
-			if !result.Skipped {
-				fmt.Fprintf(humanOut, "Ingested %s\n", result.Name)
+			if result.Skipped {
+				fmt.Fprintf(humanOut, "%s %s (%s): %s\n", scanIngestOutcome(result), result.Name, r.Path, result.Reason)
+			} else {
+				fmt.Fprintf(humanOut, "Ingested %s (%s)\n", result.Name, r.Path)
 			}
 		}
 	}
 
 	return ExitSuccess
+}
+
+func scanIngestOutcome(result ingestResult) string {
+	if strings.HasPrefix(result.Reason, "auto-ingest refused:") {
+		return "Refused"
+	}
+	if result.Reason == "duplicate fingerprint" ||
+		strings.HasPrefix(result.Reason, "declined") ||
+		result.Reason == "edit requested" ||
+		strings.HasPrefix(result.Reason, "ingest requires confirmation") {
+		return "Skipped"
+	}
+	return "Failed"
 }
 
 func guessOrigin(skillPath string) string {
