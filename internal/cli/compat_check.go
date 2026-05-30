@@ -24,6 +24,7 @@ type compatCheckCacheEntry struct {
 	Skill        string           `json:"skill"`
 	Targets      []string         `json:"targets"`
 	Fingerprint  skillFingerprint `json:"fingerprint"`
+	PromptSHA256 string           `json:"prompt_sha256"`
 	ClassifiedAt string           `json:"classified_at"`
 	Provider     string           `json:"provider,omitempty"`
 	Model        string           `json:"model,omitempty"`
@@ -217,20 +218,14 @@ func runCompatCheck(args []string, realStdout io.Writer, stderr io.Writer, gf gl
 			fmt.Fprintf(stderr, "validate compat-check output: %v\n", err)
 			return ExitUsageError
 		}
-		if parsed.Skill != skill {
-			fmt.Fprintf(stderr, "skill name mismatch: requested %q but --from output has %q (see schemas/compat-check-output.json)\n", skill, parsed.Skill)
-			return ExitUsageError
-		}
-		if len(parsed.Assessments) == 0 {
-			fmt.Fprintf(stderr, "assessments: at least one harness required (per schema)\n")
-			return ExitUsageError
-		}
 		if err := validateCompatCheckParsed(skill, targets, parsed, "--from output"); err != nil {
 			fmt.Fprintln(stderr, err)
 			return ExitUsageError
 		}
 		if fingerprint, err := skillFingerprintForFile(skillMdPath); err == nil {
-			_ = writeCompatCheckCache(home, skill, targets, fingerprint, parsed, "", "")
+			if err := writeCompatCheckCache(home, skill, targets, fingerprint, parsed, "", ""); err != nil {
+				fmt.Fprintf(stderr, "write compat-check cache for %s: %v\n", skill, err)
+			}
 		}
 		return printCompatCheckResult(realStdout, stdout, stderr, gf, parsed, mode)
 	case "auto":
@@ -254,7 +249,9 @@ func runCompatCheck(args []string, realStdout io.Writer, stderr io.Writer, gf gl
 		}
 		cfg, _ := loadManagerConfig(home)
 		if fingerprint, err := skillFingerprintForFile(skillMdPath); err == nil {
-			_ = writeCompatCheckCache(home, skill, targets, fingerprint, parsed, cfg.LLM.Provider, cfg.LLM.Model)
+			if err := writeCompatCheckCache(home, skill, targets, fingerprint, parsed, cfg.LLM.Provider, cfg.LLM.Model); err != nil {
+				fmt.Fprintf(stderr, "write compat-check cache for %s: %v\n", skill, err)
+			}
 		}
 		return printCompatCheckResult(realStdout, stdout, stderr, gf, parsed, mode)
 	}
@@ -271,8 +268,12 @@ func runCompatCheckBatchAll(home, libraryPath string, targets []string, realStdo
 		fmt.Fprintf(stderr, "read library: %v\n", err)
 		return ExitOpError
 	}
-	cfg, _ := loadManagerConfig(home)
-	summary := compatCheckBatchSummary{Mode: "auto", Targets: targets}
+	cfg, err := loadManagerConfig(home)
+	if err != nil {
+		fmt.Fprintf(stderr, "read config: %v\n", err)
+		return ExitOpError
+	}
+	summary := compatCheckBatchSummary{Mode: "auto", Targets: targets, Results: []compatCheckBatchResult{}}
 	for _, skill := range skills {
 		skillMdPath := filepath.Join(libraryPath, skill, "SKILL.md")
 		fingerprint, fpErr := skillFingerprintForFile(skillMdPath)
@@ -368,13 +369,7 @@ func writeCompatCheckJSON(realStdout, stderr io.Writer, gf globalFlags, result c
 func buildCompatCheckPrompt(skillName, skillBody string, targets []string) (string, error) {
 	targetList := strings.Join(targets, ",")
 	var b strings.Builder
-	if bundled := readBundledSkillMarkdown("skills-compat-check"); bundled != "" {
-		b.WriteString(bundled)
-		b.WriteString("\n\n")
-	} else {
-		// minimal fallback (bundled preferred after embed)
-		b.WriteString("You are performing a skills-compat-check. Output strict JSON per schema.\n\n")
-	}
+	b.WriteString(compatCheckPromptPrefix())
 	fmt.Fprintf(&b, "# skills-manager compat-check handoff for %s\n\n", skillName)
 	fmt.Fprintf(&b, "**Targets:** %s\n\n", targetList)
 	fmt.Fprintf(&b, "Analyze the SKILL.md that follows. Output the JSON now.\n\n")
@@ -384,6 +379,19 @@ func buildCompatCheckPrompt(skillName, skillBody string, targets []string) (stri
 
 func writeCompatCheckHandoffPrompt(skill, prompt string) (string, error) {
 	return writeHandoffPrompt(sanitizeFilePart(skill)+"-compat-check-prompt.md", prompt)
+}
+
+func compatCheckPromptPrefix() string {
+	if bundled := readBundledSkillMarkdown("skills-compat-check"); bundled != "" {
+		return bundled + "\n\n"
+	}
+	// Minimal fallback (bundled preferred after embed).
+	return "You are performing a skills-compat-check. Output strict JSON per schema.\n\n"
+}
+
+func compatCheckPromptSHA256() string {
+	sum := sha256.Sum256([]byte(compatCheckPromptPrefix()))
+	return hex.EncodeToString(sum[:])
 }
 
 func normalizeCompatCheckTargets(targets []string) []string {
@@ -465,14 +473,19 @@ func readCurrentCompatCheckCache(home, skill string, targets []string, fingerpri
 	if entry.Fingerprint != fingerprint {
 		return false, "fingerprint-mismatch"
 	}
+	if entry.PromptSHA256 != compatCheckPromptSHA256() {
+		return false, "prompt-mismatch"
+	}
 	if !stringSlicesEqual(normalizeCompatCheckTargets(entry.Targets), targets) {
 		return false, "target-mismatch"
 	}
-	if entry.Provider != llm.Provider {
-		return false, "provider-mismatch"
-	}
-	if entry.Model != llm.Model {
-		return false, "model-mismatch"
+	if entry.Provider != "" || entry.Model != "" {
+		if entry.Provider != llm.Provider {
+			return false, "provider-mismatch"
+		}
+		if entry.Model != llm.Model {
+			return false, "model-mismatch"
+		}
 	}
 	if len(entry.Output) == 0 {
 		return false, "invalid"
@@ -496,6 +509,7 @@ func writeCompatCheckCache(home, skill string, targets []string, fingerprint ski
 		Skill:        skill,
 		Targets:      normalizeCompatCheckTargets(targets),
 		Fingerprint:  fingerprint,
+		PromptSHA256: compatCheckPromptSHA256(),
 		ClassifiedAt: time.Now().UTC().Format(time.RFC3339Nano),
 		Provider:     provider,
 		Model:        model,

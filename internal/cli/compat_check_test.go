@@ -86,7 +86,7 @@ func TestCompatCheckAllRerunsWhenSkillFingerprintChanges(t *testing.T) {
 	if err := json.Unmarshal(data, &entry); err != nil {
 		t.Fatal(err)
 	}
-	if entry.Provider != "codex-cli" || entry.Model != "gpt-5.5" || entry.Fingerprint.SHA256 == "" || entry.Fingerprint.Size == 0 {
+	if entry.Provider != "codex-cli" || entry.Model != "gpt-5.5" || entry.Fingerprint.SHA256 == "" || entry.Fingerprint.Size == 0 || entry.PromptSHA256 == "" {
 		t.Fatalf("cache metadata = %+v", entry)
 	}
 }
@@ -120,6 +120,100 @@ func TestCompatCheckAllRerunsWhenModelChanges(t *testing.T) {
 	}
 	if summary.Ran != 1 || summary.Skipped != 0 || summary.Stale != 1 || summary.Results[0].Reason != "model-mismatch" {
 		t.Fatalf("summary = %+v", summary)
+	}
+	var entry compatCheckCacheEntry
+	data, err := os.ReadFile(compatCheckCachePath(home, "alpha"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(data, &entry); err != nil {
+		t.Fatal(err)
+	}
+	if entry.Model != "gpt-5.6" {
+		t.Fatalf("cache model = %q, want gpt-5.6", entry.Model)
+	}
+}
+
+func TestCompatCheckAllSkipsFromCacheWithoutProviderMetadata(t *testing.T) {
+	home := setupCompatCheckBatchHome(t)
+	writeFile(t, filepath.Join(home, "library", "alpha", "SKILL.md"), "---\nname: alpha\n---\n# alpha\n")
+	fromPath := filepath.Join(home, "alpha-output.json")
+	writeFile(t, fromPath, validCompatCheckProviderJSON("alpha", "codex"))
+
+	var fromStdout bytes.Buffer
+	var fromStderr bytes.Buffer
+	code := Run([]string{"compat-check", "alpha", "--to", "codex", "--from", fromPath}, &fromStdout, &fromStderr)
+	if code != ExitSuccess {
+		t.Fatalf("--from returned %d\nstdout:\n%s\nstderr:\n%s", code, fromStdout.String(), fromStderr.String())
+	}
+
+	oldRunner := llmCommandRunner
+	t.Cleanup(func() { llmCommandRunner = oldRunner })
+	llmCommandRunner = func(time.Duration, string, []string, string) (string, error) {
+		t.Fatal("provider should not run for current --from cache")
+		return "", nil
+	}
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code = Run([]string{"--json", "compat-check", "--all", "--to", "codex", "--auto"}, &stdout, &stderr)
+	if code != ExitSuccess {
+		t.Fatalf("--all returned %d\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+	}
+	var summary compatCheckBatchSummary
+	if err := json.Unmarshal(stdout.Bytes(), &summary); err != nil {
+		t.Fatalf("parse json summary: %v\n%s", err, stdout.String())
+	}
+	if summary.Ran != 0 || summary.Skipped != 1 || summary.Stale != 0 || summary.Results[0].Reason != "current" {
+		t.Fatalf("summary = %+v", summary)
+	}
+}
+
+func TestCompatCheckAllRerunsWhenPromptChanges(t *testing.T) {
+	home := setupCompatCheckBatchHome(t)
+	writeFile(t, filepath.Join(home, "library", "alpha", "SKILL.md"), "---\nname: alpha\n---\n# alpha\n")
+	cacheCompatCheckResult(t, home, "alpha", []string{"codex"})
+	mutateCompatCheckCache(t, home, "alpha", func(entry *compatCheckCacheEntry) {
+		entry.PromptSHA256 = "old-prompt"
+	})
+
+	oldRunner := llmCommandRunner
+	t.Cleanup(func() { llmCommandRunner = oldRunner })
+	calls := 0
+	llmCommandRunner = func(_ time.Duration, _ string, _ []string, _ string) (string, error) {
+		calls++
+		return validCompatCheckProviderJSON("alpha", "codex"), nil
+	}
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := Run([]string{"--json", "compat-check", "--all", "--to", "codex", "--auto"}, &stdout, &stderr)
+	if code != ExitSuccess {
+		t.Fatalf("Run returned %d\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+	}
+	var summary compatCheckBatchSummary
+	if err := json.Unmarshal(stdout.Bytes(), &summary); err != nil {
+		t.Fatalf("parse json summary: %v\n%s", err, stdout.String())
+	}
+	if calls != 1 || summary.Ran != 1 || summary.Stale != 1 || summary.Results[0].Reason != "prompt-mismatch" {
+		t.Fatalf("calls=%d summary=%+v", calls, summary)
+	}
+}
+
+func TestCompatCheckAllReportsHumanSummary(t *testing.T) {
+	home := setupCompatCheckBatchHome(t)
+	writeFile(t, filepath.Join(home, "library", "alpha", "SKILL.md"), "---\nname: alpha\n---\n# alpha\n")
+	cacheCompatCheckResult(t, home, "alpha", []string{"codex"})
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := Run([]string{"compat-check", "--all", "--to", "codex", "--auto"}, &stdout, &stderr)
+	if code != ExitSuccess {
+		t.Fatalf("Run returned %d\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "compat-check --all: ran=0 skipped=1 stale=0 failed=0") ||
+		!strings.Contains(stdout.String(), "alpha: skipped (current)") {
+		t.Fatalf("stdout = %q", stdout.String())
 	}
 }
 
@@ -189,6 +283,27 @@ func cacheCompatCheckResult(t *testing.T, home, skill string, targets []string) 
 		t.Fatal(err)
 	}
 	if err := writeCompatCheckCache(home, skill, targets, fingerprint, parsed, "codex-cli", "gpt-5.5"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func mutateCompatCheckCache(t *testing.T, home, skill string, mutate func(*compatCheckCacheEntry)) {
+	t.Helper()
+	path := compatCheckCachePath(home, skill)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var entry compatCheckCacheEntry
+	if err := json.Unmarshal(data, &entry); err != nil {
+		t.Fatal(err)
+	}
+	mutate(&entry)
+	data, err = json.MarshalIndent(entry, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, append(data, '\n'), 0644); err != nil {
 		t.Fatal(err)
 	}
 }
