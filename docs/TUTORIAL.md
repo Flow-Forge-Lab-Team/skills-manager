@@ -144,7 +144,7 @@ The lock file records the desired skill set:
 
 ```text
 version: 1
-generated_by: skills-manager 0.1.0-dev
+generated_by: skills-manager 0.1.0
 skills:
   - name: hello-skill
     harnesses:
