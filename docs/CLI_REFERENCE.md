@@ -171,6 +171,23 @@ skills-manager match --explain           # show why each skill matches or doesn'
 skills-manager match --suggest           # only show not-yet-installed candidates
 ```
 
+### `skills-manager cleanup`
+
+Analyze the canonical ingested skill library for duplicate, similar, or
+confusingly overlapping skills. This is advisory only; it does not archive,
+merge, delete, or rewrite skill files.
+
+```
+skills-manager cleanup --auto            # call configured LLM provider
+skills-manager cleanup --handoff         # write prompt file for an external agent
+skills-manager cleanup --from <file>     # validate and print saved recommendations
+skills-manager cleanup --from <file> --json
+```
+
+Recommendations may propose `keep_as_is`, `archive`, `merge`, or
+`rename_split`, with reasoning and confidence for each group. `dedupe` is an
+alias for `cleanup`.
+
 ### `skills-manager projects`
 
 List projects this manager has touched.
@@ -463,4 +480,4 @@ Added in v0.2: `summarize`, `ingest`, `setup-schedule`, `unschedule`, `sync-libr
 
 Added in v0.3: `serve`, `watch` (plus UI integration commands)
 
-Added in v1.0: `port`
+Added in v1.0: `port`, `cleanup`
