@@ -318,8 +318,8 @@ func setConfigValue(cfg *managerConfig, key, value string) error {
 		cfg.Mode = value
 	case "llm.provider":
 		provider := strings.ToLower(value)
-		if provider != "anthropic" && provider != "openai" {
-			return fmt.Errorf("llm.provider must be anthropic or openai")
+		if !supportedLLMProvider(provider) {
+			return fmt.Errorf("llm.provider must be anthropic, openai, codex-cli, or cursor-cli")
 		}
 		cfg.LLM.Provider = provider
 	case "llm.api_key-env":
@@ -366,7 +366,26 @@ func canonicalConfigKey(key string) string {
 
 func llmProviderConfigured(home string) bool {
 	cfg, err := loadManagerConfig(home)
-	return err == nil && cfg.LLM.Provider != "" && cfg.LLM.APIKeyEnv != "" && cfg.LLM.Model != ""
+	if err != nil || cfg.LLM.Provider == "" {
+		return false
+	}
+	if cliLLMProvider(cfg.LLM.Provider) {
+		return true
+	}
+	return cfg.LLM.APIKeyEnv != "" && cfg.LLM.Model != ""
+}
+
+func supportedLLMProvider(provider string) bool {
+	switch provider {
+	case "anthropic", "openai", "codex-cli", "cursor-cli":
+		return true
+	default:
+		return false
+	}
+}
+
+func cliLLMProvider(provider string) bool {
+	return provider == "codex-cli" || provider == "cursor-cli"
 }
 
 func recordLLMUsage(home string, usage llmUsage) error {

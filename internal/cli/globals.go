@@ -320,7 +320,7 @@ Forms:
 Configure local, opt-in manager behavior.
 
 Forms:
-  config set llm.provider anthropic|openai
+  config set llm.provider anthropic|openai|codex-cli|cursor-cli
   config set llm.api_key-env <ENV_VAR_NAME>
   config set llm.model <model-id>
   config get <key>

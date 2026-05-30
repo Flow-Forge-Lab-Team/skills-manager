@@ -488,8 +488,8 @@ func (s *serveServer) applySettings(body triageSettingsUpdate) error {
 	}
 	if body.LLMProvider != nil {
 		provider := strings.ToLower(strings.TrimSpace(*body.LLMProvider))
-		if provider != "" && provider != "anthropic" && provider != "openai" {
-			return fmt.Errorf("llm.provider must be anthropic or openai")
+		if provider != "" && !supportedLLMProvider(provider) {
+			return fmt.Errorf("llm.provider must be anthropic, openai, codex-cli, or cursor-cli")
 		}
 		cfg.LLM.Provider = provider
 	}

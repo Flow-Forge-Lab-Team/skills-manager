@@ -40,8 +40,10 @@ skills-manager check --non-interactive --quiet --json &&
 skills-manager summarize --pending --auto --non-interactive
 ```
 
-This is useful only when `llm.provider` and a credential source such as
-`llm.api_key-env` are configured.
+This is useful only when `llm.provider` is configured. Direct API providers
+also need `llm.api_key-env`; CLI providers use the user's existing local CLI
+authentication, and the Cursor CLI provider runs headlessly with `--trust` in
+ask mode.
 
 ## Setup wizard
 
