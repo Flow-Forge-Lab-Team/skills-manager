@@ -26,6 +26,7 @@ type ingestOptions struct {
 	interactive bool   // false when --json, --quiet, or not a TTY
 	handoff     bool   // --handoff: write prompt file for manual LLM/agent run of skills-ingest
 	from        string // --from <file>: use JSON from handoff instead of local detectors
+	precomputed *ingestPrecomputed
 }
 
 type ingestResult struct {
@@ -38,6 +39,16 @@ type ingestResult struct {
 	Tags        []string               `json:"tags,omitempty"`
 	Confidence  string                 `json:"confidence,omitempty"`
 	Origin      map[string]interface{} `json:"origin,omitempty"`
+}
+
+type ingestPrecomputed struct {
+	Categories           []string
+	Tags                 []string
+	Confidence           string
+	CompatibilityResults map[string]detectionResult
+	Requirements         requirements
+	FromOutput           *ingestOutput
+	CategorizationSource string
 }
 
 // ingestOutput mirrors the shape produced by the skills-ingest bundled skill (and its schema).
@@ -212,7 +223,18 @@ func ingestFromSource(src ingestSource, opts ingestOptions, home string, out io.
 	var fromOut *ingestOutput
 	categorizationSource := "ingest"
 
-	if opts.handoff {
+	if opts.precomputed != nil {
+		cats = append([]string(nil), opts.precomputed.Categories...)
+		tags = append([]string(nil), opts.precomputed.Tags...)
+		confidence = opts.precomputed.Confidence
+		compatResults = opts.precomputed.CompatibilityResults
+		reqs = opts.precomputed.Requirements
+		fromOut = opts.precomputed.FromOutput
+		categorizationSource = opts.precomputed.CategorizationSource
+		if categorizationSource == "" {
+			categorizationSource = "ingest"
+		}
+	} else if opts.handoff {
 		promptPath, err := writeIngestHandoffPrompt(decl.name, src.label, src.raw, skillBodyStr)
 		if err != nil {
 			return ingestResult{

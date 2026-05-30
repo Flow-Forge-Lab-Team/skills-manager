@@ -26,10 +26,11 @@ type scanMissingDependencies struct {
 }
 
 type scanAutoIngestCandidate struct {
-	Result     scanResult
-	SkillName  string
-	Confidence string
-	Missing    scanMissingDependencies
+	Result      scanResult
+	SkillName   string
+	Confidence  string
+	Missing     scanMissingDependencies
+	Precomputed *ingestPrecomputed
 }
 
 func runScan(args []string, stdout io.Writer, stderr io.Writer, gf globalFlags) int {
@@ -197,9 +198,7 @@ func runScan(args []string, stdout io.Writer, stderr io.Writer, gf globalFlags) 
 			preflight := buildScanAutoIngestPreflight(results, opts, home)
 			printScanAutoIngestPreflight(humanOut, preflight, len(results)+ignoredCount, ignoredCount)
 			for _, candidate := range preflight {
-				if candidate.Missing.any() {
-					blockedAutoIngest[candidate.Result.Path] = candidate
-				}
+				blockedAutoIngest[candidate.Result.Path] = candidate
 			}
 		}
 
@@ -209,7 +208,8 @@ func runScan(args []string, stdout io.Writer, stderr io.Writer, gf globalFlags) 
 				continue
 			}
 
-			if candidate, ok := blockedAutoIngest[r.Path]; ok {
+			candidate, hasPreflight := blockedAutoIngest[r.Path]
+			if hasPreflight && candidate.Missing.any() {
 				fmt.Fprintf(humanOut, "Blocked %s (%s): missing required dependencies (%s)\n", candidate.displayName(), r.Path, candidate.Missing.inline())
 				continue
 			}
@@ -250,7 +250,11 @@ func runScan(args []string, stdout io.Writer, stderr io.Writer, gf globalFlags) 
 				continue
 			}
 
-			result := ingestFromSource(src, opts, home, humanOut)
+			ingestOpts := opts
+			if hasPreflight {
+				ingestOpts.precomputed = candidate.Precomputed
+			}
+			result := ingestFromSource(src, ingestOpts, home, humanOut)
 			if result.Skipped {
 				fmt.Fprintf(humanOut, "%s %s (%s): %s\n", scanIngestOutcome(result), result.Name, r.Path, result.Reason)
 			} else {
@@ -298,28 +302,44 @@ func analyzeScanAutoIngestCandidate(result scanResult, src ingestSource, opts in
 
 	var confidence string
 	var reqs requirements
+	var cats, tags []string
+	var compatResults map[string]detectionResult
+	var fromOut *ingestOutput
+	categorizationSource := "ingest"
 	if opts.auto && llmProviderConfigured(home) {
 		prompt := buildIngestPrompt(decl.name, src.label, src.raw, skillBodyStr)
 		output, err := runConfiguredLLMProvider(home, prompt)
 		if err != nil {
 			return candidate
 		}
-		fromOut, err := parseIngestOutput([]byte(output), "provider output")
+		fromOut, err = parseIngestOutput([]byte(output), "provider output")
 		if err != nil {
 			return candidate
 		}
+		cats = fromOut.Categories
+		tags = fromOut.Tags
 		confidence = fromOut.Confidence.Categories
 		reqs = requirementsFromIngestOutput(fromOut)
+		categorizationSource = "skills-ingest-provider"
 	} else {
 		detectors, _ := loadDetectors()
-		compatResults := detectCompatibility(detectors, skillBodyStr)
-		cats, _, _ := suggestCategories(decl.name, decl.description)
+		compatResults = detectCompatibility(detectors, skillBodyStr)
+		cats, tags, _ = suggestCategories(decl.name, decl.description)
 		confidence = computeConfidence(decl, compatResults, cats)
 		reqs = inferRequirements(detectors, skillBodyStr)
 	}
 
 	candidate.Confidence = confidence
 	candidate.Missing = missingDependenciesForRequirements(reqs)
+	candidate.Precomputed = &ingestPrecomputed{
+		Categories:           cats,
+		Tags:                 tags,
+		Confidence:           confidence,
+		CompatibilityResults: compatResults,
+		Requirements:         reqs,
+		FromOutput:           fromOut,
+		CategorizationSource: categorizationSource,
+	}
 	return candidate
 }
 

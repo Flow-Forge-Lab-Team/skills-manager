@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestScanReportsUnregistered(t *testing.T) {
@@ -407,6 +408,58 @@ Requires tool use.
 	}
 	if strings.Contains(output, "Evaluating needs-model") {
 		t.Fatalf("blocked candidate should not be evaluated after preflight:\n%s", output)
+	}
+}
+
+func TestScanAutoIngestPreflightReusesProviderClassification(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+	writeFile(t, filepath.Join(home, "config.yaml"), "version: 1\nllm:\n  provider: \"codex-cli\"\n  model: \"gpt-5.5\"\n")
+
+	oldRunner := llmCommandRunner
+	t.Cleanup(func() { llmCommandRunner = oldRunner })
+	calls := 0
+	llmCommandRunner = func(_ time.Duration, name string, args []string, stdin string) (string, error) {
+		calls++
+		if name != "codex" {
+			t.Fatalf("provider command = %q, want codex", name)
+		}
+		if !strings.Contains(stdin, "Target skill SKILL.md to categorize") || !strings.Contains(stdin, "provider-skill") {
+			t.Fatalf("provider prompt missing skill content:\n%s", stdin)
+		}
+		return `{
+  "categories": ["Quality"],
+  "tags": ["review"],
+  "compatibility": {"mode": "exclusive", "harness": "claude", "reason": "provider classified"},
+  "requirements": {"model": {"tool_use": "none"}, "tools": [], "mcp_servers": [], "credentials": [], "scripts": {}},
+  "confidence": {"categories": "high", "tags": "high", "compatibility": "high", "requirements": "high"},
+  "notes": []
+}`, nil
+	}
+
+	skillsDir := filepath.Join(home, ".claude", "skills")
+	writeScanSkill(t, skillsDir, "provider-skill", `---
+name: provider-skill
+description: Generic provider-classified skill
+---
+
+# provider-skill
+
+Provider decides confidence.
+`)
+
+	args := []string{"--auto-ingest", "--paths=" + skillsDir}
+	var stdout, stderr bytes.Buffer
+	code := runScan(args, &stdout, &stderr, globalFlags{})
+
+	if code != ExitSuccess {
+		t.Fatalf("exit code = %d, want %d; stdout=%s stderr=%s", code, ExitSuccess, stdout.String(), stderr.String())
+	}
+	if calls != 1 {
+		t.Fatalf("provider calls = %d, want 1", calls)
+	}
+	if _, err := os.Stat(filepath.Join(home, "library", "provider-skill")); err != nil {
+		t.Fatalf("provider-classified skill was not ingested: %v\nstdout:\n%s", err, stdout.String())
 	}
 }
 
