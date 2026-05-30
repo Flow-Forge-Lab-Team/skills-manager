@@ -920,7 +920,7 @@ async function renderSettings(content) {
   form.appendChild(field("Install mode", modeSel));
 
   const provSel = el("select", null, []);
-  ["", "anthropic", "openai"].forEach((p) => provSel.appendChild(el("option", { value: p, text: p || "(none)" })));
+  ["", "anthropic", "openai", "codex-cli", "cursor-cli"].forEach((p) => provSel.appendChild(el("option", { value: p, text: p || "(none)" })));
   provSel.value = draft.llm_provider;
   provSel.addEventListener("change", () => { draft.llm_provider = provSel.value; });
   form.appendChild(field("LLM provider", provSel));

@@ -232,7 +232,10 @@ skills-manager summarize pdf --from <file>   # apply the agent's saved output
 ```
 
 Raw diff and safety flags remain visible even when a summary exists.
-`--auto` requires `llm.provider`, `llm.api_key-env`, and `llm.model` to be set.
+`--auto` requires `llm.provider`; direct API providers also require
+`llm.api_key-env` and `llm.model`. CLI providers (`codex-cli`, `cursor-cli`)
+use the user's existing local CLI authentication. The Cursor CLI provider runs
+headlessly with `--trust` in ask mode.
 
 ## Status and inspection
 
@@ -385,6 +388,8 @@ skills-manager config set mode symlink
 skills-manager config set llm.provider anthropic
 skills-manager config set llm.api_key-env ANTHROPIC_API_KEY
 skills-manager config set llm.model claude-3-5-haiku-latest
+skills-manager config set llm.provider codex-cli
+skills-manager config set llm.provider cursor-cli
 ```
 
 ### `skills-manager config show`

@@ -53,6 +53,20 @@ func TestConfigSetGetAndShowLLM(t *testing.T) {
 	}
 }
 
+func TestConfigAcceptsCLIProviders(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+
+	for _, provider := range []string{"codex-cli", "cursor-cli"} {
+		var stdout bytes.Buffer
+		var stderr bytes.Buffer
+		code := Run([]string{"config", "set", "llm.provider", provider}, &stdout, &stderr)
+		if code != ExitSuccess {
+			t.Fatalf("config set provider %s returned %d\nstdout:\n%s\nstderr:\n%s", provider, code, stdout.String(), stderr.String())
+		}
+	}
+}
+
 func TestConfigRejectsUnsupportedProvider(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("SKILLS_MANAGER_HOME", home)
@@ -63,7 +77,7 @@ func TestConfigRejectsUnsupportedProvider(t *testing.T) {
 	if code != ExitUsageError {
 		t.Fatalf("Run returned %d, want usage error\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
 	}
-	if !strings.Contains(stderr.String(), "anthropic or openai") {
+	if !strings.Contains(stderr.String(), "anthropic, openai, codex-cli, or cursor-cli") {
 		t.Fatalf("stderr missing provider guidance:\n%s", stderr.String())
 	}
 }

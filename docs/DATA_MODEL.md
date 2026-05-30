@@ -285,9 +285,9 @@ update_check:
 
 # LLM (optional — only for auto-summary)
 llm:
-  provider: ~                       # null | anthropic | openai
-  api_key_env: ~                    # environment variable name, e.g. ANTHROPIC_API_KEY
-  model: ~
+  provider: ~                       # null | anthropic | openai | codex-cli | cursor-cli
+  api_key_env: ~                    # direct API provider env var, e.g. ANTHROPIC_API_KEY
+  model: ~                          # API model or optional CLI model override
   calls: 0
   input_tokens: 0
   output_tokens: 0
