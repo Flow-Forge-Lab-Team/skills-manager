@@ -120,6 +120,48 @@ skills:
 	}
 }
 
+func TestMatchSuggestExplainOmitsRejectedSkills(t *testing.T) {
+	home := t.TempDir()
+	project := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+
+	writeFile(t, filepath.Join(home, "library", "catalog.yaml"), `version: 1
+skills:
+  - name: matching-skill
+    categories: [Engineering]
+    compatibility:
+      mode: portable
+    requirements:
+      tools: []
+  - name: rejected-skill
+    categories: [Data]
+    compatibility:
+      mode: portable
+    requirements:
+      tools: []
+`)
+	writeFile(t, filepath.Join(home, "library", "matching-skill", "SKILL.md"), "---\nname: matching-skill\n---\n")
+	writeFile(t, filepath.Join(home, "library", "rejected-skill", "SKILL.md"), "---\nname: rejected-skill\n---\n")
+	writeFile(t, filepath.Join(project, ".skills", "project.yaml"), `version: 1
+name: demo
+categories: [Engineering]
+harnesses: [claude]
+`)
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := Run([]string{"match", "--project", project, "--suggest", "--explain"}, &stdout, &stderr)
+	if code != ExitSuccess {
+		t.Fatalf("match returned %d\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "matching-skill (score: 1) - category overlap: 1") {
+		t.Fatalf("matching skill missing from suggestions:\n%s", stdout.String())
+	}
+	if strings.Contains(stdout.String(), "rejected-skill") {
+		t.Fatalf("rejected skill appeared in suggestions:\n%s", stdout.String())
+	}
+}
+
 type demoCommand struct {
 	Display string
 	Args    []string

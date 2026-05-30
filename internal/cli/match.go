@@ -240,6 +240,9 @@ func runMatch(args []string, realStdout io.Writer, stderr io.Writer, gf globalFl
 		}
 		var filtered []scoredCandidate
 		for _, sc := range scored {
+			if len(sc.Rejections) > 0 {
+				continue
+			}
 			if !installed[sc.Skill.Name] {
 				filtered = append(filtered, sc)
 			}
