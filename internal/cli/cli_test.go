@@ -882,7 +882,7 @@ skills:
 	// Pre-write a lock file that includes the review skill (legacy lock with empty fingerprint)
 	lockContent := `version: 1
 generated_at: "2026-01-01T00:00:00Z"
-generated_by: "skills-manager 0.1.0-dev"
+generated_by: "skills-manager 0.1.0"
 skills:
   - name: review
     version: ~
@@ -935,7 +935,7 @@ skills:
 	// Pre-write a lock file that references a missing skill
 	lockContent := `version: 1
 generated_at: "2026-01-01T00:00:00Z"
-generated_by: "skills-manager 0.1.0-dev"
+generated_by: "skills-manager 0.1.0"
 skills:
   - name: missing-skill
     version: ~
@@ -992,7 +992,7 @@ skills:
 	// Pre-write a lock file that references a missing skill and available skill
 	lockContent := `version: 1
 generated_at: "2026-01-01T00:00:00Z"
-generated_by: "skills-manager 0.1.0-dev"
+generated_by: "skills-manager 0.1.0"
 skills:
   - name: missing-skill
     version: ~
@@ -1060,7 +1060,7 @@ skills:
 	// Pre-write a lock with only claude harness
 	lockContent := `version: 1
 generated_at: "2026-01-01T00:00:00Z"
-generated_by: "skills-manager 0.1.0-dev"
+generated_by: "skills-manager 0.1.0"
 skills:
   - name: test-skill
     version: ~
@@ -1113,7 +1113,7 @@ skills:
 	// Pre-write a lock with grok harness, which is not active in project.yaml
 	lockContent := `version: 1
 generated_at: "2026-01-01T00:00:00Z"
-generated_by: "skills-manager 0.1.0-dev"
+generated_by: "skills-manager 0.1.0"
 skills:
   - name: test-skill
     version: ~
@@ -1249,7 +1249,7 @@ skills:
 	// Pre-write a lock with a fingerprint that doesn't match the library
 	lockContent := `version: 1
 generated_at: "2026-01-01T00:00:00Z"
-generated_by: "skills-manager 0.1.0-dev"
+generated_by: "skills-manager 0.1.0"
 skills:
   - name: review
     version: ~
@@ -1326,7 +1326,7 @@ skills:
 	// Pre-write a lock with one skill that's missing from library
 	lockContent := `version: 1
 generated_at: "2026-01-01T00:00:00Z"
-generated_by: "skills-manager 0.1.0-dev"
+generated_by: "skills-manager 0.1.0"
 skills:
   - name: missing-skill
     version: ~
@@ -1755,7 +1755,7 @@ skills:
 	// Lock that pins review.
 	lockContent := `version: 1
 generated_at: "2026-01-01T00:00:00Z"
-generated_by: "skills-manager 0.1.0-dev"
+generated_by: "skills-manager 0.1.0"
 skills:
   - name: review
     version: ~

@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Security model — skills-manager</title>
+<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/styles/atom-one-dark.min.css">
+<script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/highlight.min.js"></script>
+<script>document.addEventListener('DOMContentLoaded', () => {
+  // Pandoc emits class="sourceCode <lang>"; normalize to language-<lang> for hljs.
+  document.querySelectorAll('pre code.sourceCode').forEach(el => {
+    const lang = [...el.classList].find(c => c !== 'sourceCode');
+    if (lang) {
+      el.classList.add('language-' + lang);
+      hljs.highlightElement(el);
+    }
+  });
+});</script>
+</head>
+<body>
+<div class="app">
+  <nav class="sidebar">
+    <a href="index.html" class="brand">
+      <span class="brand-logo">s</span>
+      <span class="brand-name">skills-manager</span>
+    </a>
+    <div class="nav-section">Foundation</div>
+    <a href="VISION.html" class="nav-item">Vision</a>
+    <a href="ARCHITECTURE.html" class="nav-item">Architecture</a>
+    <a href="ROADMAP.html" class="nav-item">Roadmap</a>
+    <a href="DATA_MODEL.html" class="nav-item">Data model</a>
+    <div class="nav-section">Surface</div>
+    <a href="CLI_REFERENCE.html" class="nav-item">CLI reference</a>
+    <a href="TAXONOMY.html" class="nav-item">Taxonomy</a>
+    <div class="nav-section">Subsystems</div>
+    <a href="COMPATIBILITY.html" class="nav-item">Compatibility</a>
+    <a href="INGEST_FLOW.html" class="nav-item">Ingest flow</a>
+    <a href="UPDATE_FLOW.html" class="nav-item">Update flow</a>
+    <a href="BUNDLED_SKILLS.html" class="nav-item">Bundled skills</a>
+    <a href="SCHEDULING.html" class="nav-item">Scheduling</a>
+    <a href="CROSS_MACHINE.html" class="nav-item">Cross-machine sync</a>
+    <div class="nav-section">Out-of-band</div>
+    <a href="../mockup.html" class="nav-item">UI mockup ↗</a>
+    <a href="../README.html" class="nav-item">README</a>
+  </nav>
+  <main class="content">
+    <div class="doc-meta">
+      <span class="crumb"><a href="index.html">docs</a></span>
+      <span class="sep">/</span>
+      <span class="crumb">SECURITY_MODEL.md</span>
+    </div>
+<h1 id="security-model">Security model</h1>
+<p><code>skills-manager</code> manages executable agent instructions.
+Treat every skill like code you may hand to an automated tool with
+filesystem and shell access.</p>
+<h2 id="trust-boundary">Trust boundary</h2>
+<p>The manager helps organize, preview, copy, update, and remove skills.
+It does not make third-party skill content safe by itself. You are still
+responsible for reviewing skill instructions before installing or
+updating them.</p>
+<h2 id="install-boundary">Install boundary</h2>
+<p><code>skills-manager add</code> copies a source skill into the local
+manager library and records metadata. Local paths are read from disk.
+GitHub sources are cloned before ingest. Marketplace-style sources
+resolve to their configured source before ingest. The manager does not
+execute skill content during ingest.</p>
+<p><code>skills-manager match --explain</code> previews why a skill
+matches a project and, in explain mode, why unrelated catalog entries
+are rejected. <code>skills-manager install</code> copies only matching
+skills into configured project harness paths.</p>
+<h2 id="copy-mode-boundary">Copy-mode boundary</h2>
+<p>Copy mode is the default. Project installs are manager-owned copies,
+not symlinks into the library. The manager records installed paths and
+file fingerprints in manifests and lock files. If a target path already
+contains unmanaged content or local edits, install and sync preserve
+that content instead of overwriting it.</p>
+<h2 id="update-and-scan-boundary">Update and scan boundary</h2>
+<p>Update commands are review-first: pending changes can be inspected
+before they replace library content. Automated paths, such as
+high-confidence scan ingest, must be requested explicitly. Dependency
+preflight checks can block install or ingest when required local tools,
+credentials, runtimes, MCP servers, or model capabilities are
+missing.</p>
+<h2 id="uninstall-boundary">Uninstall boundary</h2>
+<p><code>skills-manager uninstall</code> removes manager-owned installed
+copies and manifests. It does not remove unmanaged files and does not
+delete the canonical library skill. Use uninstall to reverse project
+installs; remove library entries separately when you no longer trust or
+need a skill.</p>
+<h2 id="release-integrity">Release integrity</h2>
+<p><code>install.sh</code> and the npm wrapper download a release
+archive and verify its SHA-256 checksum against
+<code>skills-manager_checksums.txt</code> from the same GitHub release.
+This catches corrupted or substituted archives when the checksum file is
+the trusted reference.</p>
+<p>Checksums alone do not prove publisher authenticity. GoReleaser is
+configured to sign the checksum artifact when cosign credentials are
+present in the release environment, but the shell installer and npm
+wrapper do not currently enforce signature verification. Users who need
+authenticity verification should inspect the release page and verify the
+signed checksum artifact separately before running the binary.</p>
+    <footer class="doc-footer">
+      <span>skills-manager · design doc</span>
+      <span><a href="SECURITY_MODEL.md">view source (.md)</a></span>
+    </footer>
+  </main>
+</div>
+</body>
+</html>

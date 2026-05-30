@@ -7,7 +7,7 @@ import (
 
 // Version is overridden at release build time via
 // -ldflags "-X github.com/Flow-Forge-Lab-Team/skills-manager/internal/cli.Version=<tag>".
-var Version = "0.1.0-dev"
+var Version = "0.1.0"
 
 func Run(args []string, stdout io.Writer, stderr io.Writer) int {
 	gf, rest, err := extractGlobalFlags(args)

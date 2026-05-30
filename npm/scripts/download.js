@@ -8,6 +8,7 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const https = require("https");
+const crypto = require("crypto");
 const { execFileSync } = require("child_process");
 
 const REPO = "Flow-Forge-Lab-Team/skills-manager";
@@ -60,16 +61,33 @@ async function main() {
   const binDir = path.join(__dirname, "..", "bin");
   fs.mkdirSync(binDir, { recursive: true });
   const archivePath = path.join(binDir, asset);
+  const checksumsPath = path.join(binDir, "skills-manager_checksums.txt");
 
   process.stdout.write(`skills-manager: downloading ${base}/${asset}\n`);
   await download(`${base}/${asset}`, archivePath);
+  await download(`${base}/skills-manager_checksums.txt`, checksumsPath);
+  verifyChecksum(archivePath, checksumsPath, asset);
 
   extract(archivePath, ext, binDir);
   fs.rmSync(archivePath, { force: true });
+  fs.rmSync(checksumsPath, { force: true });
   const binPath = path.join(binDir, `skills-manager${exe}`);
   if (!fs.existsSync(binPath)) throw new Error("binary not found after extraction");
   fs.chmodSync(binPath, 0o755);
   process.stdout.write(`skills-manager: installed ${binPath}\n`);
+}
+
+function verifyChecksum(archivePath, checksumsPath, asset) {
+  const checksums = fs.readFileSync(checksumsPath, "utf8").split(/\r?\n/);
+  const line = checksums.find((entry) => entry.trim().endsWith(`  ${asset}`) || entry.trim().endsWith(` *${asset}`));
+  if (!line) {
+    throw new Error(`checksum file did not contain ${asset}`);
+  }
+  const expected = line.trim().split(/\s+/)[0];
+  const actual = crypto.createHash("sha256").update(fs.readFileSync(archivePath)).digest("hex");
+  if (actual !== expected) {
+    throw new Error(`checksum verification failed for ${asset}`);
+  }
 }
 
 // extract unpacks the archive into binDir. tar.gz uses tar (present on macOS,

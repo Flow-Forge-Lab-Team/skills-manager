@@ -30,6 +30,7 @@ configured.
 
 - [CLI_REFERENCE.md](CLI_REFERENCE.md) — every command, flag, exit code
 - [TAXONOMY.md](TAXONOMY.md) — 10 categories + flat tags + matching algorithm
+- [SECURITY_MODEL.md](SECURITY_MODEL.md) — install, update, uninstall, and release trust boundaries
 
 ## Subsystems
 

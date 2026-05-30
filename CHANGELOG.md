@@ -6,6 +6,8 @@ All notable changes to skills-manager are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-05-30
+
 ### Added
 - **Triage UI** (`skills-manager serve`): Overview, Library, Updates, Matrix,
   Skill Detail, Project Detail, Cross-machine, Settings, and a Discover stub —
@@ -33,4 +35,5 @@ All notable changes to skills-manager are documented here. The format follows
   with `docs/_build.sh`; `mkdocs.yml` is retained for future hosted docs, but no
   public docs site is published yet.
 
-[Unreleased]: https://github.com/Flow-Forge-Lab-Team/skills-manager/commits/main
+[Unreleased]: https://github.com/Flow-Forge-Lab-Team/skills-manager/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/Flow-Forge-Lab-Team/skills-manager/releases/tag/v0.1.0

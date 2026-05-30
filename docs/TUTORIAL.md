@@ -11,19 +11,20 @@ even if you have never used an AI coding-tool skill before.
 The verified install path today is the public Go module:
 
 ```sh
-go install github.com/Flow-Forge-Lab-Team/skills-manager/cmd/skills-manager@latest
+go install github.com/Flow-Forge-Lab-Team/skills-manager/cmd/skills-manager@v0.1.0
 skills-manager --version
 ```
 
 Expected output:
 
 ```text
-skills-manager 0.1.0-dev
+skills-manager 0.1.0
 ```
 
-The `curl | sh`, npm, and Homebrew commands are planned release channels. They
-are not the recommended public happy path until release assets, the npm package,
-and the Homebrew tap are live.
+The `curl | sh`, npm, and Homebrew commands are also release channels after
+v0.1.0 is published. The shell installer and npm wrapper verify release archive
+checksums, which proves download integrity but not publisher authenticity unless
+you separately verify the signed checksum artifact from the GitHub release.
 
 ## 2. Add your first skill (1 min)
 
@@ -31,12 +32,14 @@ From a checkout of this repository, ingest the sample skill:
 
 ```sh
 skills-manager add ./examples/hello-skill --yes
+skills-manager add ./examples/python-skill --yes
 ```
 
 Expected output:
 
 ```text
 Ingested hello-skill to ~/.skills-manager/library/hello-skill
+Ingested python-skill to ~/.skills-manager/library/python-skill
 ```
 
 Check the library:
@@ -87,8 +90,9 @@ skills-manager match --project /tmp/sm-demo --explain
 Expected output:
 
 ```text
-hello-skill (score: 1) — category overlap: 1
+hello-skill (score: 1) - category overlap: 1
   harnesses: antigravity, claude, codex, gemini, grok, hermes, openclaw
+python-skill (rejected) - no category or tag overlap
 ```
 
 ## 4. Install into the project (1 min)
@@ -110,7 +114,8 @@ Installing skills:
 ```
 
 This copies matching skills into the active target directory and records the
-manager-owned files. Inspect the result:
+manager-owned files. The unrelated Python sample is intentionally not installed.
+Inspect the result:
 
 ```sh
 find /tmp/sm-demo -maxdepth 4 -type f | sort
@@ -139,7 +144,7 @@ The lock file records the desired skill set:
 
 ```text
 version: 1
-generated_by: skills-manager 0.1.0-dev
+generated_by: skills-manager 0.1.0
 skills:
   - name: hello-skill
     harnesses:
@@ -187,3 +192,5 @@ skills-manager scan --auto-ingest   # non-interactive high-confidence ingest
 - [Cross-machine](CROSS_MACHINE.md) — sync your library across machines
 - The [`examples/sample-project`](https://github.com/Flow-Forge-Lab-Team/skills-manager/tree/main/examples/sample-project)
   reference application shows a typical project setup end to end.
+- The README demo transcript is CI-checked against `docs/demo_transcript.txt`;
+  update that golden fixture and run `go test ./...` when changing demo output.

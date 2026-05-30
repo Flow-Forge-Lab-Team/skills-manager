@@ -38,11 +38,12 @@ func parseMatchOptions(args []string) (matchOptions, error) {
 }
 
 type scoredCandidate struct {
-	Skill     catalogSkill
-	Score     int
-	Reasons   []string
-	Warnings  []string
-	Harnesses []string
+	Skill      catalogSkill
+	Score      int
+	Reasons    []string
+	Rejections []string
+	Warnings   []string
+	Harnesses  []string
 }
 
 func computeMatchScore(skill catalogSkill, project projectConfig) (int, []string, []string) {
@@ -109,6 +110,23 @@ func computeMatchScore(skill catalogSkill, project projectConfig) (int, []string
 	return score, reasons, warnings
 }
 
+func matchRejectionReasons(skill catalogSkill, project projectConfig) []string {
+	never := set(project.NeverInclude)
+	if never[skill.Name] {
+		return []string{"listed in project never_include"}
+	}
+	always := set(project.AlwaysInclude)
+	if always[skill.Name] {
+		return nil
+	}
+	pCats := set(project.Categories)
+	pTags := set(project.Tags)
+	if !intersects(set(skill.Categories), pCats) && !intersects(set(skill.Tags), pTags) {
+		return []string{"no category or tag overlap"}
+	}
+	return nil
+}
+
 func runMatch(args []string, realStdout io.Writer, stderr io.Writer, gf globalFlags) int {
 	opts, err := parseMatchOptions(args)
 	if err != nil {
@@ -151,8 +169,6 @@ func runMatch(args []string, realStdout io.Writer, stderr io.Writer, gf globalFl
 		return ExitOpError
 	}
 
-	baseCands := selectInstallCandidates(catalog, project, "")
-
 	if len(project.Categories) == 0 && len(project.Tags) == 0 {
 		if noConfig {
 			fmt.Fprintln(stdout, "no project config; candidates: none (or only always)")
@@ -163,21 +179,19 @@ func runMatch(args []string, realStdout io.Writer, stderr io.Writer, gf globalFl
 
 	var scored []scoredCandidate
 	never := set(project.NeverInclude)
-	for _, c := range baseCands {
-		if never[c.Skill.Name] {
-			continue
-		}
-		score, reasons, warnings := computeMatchScore(c.Skill, project)
-		hs := compatibleHarnesses(c.Skill.Compatibility, project.Harnesses)
-		if len(hs) == 0 {
-			warnings = append(warnings, "no compatible harness in project")
-		}
-		if opts.explain {
-			mt := missingRequiredTools(c.Skill.Requirements)
-			mm := missingRequiredMCPServers(c.Skill.Requirements)
-			md := missingModelCapabilities(c.Skill.Requirements)
-			mc := missingRequiredCredentials(c.Skill.Requirements)
-			mr := missingRequiredScriptRuntimes(c.Skill.Requirements)
+	if opts.explain {
+		for _, skill := range catalog.Skills {
+			score, reasons, warnings := computeMatchScore(skill, project)
+			rejections := matchRejectionReasons(skill, project)
+			hs := compatibleHarnesses(skill.Compatibility, project.Harnesses)
+			if len(rejections) == 0 && len(hs) == 0 {
+				warnings = append(warnings, "no compatible harness in project")
+			}
+			mt := missingRequiredTools(skill.Requirements)
+			mm := missingRequiredMCPServers(skill.Requirements)
+			md := missingModelCapabilities(skill.Requirements)
+			mc := missingRequiredCredentials(skill.Requirements)
+			mr := missingRequiredScriptRuntimes(skill.Requirements)
 			if len(mt)+len(mm)+len(md)+len(mc)+len(mr) > 0 {
 				var parts []string
 				if len(mt) > 0 {
@@ -197,10 +211,25 @@ func runMatch(args []string, realStdout io.Writer, stderr io.Writer, gf globalFl
 				}
 				warnings = append(warnings, "missing required: "+strings.Join(parts, ", "))
 			}
+			scored = append(scored, scoredCandidate{
+				Skill: skill, Score: score, Reasons: reasons, Rejections: rejections, Warnings: warnings, Harnesses: hs,
+			})
 		}
-		scored = append(scored, scoredCandidate{
-			Skill: c.Skill, Score: score, Reasons: reasons, Warnings: warnings, Harnesses: hs,
-		})
+	} else {
+		baseCands := selectInstallCandidates(catalog, project, "")
+		for _, c := range baseCands {
+			if never[c.Skill.Name] {
+				continue
+			}
+			score, reasons, warnings := computeMatchScore(c.Skill, project)
+			hs := compatibleHarnesses(c.Skill.Compatibility, project.Harnesses)
+			if len(hs) == 0 {
+				warnings = append(warnings, "no compatible harness in project")
+			}
+			scored = append(scored, scoredCandidate{
+				Skill: c.Skill, Score: score, Reasons: reasons, Warnings: warnings, Harnesses: hs,
+			})
+		}
 	}
 
 	if opts.suggest {
@@ -211,6 +240,9 @@ func runMatch(args []string, realStdout io.Writer, stderr io.Writer, gf globalFl
 		}
 		var filtered []scoredCandidate
 		for _, sc := range scored {
+			if len(sc.Rejections) > 0 {
+				continue
+			}
 			if !installed[sc.Skill.Name] {
 				filtered = append(filtered, sc)
 			}
@@ -226,8 +258,12 @@ func runMatch(args []string, realStdout io.Writer, stderr io.Writer, gf globalFl
 	})
 
 	for _, sc := range scored {
+		if len(sc.Rejections) > 0 {
+			fmt.Fprintf(stdout, "%s (rejected) - %s\n", sc.Skill.Name, strings.Join(sc.Rejections, ", "))
+			continue
+		}
 		reasonStr := strings.Join(sc.Reasons, ", ")
-		fmt.Fprintf(stdout, "%s (score: %d) — %s\n", sc.Skill.Name, sc.Score, reasonStr)
+		fmt.Fprintf(stdout, "%s (score: %d) - %s\n", sc.Skill.Name, sc.Score, reasonStr)
 		if len(sc.Harnesses) > 0 {
 			fmt.Fprintf(stdout, "  harnesses: %s\n", strings.Join(sc.Harnesses, ", "))
 		}
@@ -241,6 +277,8 @@ func runMatch(args []string, realStdout io.Writer, stderr io.Writer, gf globalFl
 			Name      string   `json:"name"`
 			Score     int      `json:"score"`
 			Reasons   []string `json:"reasons,omitempty"`
+			Rejected  bool     `json:"rejected,omitempty"`
+			Rejection []string `json:"rejection,omitempty"`
 			Harnesses []string `json:"harnesses,omitempty"`
 			Warnings  []string `json:"warnings,omitempty"`
 		}
@@ -248,6 +286,7 @@ func runMatch(args []string, realStdout io.Writer, stderr io.Writer, gf globalFl
 		for _, sc := range scored {
 			js = append(js, jsonCand{
 				Name: sc.Skill.Name, Score: sc.Score, Reasons: sc.Reasons,
+				Rejected: len(sc.Rejections) > 0, Rejection: sc.Rejections,
 				Harnesses: sc.Harnesses, Warnings: sc.Warnings,
 			})
 		}

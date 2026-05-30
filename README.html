@@ -64,34 +64,42 @@ tutorial</a>.</p>
 </blockquote>
 <h2 id="install">Install</h2>
 <p>The verified path today is to install from the public Go module:</p>
-<div class="sourceCode" id="cb1"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="ex">go</span> install github.com/Flow-Forge-Lab-Team/skills-manager/cmd/skills-manager@latest</span></code></pre></div>
+<div class="sourceCode" id="cb1"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="ex">go</span> install github.com/Flow-Forge-Lab-Team/skills-manager/cmd/skills-manager@v0.1.0</span></code></pre></div>
 <p>This requires Go 1.26 or newer and puts the binary in
 <code>$(go env GOPATH)/bin</code>. Add that directory to
 <code>PATH</code> if needed, then run:</p>
 <div class="sourceCode" id="cb2"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="ex">skills-manager</span> <span class="at">--help</span></span></code></pre></div>
-<p>Pre-release channels are intentionally not the happy path yet:</p>
-<div class="sourceCode" id="cb3"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Planned after signed release assets exist.</span></span>
-<span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a><span class="ex">curl</span> <span class="at">-fsSL</span> https://raw.githubusercontent.com/Flow-Forge-Lab-Team/skills-manager/main/install.sh <span class="kw">|</span> <span class="fu">sh</span></span>
-<span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb3-4"><a href="#cb3-4" aria-hidden="true" tabindex="-1"></a><span class="co"># Inspect first, then run. The installer verifies the release tarball against</span></span>
-<span id="cb3-5"><a href="#cb3-5" aria-hidden="true" tabindex="-1"></a><span class="co"># skills-manager_checksums.txt before moving the binary into place.</span></span>
-<span id="cb3-6"><a href="#cb3-6" aria-hidden="true" tabindex="-1"></a><span class="ex">curl</span> <span class="at">-fsSLO</span> https://raw.githubusercontent.com/Flow-Forge-Lab-Team/skills-manager/main/install.sh</span>
-<span id="cb3-7"><a href="#cb3-7" aria-hidden="true" tabindex="-1"></a><span class="fu">sh</span> install.sh</span>
-<span id="cb3-8"><a href="#cb3-8" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb3-9"><a href="#cb3-9" aria-hidden="true" tabindex="-1"></a><span class="co"># Planned after @flowforgelab/skills-manager is published.</span></span>
-<span id="cb3-10"><a href="#cb3-10" aria-hidden="true" tabindex="-1"></a><span class="ex">npm</span> install <span class="at">-g</span> @flowforgelab/skills-manager</span>
-<span id="cb3-11"><a href="#cb3-11" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb3-12"><a href="#cb3-12" aria-hidden="true" tabindex="-1"></a><span class="co"># Planned after Flow-Forge-Lab-Team/homebrew-tap exists.</span></span>
-<span id="cb3-13"><a href="#cb3-13" aria-hidden="true" tabindex="-1"></a><span class="ex">brew</span> install Flow-Forge-Lab-Team/tap/skills-manager</span></code></pre></div>
+<p>Release assets are checksum-verified by the installer. The checksum
+protects artifact integrity after download; it is not a signed
+authenticity guarantee unless you separately verify the signed checksum
+artifact from the release.</p>
+<div class="sourceCode" id="cb3"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="ex">curl</span> <span class="at">-fsSL</span> https://raw.githubusercontent.com/Flow-Forge-Lab-Team/skills-manager/main/install.sh <span class="kw">|</span> <span class="fu">sh</span></span>
+<span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a><span class="co"># Inspect first, then run. The installer verifies the release tarball against</span></span>
+<span id="cb3-4"><a href="#cb3-4" aria-hidden="true" tabindex="-1"></a><span class="co"># skills-manager_checksums.txt before moving the binary into place.</span></span>
+<span id="cb3-5"><a href="#cb3-5" aria-hidden="true" tabindex="-1"></a><span class="ex">curl</span> <span class="at">-fsSLO</span> https://raw.githubusercontent.com/Flow-Forge-Lab-Team/skills-manager/main/install.sh</span>
+<span id="cb3-6"><a href="#cb3-6" aria-hidden="true" tabindex="-1"></a><span class="fu">sh</span> install.sh</span>
+<span id="cb3-7"><a href="#cb3-7" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb3-8"><a href="#cb3-8" aria-hidden="true" tabindex="-1"></a><span class="ex">npm</span> install <span class="at">-g</span> @flowforgelab/skills-manager</span>
+<span id="cb3-9"><a href="#cb3-9" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb3-10"><a href="#cb3-10" aria-hidden="true" tabindex="-1"></a><span class="ex">brew</span> install Flow-Forge-Lab-Team/tap/skills-manager</span></code></pre></div>
 <p>Then run the <a href="docs/TUTORIAL.html">5-minute tutorial</a>, or
 <code>skills-manager --help</code>.</p>
 <h2 id="real-cli-demo">Real CLI Demo</h2>
 <p>This transcript was generated from the current CLI with a temporary
 manager home and the committed <a
-href="examples/hello-skill"><code>examples/hello-skill</code></a>
-fixture:</p>
+href="examples/hello-skill"><code>examples/hello-skill</code></a> and <a
+href="examples/python-skill"><code>examples/python-skill</code></a>
+fixtures. The transcript is checked by
+<code>TestReadmeDemoTranscriptMatchesGolden</code>; update <a
+href="docs/demo_transcript.txt"><code>docs/demo_transcript.txt</code></a>
+and rerun <code>go test ./...</code> when changing these commands or
+output.</p>
 <pre class="text"><code>$ skills-manager add ./examples/hello-skill --yes
 Ingested hello-skill to $SKILLS_MANAGER_HOME/library/hello-skill
+
+$ skills-manager add ./examples/python-skill --yes
+Ingested python-skill to $SKILLS_MANAGER_HOME/library/python-skill
 
 $ skills-manager init ./demo-project --non-interactive
 Initialized ./demo-project
@@ -100,8 +108,9 @@ Tags: nextjs, nodejs, react
 Harnesses: claude, codex, grok, antigravity, gemini, hermes, openclaw
 
 $ skills-manager match --project ./demo-project --explain
-hello-skill (score: 1) — category overlap: 1
+hello-skill (score: 1) - category overlap: 1
   harnesses: antigravity, claude, codex, gemini, grok, hermes, openclaw
+python-skill (rejected) - no category or tag overlap
 
 $ skills-manager install --project ./demo-project
 Installing skills:
@@ -132,6 +141,20 @@ scripts, and credentials.</li>
 <li><strong>Cross-machine via git.</strong> Sync your library between
 laptop, desktop, server.</li>
 </ul>
+<h2 id="security-model">Security model</h2>
+<p><code>skills-manager</code> installs executable agent instructions
+into local AI-tool directories, so review remains part of the trust
+boundary. Copy mode is the default: installs create manager-owned
+copies, preserve unmanaged local edits, record manifests, and uninstall
+only removes files that the manager owns.</p>
+<p>Updates and scans are review-first unless you choose an explicit
+automated path. Checksum verification in <code>install.sh</code> and the
+npm wrapper confirms that the downloaded archive matches the published
+release checksum. It does not prove who published that checksum unless
+you independently verify the release's signature artifact. See <a
+href="docs/SECURITY_MODEL.html"><code>docs/SECURITY_MODEL.md</code></a>
+for the full install, update, copy-mode, uninstall, and
+release-integrity boundaries.</p>
 <h2 id="why">Why</h2>
 <p>Skills now live in <code>~/.claude/skills/</code>,
 <code>~/.codex/skills/</code>, <code>~/.grok/skills/</code>,
@@ -176,6 +199,9 @@ scheduling design</li>
 <li><a
 href="docs/CROSS_MACHINE.html"><code>docs/CROSS_MACHINE.md</code></a> —
 git sync</li>
+<li><a
+href="docs/SECURITY_MODEL.html"><code>docs/SECURITY_MODEL.md</code></a> —
+install and release trust boundaries</li>
 </ol>
 <h2 id="naming">Naming</h2>
 <ul>

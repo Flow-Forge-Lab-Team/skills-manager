@@ -1,0 +1,25 @@
+$ skills-manager add ./examples/hello-skill --yes
+Ingested hello-skill to $SKILLS_MANAGER_HOME/library/hello-skill
+
+$ skills-manager add ./examples/python-skill --yes
+Ingested python-skill to $SKILLS_MANAGER_HOME/library/python-skill
+
+$ skills-manager init ./demo-project --non-interactive
+Initialized ./demo-project
+Categories: Engineering, Design
+Tags: nextjs, nodejs, react
+Harnesses: claude, codex, grok, antigravity, gemini, hermes, openclaw
+
+$ skills-manager match --project ./demo-project --explain
+hello-skill (score: 1) - category overlap: 1
+  harnesses: antigravity, claude, codex, gemini, grok, hermes, openclaw
+python-skill (rejected) - no category or tag overlap
+
+$ skills-manager install --project ./demo-project
+Installing skills:
+- hello-skill: category match; harnesses: antigravity, claude, codex, gemini, grok, hermes, openclaw
+  copied .agents/skills/hello-skill
+  copied .claude/skills/hello-skill
+  copied .codex/skills/hello-skill
+  copied .grok/skills/hello-skill
+  copied skills/hello-skill
