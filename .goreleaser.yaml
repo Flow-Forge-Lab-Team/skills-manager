@@ -41,7 +41,7 @@ archives:
       - CHANGELOG.md
 
 checksum:
-  name_template: "checksums.txt"
+  name_template: "skills-manager_checksums.txt"
 
 # Signed releases: GoReleaser signs the checksums file with cosign when
 # COSIGN_KEY / COSIGN_PASSWORD are present in the release environment.
@@ -64,7 +64,7 @@ brews:
       name: homebrew-tap
       token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
     homepage: "https://github.com/Flow-Forge-Lab-Team/skills-manager"
-    description: "Local-first CLI for managing AI agent skills across harnesses"
+    description: "Local-first CLI for managing AI coding-tool skills across selected targets"
     license: "MIT"
     skip_upload: auto
 

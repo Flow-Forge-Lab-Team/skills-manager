@@ -224,10 +224,20 @@ Auto-ingest? [Y]es / [N]o / [S]kip-this-time / [I]gnore-forever</code></pre>
 <p>If the user enabled <code>auto_ingest: true</code> in config, the
 prompt is skipped only for high-confidence cases. The accepted skill
 still appears in the activity feed for review.</p>
-<h2 id="filesystem-watcher-deferred">Filesystem watcher (deferred)</h2>
-<p>Background daemon. Optional and deferred until v0.3. v0.1/v0.2 use
+<h2 id="filesystem-watcher">Filesystem watcher</h2>
+<p>Optional background daemon, shipped in v0.3
+(<code>skills-manager watch</code>). v0.1/v0.2 rely on
 <code>skills-manager scan</code> so ingest is reviewable and does not
-require a resident process.</p>
+require a resident process; the watcher is opt-in and, by default, only
+writes review notifications rather than changing the catalog.</p>
+<p>It is implemented with interval <strong>polling</strong>
+(dependency-free) rather than an OS file-event API, so it behaves
+identically across platforms with no external dependencies. Run it in
+the foreground (<code>skills-manager watch</code>), as a detached daemon
+(<code>watch --daemon</code> / <code>watch --stop</code>), and tune the
+cadence with <code>--interval &lt;secs&gt;</code>.
+<code>--auto-ingest</code> is opt-in and only ingests high-confidence,
+non-suspicious, unregistered skills.</p>
 <h3 id="what-it-watches">What it watches</h3>
 <p>By default, all known harness skill paths on the machine:</p>
 <pre><code>~/.claude/skills/

@@ -14,6 +14,11 @@ human browsing by running:
 Do not hand-edit the generated HTML except to change the shared template or
 styles.
 
+`docs/_build.sh` is the canonical committed-HTML path. `mkdocs.yml` is retained
+for future hosted docs experiments, but the GitHub repository currently has no
+published docs homepage; do not claim a public docs site until a reachable URL is
+configured.
+
 ## Foundation
 
 - ★ [VISION.md](VISION.md) — problem, solution, who it's for, differentiation, non-goals

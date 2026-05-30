@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Usage tracking — skills-manager</title>
+<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/styles/atom-one-dark.min.css">
+<script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/highlight.min.js"></script>
+<script>document.addEventListener('DOMContentLoaded', () => {
+  // Pandoc emits class="sourceCode <lang>"; normalize to language-<lang> for hljs.
+  document.querySelectorAll('pre code.sourceCode').forEach(el => {
+    const lang = [...el.classList].find(c => c !== 'sourceCode');
+    if (lang) {
+      el.classList.add('language-' + lang);
+      hljs.highlightElement(el);
+    }
+  });
+});</script>
+</head>
+<body>
+<div class="app">
+  <nav class="sidebar">
+    <a href="index.html" class="brand">
+      <span class="brand-logo">s</span>
+      <span class="brand-name">skills-manager</span>
+    </a>
+    <div class="nav-section">Foundation</div>
+    <a href="VISION.html" class="nav-item">Vision</a>
+    <a href="ARCHITECTURE.html" class="nav-item">Architecture</a>
+    <a href="ROADMAP.html" class="nav-item">Roadmap</a>
+    <a href="DATA_MODEL.html" class="nav-item">Data model</a>
+    <div class="nav-section">Surface</div>
+    <a href="CLI_REFERENCE.html" class="nav-item">CLI reference</a>
+    <a href="TAXONOMY.html" class="nav-item">Taxonomy</a>
+    <div class="nav-section">Subsystems</div>
+    <a href="COMPATIBILITY.html" class="nav-item">Compatibility</a>
+    <a href="INGEST_FLOW.html" class="nav-item">Ingest flow</a>
+    <a href="UPDATE_FLOW.html" class="nav-item">Update flow</a>
+    <a href="BUNDLED_SKILLS.html" class="nav-item">Bundled skills</a>
+    <a href="SCHEDULING.html" class="nav-item">Scheduling</a>
+    <a href="CROSS_MACHINE.html" class="nav-item">Cross-machine sync</a>
+    <div class="nav-section">Out-of-band</div>
+    <a href="../mockup.html" class="nav-item">UI mockup ↗</a>
+    <a href="../README.html" class="nav-item">README</a>
+  </nav>
+  <main class="content">
+    <div class="doc-meta">
+      <span class="crumb"><a href="index.html">docs</a></span>
+      <span class="sep">/</span>
+      <span class="crumb">USAGE_TRACKING.md</span>
+    </div>
+<h1 id="usage-tracking">Usage tracking</h1>
+<p>Recording which skills actually get used, per project and harness, so
+the Matrix view can show real activity instead of just what is
+installed. Usage rows land in the <code>invocations</code> table
+(<code>skill_name × project_slug × harness × trigger</code>) and are
+aggregated by <code>skills-manager usage</code>.</p>
+<h2 id="the-two-feeds">The two feeds</h2>
+<p>There is no daemon. Usage is fed by two opt-in sources, either or
+both:</p>
+<table>
+<thead>
+<tr>
+<th>Source</th>
+<th>Command</th>
+<th>Project attribution</th>
+<th>Harness coverage</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Claude Code OTEL</td>
+<td><code>skills-manager usage receiver</code></td>
+<td>No (OTEL carries no cwd)</td>
+<td>Claude Code</td>
+</tr>
+<tr>
+<td>PreToolUse hook</td>
+<td><code>skills-manager usage hook</code></td>
+<td>Yes (from the hook <code>cwd</code>)</td>
+<td>Claude Code</td>
+</tr>
+</tbody>
+</table>
+<p>The two feeds are <strong>complementary</strong>, with the hook as
+the primary counter:</p>
+<ul>
+<li>The <strong>OTEL receiver</strong> parses
+<code>claude_code.skill_activated</code> — the canonical event that
+fires for both Skill-tool calls and <code>/</code>-command invocations
+and carries the real <code>invocation_trigger</code>. But OTEL has no
+working directory, so it cannot attribute a project.</li>
+<li>The <strong>PreToolUse hook</strong> runs in the project directory,
+so it supplies the project slug. It only sees the Skill <em>tool</em>,
+not <code>/</code>-commands, and cannot observe the trigger.</li>
+</ul>
+<p>Run both: the hook gives you per-project counts, OTEL enriches each
+row with the trigger and additionally captures <code>/</code>-command
+invocations the hook never sees.</p>
+<h3 id="how-the-feeds-merge-no-double-counting">How the feeds merge (no
+double-counting)</h3>
+<p><code>skill_activated</code> has no <code>tool_use_id</code>, but the
+matching Skill <code>tool_result</code> event does, and the two share a
+<code>prompt.id</code> + skill name. The receiver bridges them: a
+<code>skill_activated</code> adopts its <code>tool_result</code>'s
+<code>tool_use_id</code> (and the standalone <code>tool_result</code> is
+then dropped, so the activation is counted once). The PreToolUse hook
+carries the same <code>tool_use_id</code>. Rows are merged on it by a
+partial unique index: <strong>project comes from the hook, trigger comes
+from OTEL</strong>, and the result is one enriched row regardless of
+which feed arrives first. Rows without a <code>tool_use_id</code> (a
+<code>/</code>-command, or manual/watcher entries) are exempt and
+counted independently.</p>
+<p>Because the bridge correlates events within an export batch, a
+<code>skill_activated</code> and its <code>tool_result</code> that land
+in different OTEL flushes (rare; both occur within one tool execution
+and the default flush is 5s) may not merge and could count twice against
+the hook. This is a best-effort triage signal, not billing.</p>
+<h2 id="otel-receiver">OTEL receiver</h2>
+<pre><code>skills-manager usage receiver --port 4318</code></pre>
+<p>Then point Claude Code at it:</p>
+<div class="sourceCode" id="cb2"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="bu">export</span> <span class="va">CLAUDE_CODE_ENABLE_TELEMETRY</span><span class="op">=</span>1</span>
+<span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a><span class="bu">export</span> <span class="va">OTEL_LOGS_EXPORTER</span><span class="op">=</span>otlp</span>
+<span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a><span class="bu">export</span> <span class="va">OTEL_EXPORTER_OTLP_PROTOCOL</span><span class="op">=</span>http/json</span>
+<span id="cb2-4"><a href="#cb2-4" aria-hidden="true" tabindex="-1"></a><span class="bu">export</span> <span class="va">OTEL_EXPORTER_OTLP_LOGS_ENDPOINT</span><span class="op">=</span>http://127.0.0.1:4318/v1/logs</span>
+<span id="cb2-5"><a href="#cb2-5" aria-hidden="true" tabindex="-1"></a><span class="bu">export</span> <span class="va">OTEL_LOG_TOOL_DETAILS</span><span class="op">=</span>1   <span class="co"># required so skill names appear on tool events</span></span></code></pre></div>
+<p>The receiver speaks OTLP/HTTP JSON. It accepts a POST of an
+<code>ExportLogsServiceRequest</code> at <code>/v1/logs</code>, extracts
+skill activations, writes them with <code>source = otel</code>, and
+returns <code>{}</code> (all-accepted).</p>
+<p><code>OTEL_LOG_TOOL_DETAILS=1</code> is required: without it Claude
+Code reports user-defined and third-party skill names as the placeholder
+<code>custom_skill</code>. The <code>invocation_trigger</code> values
+(<code>user-slash</code>, <code>claude-proactive</code>,
+<code>nested-skill</code>) are normalized to the table's taxonomy
+(<code>user-initiated</code>, <code>proactive</code>,
+<code>nested</code>).</p>
+<h2 id="pretooluse-hook-recommended-for-project-attribution">PreToolUse
+hook (recommended for project attribution)</h2>
+<pre><code>skills-manager usage hook --print-config</code></pre>
+<p>Add the printed snippet to your Claude Code
+<code>settings.json</code>:</p>
+<div class="sourceCode" id="cb4"><pre
+class="sourceCode json"><code class="sourceCode json"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span></span>
+<span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;hooks&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
+<span id="cb4-3"><a href="#cb4-3" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;PreToolUse&quot;</span><span class="fu">:</span> <span class="ot">[</span></span>
+<span id="cb4-4"><a href="#cb4-4" aria-hidden="true" tabindex="-1"></a>      <span class="fu">{</span></span>
+<span id="cb4-5"><a href="#cb4-5" aria-hidden="true" tabindex="-1"></a>        <span class="dt">&quot;matcher&quot;</span><span class="fu">:</span> <span class="st">&quot;Skill&quot;</span><span class="fu">,</span></span>
+<span id="cb4-6"><a href="#cb4-6" aria-hidden="true" tabindex="-1"></a>        <span class="dt">&quot;hooks&quot;</span><span class="fu">:</span> <span class="ot">[</span></span>
+<span id="cb4-7"><a href="#cb4-7" aria-hidden="true" tabindex="-1"></a>          <span class="fu">{</span> <span class="dt">&quot;type&quot;</span><span class="fu">:</span> <span class="st">&quot;command&quot;</span><span class="fu">,</span> <span class="dt">&quot;command&quot;</span><span class="fu">:</span> <span class="st">&quot;skills-manager usage hook&quot;</span> <span class="fu">}</span></span>
+<span id="cb4-8"><a href="#cb4-8" aria-hidden="true" tabindex="-1"></a>        <span class="ot">]</span></span>
+<span id="cb4-9"><a href="#cb4-9" aria-hidden="true" tabindex="-1"></a>      <span class="fu">}</span></span>
+<span id="cb4-10"><a href="#cb4-10" aria-hidden="true" tabindex="-1"></a>    <span class="ot">]</span></span>
+<span id="cb4-11"><a href="#cb4-11" aria-hidden="true" tabindex="-1"></a>  <span class="fu">}</span></span>
+<span id="cb4-12"><a href="#cb4-12" aria-hidden="true" tabindex="-1"></a><span class="fu">}</span></span></code></pre></div>
+<p>On every <code>Skill</code> tool call, Claude Code pipes the hook
+payload to <code>skills-manager usage hook</code>, which records one
+invocation with <code>source = hook</code> and the project slug derived
+from the hook <code>cwd</code>. The hook is best-effort: any error is
+logged to stderr and it still exits 0, so it can never block a
+skill.</p>
+<h2 id="viewing-usage">Viewing usage</h2>
+<pre><code>skills-manager usage            # human table
+skills-manager --json usage     # structured matrix (also served at /api/v1/usage)</code></pre>
+<p><code>skills-manager usage setup</code> prints both setup paths in
+one place.</p>
+    <footer class="doc-footer">
+      <span>skills-manager · design doc</span>
+      <span><a href="USAGE_TRACKING.md">view source (.md)</a></span>
+    </footer>
+  </main>
+</div>
+</body>
+</html>

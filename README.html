@@ -51,24 +51,78 @@
       <span class="crumb">../README.md</span>
     </div>
 <h1 id="skills-manager">skills-manager</h1>
-<p>A local-first CLI for managing AI agent skills across the harnesses
-you actually use — Claude Code, Codex CLI, Grok Build, Antigravity,
-Gemini CLI, Hermes, OpenClaw, and more.</p>
+<p>A local-first CLI for keeping AI coding-tool skills in one library,
+previewing which ones fit a project, and installing manager-owned copies
+into the tool directories you choose.</p>
 <blockquote>
-<p><strong>Status:</strong> Design phase. See <a
-href="docs/"><code>docs/</code></a> for the full design. Markdown is
-canonical. The checked-in HTML files are generated from the Markdown
-with <a href="docs/_build.sh"><code>docs/_build.sh</code></a> for easier
-browsing.</p>
+<p>Markdown under <a href="docs/"><code>docs/</code></a> is canonical.
+Committed HTML is generated with <a
+href="docs/_build.sh"><code>docs/_build.sh</code></a> for
+local/repository browsing; no public docs site is published yet. New
+here? Start with the <a href="docs/TUTORIAL.html">5-minute
+tutorial</a>.</p>
 </blockquote>
+<h2 id="install">Install</h2>
+<p>The verified path today is to install from the public Go module:</p>
+<div class="sourceCode" id="cb1"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="ex">go</span> install github.com/Flow-Forge-Lab-Team/skills-manager/cmd/skills-manager@latest</span></code></pre></div>
+<p>This requires Go 1.26 or newer and puts the binary in
+<code>$(go env GOPATH)/bin</code>. Add that directory to
+<code>PATH</code> if needed, then run:</p>
+<div class="sourceCode" id="cb2"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="ex">skills-manager</span> <span class="at">--help</span></span></code></pre></div>
+<p>Pre-release channels are intentionally not the happy path yet:</p>
+<div class="sourceCode" id="cb3"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Planned after signed release assets exist.</span></span>
+<span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a><span class="ex">curl</span> <span class="at">-fsSL</span> https://raw.githubusercontent.com/Flow-Forge-Lab-Team/skills-manager/main/install.sh <span class="kw">|</span> <span class="fu">sh</span></span>
+<span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb3-4"><a href="#cb3-4" aria-hidden="true" tabindex="-1"></a><span class="co"># Inspect first, then run. The installer verifies the release tarball against</span></span>
+<span id="cb3-5"><a href="#cb3-5" aria-hidden="true" tabindex="-1"></a><span class="co"># skills-manager_checksums.txt before moving the binary into place.</span></span>
+<span id="cb3-6"><a href="#cb3-6" aria-hidden="true" tabindex="-1"></a><span class="ex">curl</span> <span class="at">-fsSLO</span> https://raw.githubusercontent.com/Flow-Forge-Lab-Team/skills-manager/main/install.sh</span>
+<span id="cb3-7"><a href="#cb3-7" aria-hidden="true" tabindex="-1"></a><span class="fu">sh</span> install.sh</span>
+<span id="cb3-8"><a href="#cb3-8" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb3-9"><a href="#cb3-9" aria-hidden="true" tabindex="-1"></a><span class="co"># Planned after @flowforgelab/skills-manager is published.</span></span>
+<span id="cb3-10"><a href="#cb3-10" aria-hidden="true" tabindex="-1"></a><span class="ex">npm</span> install <span class="at">-g</span> @flowforgelab/skills-manager</span>
+<span id="cb3-11"><a href="#cb3-11" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb3-12"><a href="#cb3-12" aria-hidden="true" tabindex="-1"></a><span class="co"># Planned after Flow-Forge-Lab-Team/homebrew-tap exists.</span></span>
+<span id="cb3-13"><a href="#cb3-13" aria-hidden="true" tabindex="-1"></a><span class="ex">brew</span> install Flow-Forge-Lab-Team/tap/skills-manager</span></code></pre></div>
+<p>Then run the <a href="docs/TUTORIAL.html">5-minute tutorial</a>, or
+<code>skills-manager --help</code>.</p>
+<h2 id="real-cli-demo">Real CLI Demo</h2>
+<p>This transcript was generated from the current CLI with a temporary
+manager home and the committed <a
+href="examples/hello-skill"><code>examples/hello-skill</code></a>
+fixture:</p>
+<pre class="text"><code>$ skills-manager add ./examples/hello-skill --yes
+Ingested hello-skill to $SKILLS_MANAGER_HOME/library/hello-skill
+
+$ skills-manager init ./demo-project --non-interactive
+Initialized ./demo-project
+Categories: Engineering, Design
+Tags: nextjs, nodejs, react
+Harnesses: claude, codex, grok, antigravity, gemini, hermes, openclaw
+
+$ skills-manager match --project ./demo-project --explain
+hello-skill (score: 1) — category overlap: 1
+  harnesses: antigravity, claude, codex, gemini, grok, hermes, openclaw
+
+$ skills-manager install --project ./demo-project
+Installing skills:
+- hello-skill: category match; harnesses: antigravity, claude, codex, gemini, grok, hermes, openclaw
+  copied .agents/skills/hello-skill
+  copied .claude/skills/hello-skill
+  copied .codex/skills/hello-skill
+  copied .grok/skills/hello-skill
+  copied skills/hello-skill</code></pre>
 <h2 id="what-it-does">What it does</h2>
 <ul>
-<li><strong>One library, many harnesses.</strong> Maintain a canonical
-store of skills and have them appear in the right place for each agent
-CLI you use.</li>
+<li><strong>One library, selected tool targets.</strong> Maintain a
+canonical store of skills and install copies into supported
+SKILL.md-style tool directories.</li>
 <li><strong>Project-aware matching.</strong> Tag a project with
 categories and stack tags; preview relevant skills before installing
 them.</li>
+<li><strong>Trust-first defaults.</strong> Copy mode is the default,
+installs are manifest tracked, uninstall removes only manager-owned
+files, dependency gates run before install, and update review shows
+diffs before accepting changes.</li>
 <li><strong>Update tracking with safety review.</strong> Detect upstream
 changes, inspect diffs, and optionally generate guarded summaries before
 accepting.</li>
@@ -77,8 +131,6 @@ harness support, model/tool assumptions, local binaries, MCP servers,
 scripts, and credentials.</li>
 <li><strong>Cross-machine via git.</strong> Sync your library between
 laptop, desktop, server.</li>
-<li><strong>Reversible.</strong> Copy mode by default. Uninstall removes
-only files the manager created.</li>
 </ul>
 <h2 id="why">Why</h2>
 <p>Skills now live in <code>~/.claude/skills/</code>,
@@ -125,12 +177,25 @@ scheduling design</li>
 href="docs/CROSS_MACHINE.html"><code>docs/CROSS_MACHINE.md</code></a> —
 git sync</li>
 </ol>
+<h2 id="naming">Naming</h2>
+<ul>
+<li>GitHub org/repo and Go module:
+<code>Flow-Forge-Lab-Team/skills-manager</code></li>
+<li>npm package name, when published:
+<code>@flowforgelab/skills-manager</code></li>
+<li>Homebrew tap, when created:
+<code>Flow-Forge-Lab-Team/tap</code></li>
+<li>Legal/license display name: <code>Flow Forge Lab</code></li>
+</ul>
+<p>These names differ because GitHub, npm, Homebrew, Go modules, and
+legal notices have different naming conventions; remaining references
+use those forms intentionally.</p>
 <h2 id="mockup">Mockup</h2>
 <p>A clickable UI mockup of a possible dashboard is at <a
-href="mockup.html"><code>mockup.html</code></a>. It is a reference for
-later triage surfaces, not a v0.1 commitment.</p>
+href="mockup.html"><code>mockup.html</code></a>. It is design-only; the
+current local UI is <code>skills-manager serve</code>.</p>
 <h2 id="license">License</h2>
-<p>TBD.</p>
+<p><a href="LICENSE">MIT</a> © Flow Forge Lab.</p>
     <footer class="doc-footer">
       <span>skills-manager · design doc</span>
       <span><a href="README.md">view source (.md)</a></span>

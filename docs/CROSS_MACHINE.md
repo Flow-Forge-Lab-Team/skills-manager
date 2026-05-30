@@ -250,7 +250,7 @@ The project's `.claude/skills/` (etc.) directories might be gitignored (they're 
 
 **Option A: Commit harness dirs.** Set `gitignore_harness_dirs: false` in project config. Now `.claude/skills/` is committed. Teammates without the manager still get the skills, they just don't get update tracking.
 
-**Option B: Run the manager.** Provide a one-liner: `npm install -g skills-manager && skills-manager install`.
+**Option B: Run the manager.** Provide a one-liner after npm publishing is live: `npm install -g @flowforgelab/skills-manager && skills-manager install`.
 
 **Option C: Hybrid.** Commit the harness dirs for non-manager users; the manager owns them when it's around. Manifest tracking still works (manager respects the existing files via `preserve_existing: true`).
 

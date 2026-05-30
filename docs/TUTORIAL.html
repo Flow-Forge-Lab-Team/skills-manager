@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>5-minute tutorial — skills-manager</title>
+<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/styles/atom-one-dark.min.css">
+<script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/highlight.min.js"></script>
+<script>document.addEventListener('DOMContentLoaded', () => {
+  // Pandoc emits class="sourceCode <lang>"; normalize to language-<lang> for hljs.
+  document.querySelectorAll('pre code.sourceCode').forEach(el => {
+    const lang = [...el.classList].find(c => c !== 'sourceCode');
+    if (lang) {
+      el.classList.add('language-' + lang);
+      hljs.highlightElement(el);
+    }
+  });
+});</script>
+</head>
+<body>
+<div class="app">
+  <nav class="sidebar">
+    <a href="index.html" class="brand">
+      <span class="brand-logo">s</span>
+      <span class="brand-name">skills-manager</span>
+    </a>
+    <div class="nav-section">Foundation</div>
+    <a href="VISION.html" class="nav-item">Vision</a>
+    <a href="ARCHITECTURE.html" class="nav-item">Architecture</a>
+    <a href="ROADMAP.html" class="nav-item">Roadmap</a>
+    <a href="DATA_MODEL.html" class="nav-item">Data model</a>
+    <div class="nav-section">Surface</div>
+    <a href="CLI_REFERENCE.html" class="nav-item">CLI reference</a>
+    <a href="TAXONOMY.html" class="nav-item">Taxonomy</a>
+    <div class="nav-section">Subsystems</div>
+    <a href="COMPATIBILITY.html" class="nav-item">Compatibility</a>
+    <a href="INGEST_FLOW.html" class="nav-item">Ingest flow</a>
+    <a href="UPDATE_FLOW.html" class="nav-item">Update flow</a>
+    <a href="BUNDLED_SKILLS.html" class="nav-item">Bundled skills</a>
+    <a href="SCHEDULING.html" class="nav-item">Scheduling</a>
+    <a href="CROSS_MACHINE.html" class="nav-item">Cross-machine sync</a>
+    <div class="nav-section">Out-of-band</div>
+    <a href="../mockup.html" class="nav-item">UI mockup ↗</a>
+    <a href="../README.html" class="nav-item">README</a>
+  </nav>
+  <main class="content">
+    <div class="doc-meta">
+      <span class="crumb"><a href="index.html">docs</a></span>
+      <span class="sep">/</span>
+      <span class="crumb">TUTORIAL.md</span>
+    </div>
+<h1 id="5-minute-tutorial-from-zero-to-a-working-setup">5-minute
+tutorial: from zero to a working setup</h1>
+<p>This walks you from a fresh install to skills installed in a real
+project, in about five minutes. It uses <strong>copy mode</strong> (the
+default) and needs no LLM provider or network beyond the install step.
+The path below starts from an empty manager home and uses the committed
+<code>examples/hello-skill</code> fixture, so it works even if you have
+never used an AI coding-tool skill before.</p>
+<h2 id="1-install-30s">1. Install (30s)</h2>
+<p>The verified install path today is the public Go module:</p>
+<div class="sourceCode" id="cb1"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="ex">go</span> install github.com/Flow-Forge-Lab-Team/skills-manager/cmd/skills-manager@latest</span>
+<span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="ex">skills-manager</span> <span class="at">--version</span></span></code></pre></div>
+<p>Expected output:</p>
+<pre class="text"><code>skills-manager 0.1.0-dev</code></pre>
+<p>The <code>curl | sh</code>, npm, and Homebrew commands are planned
+release channels. They are not the recommended public happy path until
+release assets, the npm package, and the Homebrew tap are live.</p>
+<h2 id="2-add-your-first-skill-1-min">2. Add your first skill (1
+min)</h2>
+<p>From a checkout of this repository, ingest the sample skill:</p>
+<div class="sourceCode" id="cb3"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="ex">skills-manager</span> add ./examples/hello-skill <span class="at">--yes</span></span></code></pre></div>
+<p>Expected output:</p>
+<pre class="text"><code>Ingested hello-skill to ~/.skills-manager/library/hello-skill</code></pre>
+<p>Check the library:</p>
+<div class="sourceCode" id="cb5"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a><span class="ex">skills-manager</span> list</span></code></pre></div>
+<p>Expected output:</p>
+<pre class="text"><code>hello-skill  Use when you want a small sample build skill for v</code></pre>
+<h2 id="3-create-a-zero-state-project-and-preview-matches-1-min">3.
+Create a zero-state project and preview matches (1 min)</h2>
+<p>Create a small project with one stack signal and one active target
+directory:</p>
+<div class="sourceCode" id="cb7"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a><span class="fu">mkdir</span> <span class="at">-p</span> /tmp/sm-demo/.codex</span>
+<span id="cb7-2"><a href="#cb7-2" aria-hidden="true" tabindex="-1"></a><span class="bu">printf</span> <span class="st">&#39;{&quot;dependencies&quot;:{&quot;next&quot;:&quot;15.0.0&quot;,&quot;react&quot;:&quot;19.0.0&quot;}}\n&#39;</span> <span class="op">&gt;</span> /tmp/sm-demo/package.json</span>
+<span id="cb7-3"><a href="#cb7-3" aria-hidden="true" tabindex="-1"></a><span class="bu">printf</span> <span class="st">&#39;{}\n&#39;</span> <span class="op">&gt;</span> /tmp/sm-demo/.codex/config.json</span>
+<span id="cb7-4"><a href="#cb7-4" aria-hidden="true" tabindex="-1"></a><span class="ex">skills-manager</span> init /tmp/sm-demo <span class="at">--non-interactive</span></span></code></pre></div>
+<p>Expected output:</p>
+<pre class="text"><code>Initialized /tmp/sm-demo
+Categories: Engineering, Design
+Tags: nextjs, nodejs, react
+Harnesses: claude, codex, grok, antigravity, gemini, hermes, openclaw</code></pre>
+<p>The project now has:</p>
+<pre class="text"><code>/tmp/sm-demo/.skills/project.yaml
+/tmp/sm-demo/.skills/installed.lock</code></pre>
+<p>Preview why the sample skill matches:</p>
+<div class="sourceCode" id="cb10"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb10-1"><a href="#cb10-1" aria-hidden="true" tabindex="-1"></a><span class="ex">skills-manager</span> match <span class="at">--project</span> /tmp/sm-demo <span class="at">--explain</span></span></code></pre></div>
+<p>Expected output:</p>
+<pre class="text"><code>hello-skill (score: 1) — category overlap: 1
+  harnesses: antigravity, claude, codex, gemini, grok, hermes, openclaw</code></pre>
+<h2 id="4-install-into-the-project-1-min">4. Install into the project (1
+min)</h2>
+<div class="sourceCode" id="cb12"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb12-1"><a href="#cb12-1" aria-hidden="true" tabindex="-1"></a><span class="ex">skills-manager</span> install <span class="at">--project</span> /tmp/sm-demo</span></code></pre></div>
+<p>Expected output:</p>
+<pre class="text"><code>Installing skills:
+- hello-skill: category match; harnesses: antigravity, claude, codex, gemini, grok, hermes, openclaw
+  copied .agents/skills/hello-skill
+  copied .claude/skills/hello-skill
+  copied .codex/skills/hello-skill
+  copied .grok/skills/hello-skill
+  copied skills/hello-skill</code></pre>
+<p>This copies matching skills into the active target directory and
+records the manager-owned files. Inspect the result:</p>
+<div class="sourceCode" id="cb14"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb14-1"><a href="#cb14-1" aria-hidden="true" tabindex="-1"></a><span class="fu">find</span> /tmp/sm-demo <span class="at">-maxdepth</span> 4 <span class="at">-type</span> f <span class="kw">|</span> <span class="fu">sort</span></span></code></pre></div>
+<p>Expected files include:</p>
+<pre class="text"><code>/tmp/sm-demo/.agents/skills/hello-skill/.skill-meta.yaml
+/tmp/sm-demo/.agents/skills/hello-skill/SKILL.md
+/tmp/sm-demo/.claude/skills/hello-skill/.skill-meta.yaml
+/tmp/sm-demo/.claude/skills/hello-skill/SKILL.md
+/tmp/sm-demo/.codex/config.json
+/tmp/sm-demo/.codex/skills/hello-skill/.skill-meta.yaml
+/tmp/sm-demo/.codex/skills/hello-skill/SKILL.md
+/tmp/sm-demo/.grok/skills/hello-skill/.skill-meta.yaml
+/tmp/sm-demo/.grok/skills/hello-skill/SKILL.md
+/tmp/sm-demo/.skills/installed.lock
+/tmp/sm-demo/.skills/project.yaml
+/tmp/sm-demo/skills/hello-skill/.skill-meta.yaml
+/tmp/sm-demo/skills/hello-skill/SKILL.md
+/tmp/sm-demo/package.json</code></pre>
+<p>The lock file records the desired skill set:</p>
+<pre class="text"><code>version: 1
+generated_by: skills-manager 0.1.0-dev
+skills:
+  - name: hello-skill
+    harnesses:
+      - antigravity
+      - claude
+      - codex
+      - gemini
+      - grok
+      - hermes
+      - openclaw</code></pre>
+<p>Everything is reversible:</p>
+<div class="sourceCode" id="cb17"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb17-1"><a href="#cb17-1" aria-hidden="true" tabindex="-1"></a><span class="ex">skills-manager</span> uninstall <span class="at">--project</span> /tmp/sm-demo <span class="at">--confirm</span></span></code></pre></div>
+<h2 id="5-keep-it-healthy-1-min">5. Keep it healthy (1 min)</h2>
+<div class="sourceCode" id="cb18"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb18-1"><a href="#cb18-1" aria-hidden="true" tabindex="-1"></a><span class="ex">skills-manager</span> check                <span class="co"># poll GitHub-sourced skills for updates</span></span>
+<span id="cb18-2"><a href="#cb18-2" aria-hidden="true" tabindex="-1"></a><span class="ex">skills-manager</span> update               <span class="co"># review pending updates (raw diff + safety flags)</span></span>
+<span id="cb18-3"><a href="#cb18-3" aria-hidden="true" tabindex="-1"></a><span class="ex">skills-manager</span> doctor               <span class="co"># verify manifests, fingerprints, requirements</span></span>
+<span id="cb18-4"><a href="#cb18-4" aria-hidden="true" tabindex="-1"></a><span class="ex">skills-manager</span> serve                <span class="co"># open the local triage web UI</span></span></code></pre></div>
+<h2 id="existing-user-scan-path">Existing-user scan path</h2>
+<p>If you already use Claude Code, Codex, or another supported
+SKILL.md-style tool, you may have skills scattered in
+<code>~/.claude/skills/</code>, <code>~/.codex/skills/</code>, and other
+tool directories. Discover them after the zero-state flow:</p>
+<div class="sourceCode" id="cb19"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb19-1"><a href="#cb19-1" aria-hidden="true" tabindex="-1"></a><span class="ex">skills-manager</span> scan</span>
+<span id="cb19-2"><a href="#cb19-2" aria-hidden="true" tabindex="-1"></a><span class="ex">skills-manager</span> scan <span class="at">--ingest</span>        <span class="co"># interactive review</span></span>
+<span id="cb19-3"><a href="#cb19-3" aria-hidden="true" tabindex="-1"></a><span class="ex">skills-manager</span> scan <span class="at">--auto-ingest</span>   <span class="co"># non-interactive high-confidence ingest</span></span></code></pre></div>
+<h2 id="where-to-go-next">Where to go next</h2>
+<ul>
+<li><a href="CLI_REFERENCE.html">CLI reference</a> — every command and
+flag</li>
+<li><a href="ARCHITECTURE.html">Architecture</a> — how
+install/compile/assemble fit together</li>
+<li><a href="UPDATE_FLOW.html">Update flow</a> — safety review of upstream
+changes</li>
+<li><a href="CROSS_MACHINE.html">Cross-machine</a> — sync your library
+across machines</li>
+<li>The <a
+href="https://github.com/Flow-Forge-Lab-Team/skills-manager/tree/main/examples/sample-project"><code>examples/sample-project</code></a>
+reference application shows a typical project setup end to end.</li>
+</ul>
+    <footer class="doc-footer">
+      <span>skills-manager · design doc</span>
+      <span><a href="TUTORIAL.md">view source (.md)</a></span>
+    </footer>
+  </main>
+</div>
+</body>
+</html>
