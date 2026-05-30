@@ -26,6 +26,7 @@ type ingestOptions struct {
 	interactive bool   // false when --json, --quiet, or not a TTY
 	handoff     bool   // --handoff: write prompt file for manual LLM/agent run of skills-ingest
 	from        string // --from <file>: use JSON from handoff instead of local detectors
+	precomputed *ingestPrecomputed
 }
 
 type ingestResult struct {
@@ -38,6 +39,16 @@ type ingestResult struct {
 	Tags        []string               `json:"tags,omitempty"`
 	Confidence  string                 `json:"confidence,omitempty"`
 	Origin      map[string]interface{} `json:"origin,omitempty"`
+}
+
+type ingestPrecomputed struct {
+	Categories           []string
+	Tags                 []string
+	Confidence           string
+	CompatibilityResults map[string]detectionResult
+	Requirements         requirements
+	FromOutput           *ingestOutput
+	CategorizationSource string
 }
 
 // ingestOutput mirrors the shape produced by the skills-ingest bundled skill (and its schema).
@@ -85,6 +96,28 @@ type ingestOutput struct {
 		Requirements  string `json:"requirements"`
 	} `json:"confidence"`
 	Notes []string `json:"notes"`
+}
+
+func requirementsFromIngestOutput(out *ingestOutput) requirements {
+	reqs := requirements{Inferred: false}
+	for _, t := range out.Requirements.Tools {
+		reqs.Tools = append(reqs.Tools, toolRequirement{Name: t.Name, Required: t.Required, Check: t.Check})
+	}
+	for _, m := range out.Requirements.MCPServers {
+		reqs.MCPServers = append(reqs.MCPServers, mcpRequirement{Name: m.Name, Required: m.Required, ConfigHint: m.ConfigHint})
+	}
+	for _, c := range out.Requirements.Credentials {
+		reqs.Credentials = append(reqs.Credentials, credentialRequirement{Name: c.Name, Source: c.Source, Required: c.Required})
+	}
+	reqs.Scripts.AllowAutoRun = out.Requirements.Scripts.AllowAutoRun
+	reqs.Scripts.RequiredRuntimes = out.Requirements.Scripts.RequiredRuntimes
+	if tu := out.Requirements.Model.ToolUse; tu != "" {
+		reqs.Model.ToolUse = tu
+	}
+	reqs.Model.MinContextTokens = out.Requirements.Model.MinContextTokens
+	reqs.Model.Reasoning = out.Requirements.Model.Reasoning
+	reqs.Model.Notes = out.Requirements.Model.Notes
+	return reqs
 }
 
 func ingestFromSource(src ingestSource, opts ingestOptions, home string, out io.Writer) ingestResult {
@@ -190,7 +223,18 @@ func ingestFromSource(src ingestSource, opts ingestOptions, home string, out io.
 	var fromOut *ingestOutput
 	categorizationSource := "ingest"
 
-	if opts.handoff {
+	if opts.precomputed != nil {
+		cats = append([]string(nil), opts.precomputed.Categories...)
+		tags = append([]string(nil), opts.precomputed.Tags...)
+		confidence = opts.precomputed.Confidence
+		compatResults = opts.precomputed.CompatibilityResults
+		reqs = opts.precomputed.Requirements
+		fromOut = opts.precomputed.FromOutput
+		categorizationSource = opts.precomputed.CategorizationSource
+		if categorizationSource == "" {
+			categorizationSource = "ingest"
+		}
+	} else if opts.handoff {
 		promptPath, err := writeIngestHandoffPrompt(decl.name, src.label, src.raw, skillBodyStr)
 		if err != nil {
 			return ingestResult{
@@ -225,24 +269,7 @@ func ingestFromSource(src ingestSource, opts ingestOptions, home string, out io.
 		tags = fromOut.Tags
 		confidence = fromOut.Confidence.Categories // primary signal for confirmation/auto flow
 		// Map requirements for auto-missing checks + later meta
-		reqs = requirements{Inferred: false}
-		for _, t := range fromOut.Requirements.Tools {
-			reqs.Tools = append(reqs.Tools, toolRequirement{Name: t.Name, Required: t.Required, Check: t.Check})
-		}
-		for _, m := range fromOut.Requirements.MCPServers {
-			reqs.MCPServers = append(reqs.MCPServers, mcpRequirement{Name: m.Name, Required: m.Required, ConfigHint: m.ConfigHint})
-		}
-		for _, c := range fromOut.Requirements.Credentials {
-			reqs.Credentials = append(reqs.Credentials, credentialRequirement{Name: c.Name, Source: c.Source, Required: c.Required})
-		}
-		reqs.Scripts.AllowAutoRun = fromOut.Requirements.Scripts.AllowAutoRun
-		reqs.Scripts.RequiredRuntimes = fromOut.Requirements.Scripts.RequiredRuntimes
-		if tu := fromOut.Requirements.Model.ToolUse; tu != "" {
-			reqs.Model.ToolUse = tu
-		}
-		reqs.Model.MinContextTokens = fromOut.Requirements.Model.MinContextTokens
-		reqs.Model.Reasoning = fromOut.Requirements.Model.Reasoning
-		reqs.Model.Notes = fromOut.Requirements.Model.Notes
+		reqs = requirementsFromIngestOutput(fromOut)
 		categorizationSource = "ingest-handoff"
 		// compatResults remains nil (handled in meta block using fromOut)
 	} else if opts.auto && llmProviderConfigured(home) {
@@ -266,24 +293,7 @@ func ingestFromSource(src ingestSource, opts ingestOptions, home string, out io.
 		cats = fromOut.Categories
 		tags = fromOut.Tags
 		confidence = fromOut.Confidence.Categories
-		reqs = requirements{Inferred: false}
-		for _, t := range fromOut.Requirements.Tools {
-			reqs.Tools = append(reqs.Tools, toolRequirement{Name: t.Name, Required: t.Required, Check: t.Check})
-		}
-		for _, m := range fromOut.Requirements.MCPServers {
-			reqs.MCPServers = append(reqs.MCPServers, mcpRequirement{Name: m.Name, Required: m.Required, ConfigHint: m.ConfigHint})
-		}
-		for _, c := range fromOut.Requirements.Credentials {
-			reqs.Credentials = append(reqs.Credentials, credentialRequirement{Name: c.Name, Source: c.Source, Required: c.Required})
-		}
-		reqs.Scripts.AllowAutoRun = fromOut.Requirements.Scripts.AllowAutoRun
-		reqs.Scripts.RequiredRuntimes = fromOut.Requirements.Scripts.RequiredRuntimes
-		if tu := fromOut.Requirements.Model.ToolUse; tu != "" {
-			reqs.Model.ToolUse = tu
-		}
-		reqs.Model.MinContextTokens = fromOut.Requirements.Model.MinContextTokens
-		reqs.Model.Reasoning = fromOut.Requirements.Model.Reasoning
-		reqs.Model.Notes = fromOut.Requirements.Model.Notes
+		reqs = requirementsFromIngestOutput(fromOut)
 		categorizationSource = "skills-ingest-provider"
 	} else {
 		detectors, _ := loadDetectors()

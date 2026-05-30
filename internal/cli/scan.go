@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 )
@@ -16,9 +17,26 @@ type scanResult struct {
 	GuessedOrigin string `json:"guessed_origin"`
 }
 
+type scanMissingDependencies struct {
+	Tools       []string
+	MCPServers  []string
+	Model       []string
+	Credentials []string
+	Runtimes    []string
+}
+
+type scanAutoIngestCandidate struct {
+	Result      scanResult
+	SkillName   string
+	Confidence  string
+	Missing     scanMissingDependencies
+	Precomputed *ingestPrecomputed
+}
+
 func runScan(args []string, stdout io.Writer, stderr io.Writer, gf globalFlags) int {
 	var ingest, autoIngest bool
 	var pathsOverride string
+	var ignoredCount int
 
 	// Parse flags
 	for _, arg := range args {
@@ -102,12 +120,13 @@ func runScan(args []string, stdout io.Writer, stderr io.Writer, gf globalFlags) 
 			skillPath := filepath.Join(searchPath, entry.Name())
 			skillMdPath := filepath.Join(skillPath, "SKILL.md")
 
-			// Check if skill is ignored
-			if inSlice(ignoreList, skillPath) {
+			if _, err := os.Stat(skillMdPath); err != nil {
 				continue
 			}
 
-			if _, err := os.Stat(skillMdPath); err != nil {
+			// Check if skill is ignored
+			if inSlice(ignoreList, skillPath) {
+				ignoredCount++
 				continue
 			}
 
@@ -174,10 +193,24 @@ func runScan(args []string, stdout io.Writer, stderr io.Writer, gf globalFlags) 
 			yes:         autoIngest,
 			interactive: interactive,
 		}
+		blockedAutoIngest := map[string]scanAutoIngestCandidate{}
+		if autoIngest {
+			preflight := buildScanAutoIngestPreflight(results, opts, home)
+			printScanAutoIngestPreflight(humanOut, preflight, len(results)+ignoredCount, ignoredCount)
+			for _, candidate := range preflight {
+				blockedAutoIngest[candidate.Result.Path] = candidate
+			}
+		}
 
 		for _, r := range results {
 			if r.Status != "unregistered" {
 				fmt.Fprintf(humanOut, "Already known: %s (%s) - %s\n", r.Name, r.Path, r.Status)
+				continue
+			}
+
+			candidate, hasPreflight := blockedAutoIngest[r.Path]
+			if hasPreflight && candidate.Missing.any() {
+				fmt.Fprintf(humanOut, "Blocked %s (%s): missing required dependencies (%s)\n", candidate.displayName(), r.Path, candidate.Missing.inline())
 				continue
 			}
 
@@ -217,7 +250,11 @@ func runScan(args []string, stdout io.Writer, stderr io.Writer, gf globalFlags) 
 				continue
 			}
 
-			result := ingestFromSource(src, opts, home, humanOut)
+			ingestOpts := opts
+			if hasPreflight {
+				ingestOpts.precomputed = candidate.Precomputed
+			}
+			result := ingestFromSource(src, ingestOpts, home, humanOut)
 			if result.Skipped {
 				fmt.Fprintf(humanOut, "%s %s (%s): %s\n", scanIngestOutcome(result), result.Name, r.Path, result.Reason)
 			} else {
@@ -227,6 +264,231 @@ func runScan(args []string, stdout io.Writer, stderr io.Writer, gf globalFlags) 
 	}
 
 	return ExitSuccess
+}
+
+func buildScanAutoIngestPreflight(results []scanResult, opts ingestOptions, home string) []scanAutoIngestCandidate {
+	var candidates []scanAutoIngestCandidate
+	for _, r := range results {
+		if r.Status != "unregistered" {
+			continue
+		}
+		src := ingestSource{
+			kind:  "local",
+			raw:   r.Path,
+			path:  r.Path,
+			label: r.Path,
+		}
+		candidates = append(candidates, analyzeScanAutoIngestCandidate(r, src, opts, home))
+	}
+	return candidates
+}
+
+func analyzeScanAutoIngestCandidate(result scanResult, src ingestSource, opts ingestOptions, home string) scanAutoIngestCandidate {
+	candidate := scanAutoIngestCandidate{Result: result, SkillName: result.Name}
+	skillMdPath := filepath.Join(src.path, "SKILL.md")
+	decl, _, err := parseSkillFrontmatterFull(skillMdPath)
+	if err == nil && decl.name != "" {
+		candidate.SkillName = decl.name
+	}
+	if err != nil || decl.name == "" || !isValidSkillName(decl.name) {
+		return candidate
+	}
+
+	fp, _, err := fingerprintSkillMd(skillMdPath)
+	if err != nil {
+		return candidate
+	}
+	libraryPath, err := ensureLibrary(home)
+	if err != nil {
+		return candidate
+	}
+	entries, _ := os.ReadDir(libraryPath)
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		metaPath := filepath.Join(libraryPath, entry.Name(), ".skill-meta.yaml")
+		existingMeta, err := readSkillMeta(metaPath)
+		if err == nil && existingMeta.Fingerprint.SHA256 == fp {
+			return candidate
+		}
+	}
+	targetDir := filepath.Join(libraryPath, decl.name)
+	if _, err := os.Stat(targetDir); err == nil {
+		existingMetaPath := filepath.Join(targetDir, ".skill-meta.yaml")
+		existingMeta, _ := readSkillMeta(existingMetaPath)
+		if existingMeta.Fingerprint.SHA256 != fp {
+			return candidate
+		}
+	}
+
+	skillBody, err := os.ReadFile(skillMdPath)
+	if err != nil {
+		return candidate
+	}
+	skillBodyStr := string(skillBody)
+
+	var confidence string
+	var reqs requirements
+	var cats, tags []string
+	var compatResults map[string]detectionResult
+	var fromOut *ingestOutput
+	categorizationSource := "ingest"
+	if opts.auto && llmProviderConfigured(home) {
+		prompt := buildIngestPrompt(decl.name, src.label, src.raw, skillBodyStr)
+		output, err := runConfiguredLLMProvider(home, prompt)
+		if err != nil {
+			return candidate
+		}
+		fromOut, err = parseIngestOutput([]byte(output), "provider output")
+		if err != nil {
+			return candidate
+		}
+		cats = fromOut.Categories
+		tags = fromOut.Tags
+		confidence = fromOut.Confidence.Categories
+		reqs = requirementsFromIngestOutput(fromOut)
+		categorizationSource = "skills-ingest-provider"
+	} else {
+		detectors, _ := loadDetectors()
+		compatResults = detectCompatibility(detectors, skillBodyStr)
+		cats, tags, _ = suggestCategories(decl.name, decl.description)
+		confidence = computeConfidence(decl, compatResults, cats)
+		reqs = inferRequirements(detectors, skillBodyStr)
+	}
+
+	candidate.Confidence = confidence
+	candidate.Missing = missingDependenciesForRequirements(reqs)
+	candidate.Precomputed = &ingestPrecomputed{
+		Categories:           cats,
+		Tags:                 tags,
+		Confidence:           confidence,
+		CompatibilityResults: compatResults,
+		Requirements:         reqs,
+		FromOutput:           fromOut,
+		CategorizationSource: categorizationSource,
+	}
+	return candidate
+}
+
+func printScanAutoIngestPreflight(out io.Writer, candidates []scanAutoIngestCandidate, discoveredCount int, ignoredCount int) {
+	if out == io.Discard {
+		return
+	}
+
+	eligibleCount := 0
+	blockedCount := 0
+	for _, candidate := range candidates {
+		if candidate.Missing.any() {
+			blockedCount++
+			continue
+		}
+		if candidate.Confidence == "high" {
+			eligibleCount++
+		}
+	}
+
+	knownCount := discoveredCount - len(candidates)
+	fmt.Fprintln(out, "Auto-ingest preflight:")
+	fmt.Fprintf(out, "  Discovered candidates: %d\n", discoveredCount)
+	fmt.Fprintf(out, "  Already in-library / duplicate / ignored: %d", knownCount)
+	if ignoredCount > 0 {
+		fmt.Fprintf(out, " (%d ignored)", ignoredCount)
+	}
+	fmt.Fprintln(out)
+	fmt.Fprintf(out, "  Unregistered candidates: %d\n", len(candidates))
+	fmt.Fprintf(out, "  Eligible for auto-ingest: %d\n", eligibleCount)
+	fmt.Fprintf(out, "  Blocked by missing dependencies: %d\n", blockedCount)
+
+	groups := groupScanMissingDependencies(candidates)
+	if len(groups) > 0 {
+		fmt.Fprintln(out, "Missing dependency groups:")
+		for _, key := range sortedMapKeys(groups) {
+			fmt.Fprintf(out, "  - %s: %s\n", key, strings.Join(groups[key], ", "))
+		}
+	}
+
+	fmt.Fprintln(out, "Options:")
+	fmt.Fprintln(out, "  - Continue now: --auto-ingest will ingest eligible candidates only and skip dependency-blocked candidates.")
+	fmt.Fprintln(out, "  - Review first: rerun `skills-manager scan --ingest` to inspect candidates manually.")
+	fmt.Fprintln(out, "  - Configure dependencies: install tools, enable MCP servers, provide credentials, or use a capable model, then rerun.")
+	if len(candidates) > 0 && eligibleCount == 0 {
+		fmt.Fprintln(out, "No eligible candidates remain after dependency preflight.")
+	}
+}
+
+func missingDependenciesForRequirements(reqs requirements) scanMissingDependencies {
+	return scanMissingDependencies{
+		Tools:       missingRequiredTools(reqs),
+		MCPServers:  missingRequiredMCPServers(reqs),
+		Model:       missingModelCapabilities(reqs),
+		Credentials: missingRequiredCredentials(reqs),
+		Runtimes:    missingRequiredScriptRuntimes(reqs),
+	}
+}
+
+func (m scanMissingDependencies) any() bool {
+	return len(m.Tools)+len(m.MCPServers)+len(m.Model)+len(m.Credentials)+len(m.Runtimes) > 0
+}
+
+func (m scanMissingDependencies) inline() string {
+	var parts []string
+	if len(m.Tools) > 0 {
+		parts = append(parts, "tools="+strings.Join(m.Tools, ","))
+	}
+	if len(m.MCPServers) > 0 {
+		parts = append(parts, "mcp_servers="+strings.Join(m.MCPServers, ","))
+	}
+	if len(m.Model) > 0 {
+		parts = append(parts, "model="+strings.Join(m.Model, ","))
+	}
+	if len(m.Credentials) > 0 {
+		parts = append(parts, "credentials="+strings.Join(m.Credentials, ","))
+	}
+	if len(m.Runtimes) > 0 {
+		parts = append(parts, "runtimes="+strings.Join(m.Runtimes, ","))
+	}
+	return strings.Join(parts, ", ")
+}
+
+func (c scanAutoIngestCandidate) displayName() string {
+	if c.SkillName != "" {
+		return c.SkillName
+	}
+	return c.Result.Name
+}
+
+func groupScanMissingDependencies(candidates []scanAutoIngestCandidate) map[string][]string {
+	groups := map[string][]string{}
+	for _, candidate := range candidates {
+		if !candidate.Missing.any() {
+			continue
+		}
+		label := fmt.Sprintf("%s (%s)", candidate.displayName(), candidate.Result.Path)
+		addScanMissingDependencyGroups(groups, "tools", candidate.Missing.Tools, label)
+		addScanMissingDependencyGroups(groups, "mcp_servers", candidate.Missing.MCPServers, label)
+		addScanMissingDependencyGroups(groups, "model", candidate.Missing.Model, label)
+		addScanMissingDependencyGroups(groups, "credentials", candidate.Missing.Credentials, label)
+		addScanMissingDependencyGroups(groups, "runtimes", candidate.Missing.Runtimes, label)
+	}
+	return groups
+}
+
+func addScanMissingDependencyGroups(groups map[string][]string, kind string, names []string, label string) {
+	for _, name := range names {
+		key := kind + "=" + name
+		groups[key] = append(groups[key], label)
+	}
+}
+
+func sortedMapKeys(m map[string][]string) []string {
+	keys := make([]string, 0, len(m))
+	for key := range m {
+		keys = append(keys, key)
+		sort.Strings(m[key])
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 func scanIngestOutcome(result ingestResult) string {
