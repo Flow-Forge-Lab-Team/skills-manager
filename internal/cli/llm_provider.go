@@ -27,18 +27,26 @@ type llmProviderResult struct {
 }
 
 func runConfiguredLLMProvider(home, prompt string) (string, error) {
-	cfg, err := loadManagerConfig(home)
+	result, err := runConfiguredLLMProviderWithMetadata(home, prompt)
 	if err != nil {
-		return "", err
-	}
-	result, err := callConfiguredLLMProvider(cfg.LLM, prompt)
-	if err != nil {
-		return "", err
-	}
-	if err := recordLLMUsage(home, result.Usage); err != nil {
 		return "", err
 	}
 	return result.Output, nil
+}
+
+func runConfiguredLLMProviderWithMetadata(home, prompt string) (llmProviderResult, error) {
+	cfg, err := loadManagerConfig(home)
+	if err != nil {
+		return llmProviderResult{}, err
+	}
+	result, err := callConfiguredLLMProvider(cfg.LLM, prompt)
+	if err != nil {
+		return llmProviderResult{}, err
+	}
+	if err := recordLLMUsage(home, result.Usage); err != nil {
+		return llmProviderResult{}, err
+	}
+	return result, nil
 }
 
 func callConfiguredLLMProvider(cfg llmConfig, prompt string) (llmProviderResult, error) {

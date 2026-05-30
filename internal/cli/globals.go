@@ -328,12 +328,13 @@ Forms:
 
 ` + globalFlagHelp()
 	case "compat-check":
-		return `skills-manager compat-check <skill> [--to <h1,h2,...>] (--auto | --handoff | --from <file>)
+		return `skills-manager compat-check (<skill> | --all) [--to <h1,h2,...>] (--auto | --handoff | --from <file>)
 
 Deeper (LLM) compatibility + execution requirements analysis beyond static detectors.
 
 Forms:
   --auto          run the configured LLM provider
+  --all           batch check every ingested library skill needing classification (requires --auto)
   --handoff       write a prompt file for an agent fallback
   --from <file>   validate and use saved agent/provider output
   --to <list>     comma-separated target harnesses (default: common set)
