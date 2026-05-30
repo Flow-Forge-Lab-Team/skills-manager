@@ -27,6 +27,13 @@ esac
 
 command -v curl >/dev/null 2>&1 || err "curl is required"
 command -v tar >/dev/null 2>&1 || err "tar is required"
+if command -v sha256sum >/dev/null 2>&1; then
+  sha256_file() { sha256sum "$1"; }
+elif command -v shasum >/dev/null 2>&1; then
+  sha256_file() { shasum -a 256 "$1"; }
+else
+  err "sha256sum or shasum is required"
+fi
 
 if [ "$VERSION" = "latest" ]; then
   base="https://github.com/$REPO/releases/latest/download"
@@ -36,6 +43,7 @@ fi
 
 # Archive names follow GoReleaser defaults: skills-manager_<os>_<arch>.tar.gz
 asset="skills-manager_${os}_${arch}.tar.gz"
+checksums="skills-manager_checksums.txt"
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 
@@ -43,6 +51,16 @@ printf 'Downloading %s/%s ...\n' "$base" "$asset"
 if ! curl -fsSL "$base/$asset" -o "$tmp/$asset"; then
   err "download failed (no release asset for ${os}/${arch}?). See https://github.com/$REPO/releases"
 fi
+
+printf 'Downloading %s/%s ...\n' "$base" "$checksums"
+if ! curl -fsSL "$base/$checksums" -o "$tmp/$checksums"; then
+  err "checksum download failed. See https://github.com/$REPO/releases"
+fi
+
+expected=$(awk -v asset="$asset" '$2 == asset { print $1; found = 1 } END { if (!found) exit 1 }' "$tmp/$checksums") \
+  || err "checksum file did not contain $asset"
+actual=$(sha256_file "$tmp/$asset" | awk '{ print $1 }')
+[ "$actual" = "$expected" ] || err "checksum verification failed for $asset"
 
 tar -xzf "$tmp/$asset" -C "$tmp"
 [ -f "$tmp/skills-manager" ] || err "archive did not contain the skills-manager binary"

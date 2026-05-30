@@ -140,7 +140,7 @@ trustworthy.
 
 - A skill installed via `skills-manager` works correctly in Cursor with the right globs
 - A skill installed via `skills-manager` works correctly in projects using AGENTS.md
-- Public install with `npm install -g skills-manager` (or equivalent) works on macOS, Linux, Windows
+- Public install with `npm install -g @flowforgelab/skills-manager` (or equivalent) works on macOS, Linux, Windows
 - A user new to the tool can go from zero to working setup in 5 minutes following the docs
 - v1 still works without cloud scheduling, a hosted backend, or a web UI session left running
 

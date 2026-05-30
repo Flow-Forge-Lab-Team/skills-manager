@@ -1,37 +1,90 @@
 # skills-manager
 
-A local-first CLI for managing AI agent skills across the harnesses you actually use — Claude Code, Codex CLI, Grok Build, Antigravity, Gemini CLI, Hermes, OpenClaw, and more.
+A local-first CLI for keeping AI coding-tool skills in one library, previewing
+which ones fit a project, and installing manager-owned copies into the tool
+directories you choose.
 
-> Markdown under [`docs/`](docs/) is canonical; the published docs site is
-> generated from it with MkDocs. New here? Start with the
+> Markdown under [`docs/`](docs/) is canonical. Committed HTML is generated with
+> [`docs/_build.sh`](docs/_build.sh) for local/repository browsing; no public
+> docs site is published yet. New here? Start with the
 > [5-minute tutorial](docs/TUTORIAL.md).
 
 ## Install
 
+The verified path today is to install from the public Go module:
+
 ```sh
-# curl | sh (downloads the latest release binary)
+go install github.com/Flow-Forge-Lab-Team/skills-manager/cmd/skills-manager@latest
+```
+
+This requires Go 1.26 or newer and puts the binary in `$(go env GOPATH)/bin`.
+Add that directory to `PATH` if needed, then run:
+
+```sh
+skills-manager --help
+```
+
+Pre-release channels are intentionally not the happy path yet:
+
+```sh
+# Planned after signed release assets exist.
 curl -fsSL https://raw.githubusercontent.com/Flow-Forge-Lab-Team/skills-manager/main/install.sh | sh
 
-# npm
+# Inspect first, then run. The installer verifies the release tarball against
+# skills-manager_checksums.txt before moving the binary into place.
+curl -fsSLO https://raw.githubusercontent.com/Flow-Forge-Lab-Team/skills-manager/main/install.sh
+sh install.sh
+
+# Planned after @flowforgelab/skills-manager is published.
 npm install -g @flowforgelab/skills-manager
 
-# Homebrew
+# Planned after Flow-Forge-Lab-Team/homebrew-tap exists.
 brew install Flow-Forge-Lab-Team/tap/skills-manager
-
-# from source
-go install github.com/Flow-Forge-Lab-Team/skills-manager/cmd/skills-manager@latest
 ```
 
 Then run the [5-minute tutorial](docs/TUTORIAL.md), or `skills-manager --help`.
 
+## Real CLI Demo
+
+This transcript was generated from the current CLI with a temporary manager home
+and the committed [`examples/hello-skill`](examples/hello-skill) fixture:
+
+```text
+$ skills-manager add ./examples/hello-skill --yes
+Ingested hello-skill to $SKILLS_MANAGER_HOME/library/hello-skill
+
+$ skills-manager init ./demo-project --non-interactive
+Initialized ./demo-project
+Categories: Engineering, Design
+Tags: nextjs, nodejs, react
+Harnesses: claude, codex, grok, antigravity, gemini, hermes, openclaw
+
+$ skills-manager match --project ./demo-project --explain
+hello-skill (score: 1) — category overlap: 1
+  harnesses: antigravity, claude, codex, gemini, grok, hermes, openclaw
+
+$ skills-manager install --project ./demo-project
+Installing skills:
+- hello-skill: category match; harnesses: antigravity, claude, codex, gemini, grok, hermes, openclaw
+  copied .agents/skills/hello-skill
+  copied .claude/skills/hello-skill
+  copied .codex/skills/hello-skill
+  copied .grok/skills/hello-skill
+  copied skills/hello-skill
+```
+
 ## What it does
 
-- **One library, many harnesses.** Maintain a canonical store of skills and have them appear in the right place for each agent CLI you use.
+- **One library, selected tool targets.** Maintain a canonical store of skills
+  and install copies into supported SKILL.md-style tool directories.
 - **Project-aware matching.** Tag a project with categories and stack tags; preview relevant skills before installing them.
-- **Update tracking with safety review.** Detect upstream changes, inspect diffs, and optionally generate guarded summaries before accepting.
+- **Trust-first defaults.** Copy mode is the default, installs are manifest
+  tracked, uninstall removes only manager-owned files, dependency gates run
+  before install, and update review shows diffs before accepting changes.
+- **Update tracking with safety review.** Detect upstream changes, inspect diffs,
+  and optionally generate guarded summaries before accepting.
 - **Execution-aware compatibility.** Skills declare harness support, model/tool assumptions, local binaries, MCP servers, scripts, and credentials.
 - **Cross-machine via git.** Sync your library between laptop, desktop, server.
-- **Reversible.** Copy mode by default. Uninstall removes only files the manager created.
 
 ## Why
 
@@ -58,9 +111,21 @@ Read in this order:
 11. [`docs/SCHEDULING.md`](docs/SCHEDULING.md) — scheduling design
 12. [`docs/CROSS_MACHINE.md`](docs/CROSS_MACHINE.md) — git sync
 
+## Naming
+
+- GitHub org/repo and Go module: `Flow-Forge-Lab-Team/skills-manager`
+- npm package name, when published: `@flowforgelab/skills-manager`
+- Homebrew tap, when created: `Flow-Forge-Lab-Team/tap`
+- Legal/license display name: `Flow Forge Lab`
+
+These names differ because GitHub, npm, Homebrew, Go modules, and legal notices
+have different naming conventions; remaining references use those forms
+intentionally.
+
 ## Mockup
 
-A clickable UI mockup of a possible dashboard is at [`mockup.html`](mockup.html). It is a reference for later triage surfaces, not a v0.1 commitment.
+A clickable UI mockup of a possible dashboard is at [`mockup.html`](mockup.html).
+It is design-only; the current local UI is `skills-manager serve`.
 
 ## License
 

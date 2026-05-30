@@ -191,6 +191,18 @@ config).</p>
 <pre><code>skills-manager match
 skills-manager match --explain           # show why each skill matches or doesn&#39;t
 skills-manager match --suggest           # only show not-yet-installed candidates</code></pre>
+<h3 id="skills-manager-cleanup"><code>skills-manager cleanup</code></h3>
+<p>Analyze the canonical ingested skill library for duplicate, similar,
+or confusingly overlapping skills. This is advisory only; it does not
+archive, merge, delete, or rewrite skill files.</p>
+<pre><code>skills-manager cleanup --auto            # call configured LLM provider
+skills-manager cleanup --handoff         # write prompt file for an external agent
+skills-manager cleanup --from &lt;file&gt;     # validate and print saved recommendations
+skills-manager cleanup --from &lt;file&gt; --json</code></pre>
+<p>Recommendations may propose <code>keep_as_is</code>,
+<code>archive</code>, <code>merge</code>, or <code>rename_split</code>,
+with reasoning and confidence for each group. <code>dedupe</code> is an
+alias for <code>cleanup</code>.</p>
 <h3
 id="skills-manager-projects"><code>skills-manager projects</code></h3>
 <p>List projects this manager has touched.</p>
@@ -206,16 +218,16 @@ skills-manager check --source github      # only check GitHub-sourced skills
 skills-manager check --since 7d           # only check skills last polled more than 7d ago
 skills-manager check --non-interactive --json   # for cron / scheduled use</code></pre>
 <p>Output (JSON mode):</p>
-<div class="sourceCode" id="cb15"><pre
-class="sourceCode json"><code class="sourceCode json"><span id="cb15-1"><a href="#cb15-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span></span>
-<span id="cb15-2"><a href="#cb15-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;checked_at&quot;</span><span class="fu">:</span> <span class="st">&quot;2026-05-22T14:30:00Z&quot;</span><span class="fu">,</span></span>
-<span id="cb15-3"><a href="#cb15-3" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;skills_checked&quot;</span><span class="fu">:</span> <span class="dv">251</span><span class="fu">,</span></span>
-<span id="cb15-4"><a href="#cb15-4" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;updates_available&quot;</span><span class="fu">:</span> <span class="dv">4</span><span class="fu">,</span></span>
-<span id="cb15-5"><a href="#cb15-5" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;errors&quot;</span><span class="fu">:</span> <span class="ot">[]</span><span class="fu">,</span></span>
-<span id="cb15-6"><a href="#cb15-6" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;updates&quot;</span><span class="fu">:</span> <span class="ot">[</span></span>
-<span id="cb15-7"><a href="#cb15-7" aria-hidden="true" tabindex="-1"></a>    <span class="fu">{</span><span class="dt">&quot;name&quot;</span><span class="fu">:</span> <span class="st">&quot;pdf&quot;</span><span class="fu">,</span> <span class="dt">&quot;from&quot;</span><span class="fu">:</span> <span class="st">&quot;1.4.2&quot;</span><span class="fu">,</span> <span class="dt">&quot;to&quot;</span><span class="fu">:</span> <span class="st">&quot;1.5.0&quot;</span><span class="fu">,</span> <span class="dt">&quot;source&quot;</span><span class="fu">:</span> <span class="st">&quot;marketplace&quot;</span><span class="fu">}</span></span>
-<span id="cb15-8"><a href="#cb15-8" aria-hidden="true" tabindex="-1"></a>  <span class="ot">]</span></span>
-<span id="cb15-9"><a href="#cb15-9" aria-hidden="true" tabindex="-1"></a><span class="fu">}</span></span></code></pre></div>
+<div class="sourceCode" id="cb16"><pre
+class="sourceCode json"><code class="sourceCode json"><span id="cb16-1"><a href="#cb16-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span></span>
+<span id="cb16-2"><a href="#cb16-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;checked_at&quot;</span><span class="fu">:</span> <span class="st">&quot;2026-05-22T14:30:00Z&quot;</span><span class="fu">,</span></span>
+<span id="cb16-3"><a href="#cb16-3" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;skills_checked&quot;</span><span class="fu">:</span> <span class="dv">251</span><span class="fu">,</span></span>
+<span id="cb16-4"><a href="#cb16-4" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;updates_available&quot;</span><span class="fu">:</span> <span class="dv">4</span><span class="fu">,</span></span>
+<span id="cb16-5"><a href="#cb16-5" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;errors&quot;</span><span class="fu">:</span> <span class="ot">[]</span><span class="fu">,</span></span>
+<span id="cb16-6"><a href="#cb16-6" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;updates&quot;</span><span class="fu">:</span> <span class="ot">[</span></span>
+<span id="cb16-7"><a href="#cb16-7" aria-hidden="true" tabindex="-1"></a>    <span class="fu">{</span><span class="dt">&quot;name&quot;</span><span class="fu">:</span> <span class="st">&quot;pdf&quot;</span><span class="fu">,</span> <span class="dt">&quot;from&quot;</span><span class="fu">:</span> <span class="st">&quot;1.4.2&quot;</span><span class="fu">,</span> <span class="dt">&quot;to&quot;</span><span class="fu">:</span> <span class="st">&quot;1.5.0&quot;</span><span class="fu">,</span> <span class="dt">&quot;source&quot;</span><span class="fu">:</span> <span class="st">&quot;marketplace&quot;</span><span class="fu">}</span></span>
+<span id="cb16-8"><a href="#cb16-8" aria-hidden="true" tabindex="-1"></a>  <span class="ot">]</span></span>
+<span id="cb16-9"><a href="#cb16-9" aria-hidden="true" tabindex="-1"></a><span class="fu">}</span></span></code></pre></div>
 <h3
 id="skills-manager-update-skill"><code>skills-manager update [&lt;skill&gt;]</code></h3>
 <p>Show pending updates (interactive review). Or accept/reject specific
@@ -235,8 +247,12 @@ id="skills-manager-summarize-skill"><code>skills-manager summarize &lt;skill&gt;
 skills-manager summarize pdf --handoff   # write prompt file for an agent fallback
 skills-manager summarize pdf --from &lt;file&gt;   # apply the agent&#39;s saved output</code></pre>
 <p>Raw diff and safety flags remain visible even when a summary exists.
-<code>--auto</code> requires <code>llm.provider</code>,
-<code>llm.api_key-env</code>, and <code>llm.model</code> to be set.</p>
+<code>--auto</code> requires <code>llm.provider</code>; direct API
+providers also require <code>llm.api_key-env</code> and
+<code>llm.model</code>. CLI providers (<code>codex-cli</code>,
+<code>cursor-cli</code>) use the user's existing local CLI
+authentication. The Cursor CLI provider runs headlessly with
+<code>--trust</code> in ask mode.</p>
 <h2 id="status-and-inspection">Status and inspection</h2>
 <h3 id="skills-manager-status"><code>skills-manager status</code></h3>
 <p>What's the state of things?</p>
@@ -336,7 +352,9 @@ id="skills-manager-config-set-key-value"><code>skills-manager config set &lt;key
 <pre><code>skills-manager config set mode symlink
 skills-manager config set llm.provider anthropic
 skills-manager config set llm.api_key-env ANTHROPIC_API_KEY
-skills-manager config set llm.model claude-3-5-haiku-latest</code></pre>
+skills-manager config set llm.model claude-3-5-haiku-latest
+skills-manager config set llm.provider codex-cli
+skills-manager config set llm.provider cursor-cli</code></pre>
 <h3
 id="skills-manager-config-show"><code>skills-manager config show</code></h3>
 <p>Print full config (with sensitive values masked).</p>
@@ -349,6 +367,34 @@ id="skills-manager-serve---port-n"><code>skills-manager serve [--port &lt;n&gt;]
 <pre><code>skills-manager serve                     # localhost:7777
 skills-manager serve --port 8000
 skills-manager serve --host 0.0.0.0      # for Tailscale / cross-device access</code></pre>
+<h2 id="usage-tracking">Usage tracking</h2>
+<h3
+id="skills-manager-usage-matrix"><code>skills-manager usage [matrix]</code></h3>
+<p>Show recorded skill usage aggregated by skill × project × harness ×
+count.</p>
+<pre><code>skills-manager usage                     # human-readable matrix
+skills-manager --json usage              # structured matrix for the UI</code></pre>
+<h3
+id="skills-manager-usage-receiver---port-n---host-addr"><code>skills-manager usage receiver [--port &lt;n&gt;] [--host &lt;addr&gt;]</code></h3>
+<p>Run a small OTLP/HTTP log receiver (default
+<code>127.0.0.1:4318</code>) that ingests Claude Code telemetry at
+<code>/v1/logs</code> and records skill activations. Skill names require
+Claude Code to run with <code>OTEL_LOG_TOOL_DETAILS=1</code>. OTEL
+events carry no project, so the project dimension is filled by the hook
+below.</p>
+<h3
+id="skills-manager-usage-hook---print-config"><code>skills-manager usage hook [--print-config]</code></h3>
+<p>Reads a PreToolUse hook payload on stdin and records one invocation
+when the hooked tool is the <code>Skill</code> tool, attributing the
+project from the hook's <code>cwd</code>. Best-effort: it always exits 0
+so it can never block a tool call. Use <code>--print-config</code> to
+print the <code>settings.json</code> hook snippet.</p>
+<h3
+id="skills-manager-usage-setup"><code>skills-manager usage setup</code></h3>
+<p>Print step-by-step OTEL receiver and PreToolUse hook setup
+instructions.</p>
+<p>See <a href="USAGE_TRACKING.html">USAGE_TRACKING.md</a> for the full
+picture.</p>
 <h2 id="catch-all">Catch-all</h2>
 <h3
 id="skills-manager-help-command"><code>skills-manager help [&lt;command&gt;]</code></h3>
@@ -369,7 +415,7 @@ id="skills-manager---version"><code>skills-manager --version</code></h3>
 <code>set</code>, <code>remove</code>, <code>purge</code></p>
 <p>Added in v0.3: <code>serve</code>, <code>watch</code> (plus UI
 integration commands)</p>
-<p>Added in v1.0: <code>port</code></p>
+<p>Added in v1.0: <code>port</code>, <code>cleanup</code></p>
     <footer class="doc-footer">
       <span>skills-manager · design doc</span>
       <span><a href="CLI_REFERENCE.md">view source (.md)</a></span>

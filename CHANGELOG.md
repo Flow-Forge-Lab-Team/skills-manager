@@ -24,11 +24,13 @@ All notable changes to skills-manager are documented here. The format follows
 - **skills-author** bundled skill + `skills-manager new --guided`: guided
   creation of well-formed skills (validated before ingest).
 - **Local OS scheduling** (`setup-schedule` / `unschedule`).
-- Release engineering: cross-platform binaries, install scripts (`curl | sh`,
-  npm, Homebrew tap), docs site, signed releases, and this changelog.
+- Release engineering groundwork: cross-platform binary packaging, installer
+  scripts, npm/Homebrew package scaffolding, signed-release planning, and this
+  changelog. Public release channels are not live yet.
 
 ### Notes
-- Markdown design docs under `docs/` are canonical; the published docs site is
-  generated from them with MkDocs.
+- Markdown design docs under `docs/` are canonical. Committed HTML is generated
+  with `docs/_build.sh`; `mkdocs.yml` is retained for future hosted docs, but no
+  public docs site is published yet.
 
 [Unreleased]: https://github.com/Flow-Forge-Lab-Team/skills-manager/commits/main

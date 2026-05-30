@@ -7,13 +7,14 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 # Docs in this directory.
-docs=(VISION ARCHITECTURE ROADMAP DATA_MODEL CLI_REFERENCE TAXONOMY \
+docs=(TUTORIAL VISION ARCHITECTURE ROADMAP DATA_MODEL CLI_REFERENCE TAXONOMY \
       COMPATIBILITY INGEST_FLOW UPDATE_FLOW BUNDLED_SKILLS SCHEDULING CROSS_MACHINE \
-      ACCEPTANCE_FLO_242)
+      USAGE_TRACKING ACCEPTANCE_FLO_242)
 
 # Pretty titles for each doc (used in <title> + nav).
 declare -A titles=(
   [VISION]="Vision"
+  [TUTORIAL]="5-minute tutorial"
   [ARCHITECTURE]="Architecture"
   [ROADMAP]="Roadmap"
   [DATA_MODEL]="Data model"
@@ -25,6 +26,7 @@ declare -A titles=(
   [BUNDLED_SKILLS]="Bundled skills"
   [SCHEDULING]="Scheduling"
   [CROSS_MACHINE]="Cross-machine sync"
+  [USAGE_TRACKING]="Usage tracking"
   [ACCEPTANCE_FLO_242]="FLO-242 acceptance smoke"
 )
 

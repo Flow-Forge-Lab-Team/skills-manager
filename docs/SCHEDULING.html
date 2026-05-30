@@ -83,8 +83,11 @@ the user explicitly adds that follow-up.</p>
 <div class="sourceCode" id="cb2"><pre
 class="sourceCode bash"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="ex">skills-manager</span> check <span class="at">--non-interactive</span> <span class="at">--quiet</span> <span class="at">--json</span> <span class="kw">&amp;&amp;</span></span>
 <span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a><span class="ex">skills-manager</span> summarize <span class="at">--pending</span> <span class="at">--auto</span> <span class="at">--non-interactive</span></span></code></pre></div>
-<p>This is useful only when <code>llm.provider</code> and a credential
-source such as <code>llm.api_key-env</code> are configured.</p>
+<p>This is useful only when <code>llm.provider</code> is configured.
+Direct API providers also need <code>llm.api_key-env</code>; CLI
+providers use the user's existing local CLI authentication, and the
+Cursor CLI provider runs headlessly with <code>--trust</code> in ask
+mode.</p>
 <h2 id="setup-wizard">Setup wizard</h2>
 <p><code>skills-manager setup-schedule</code> walks the user through
 local scheduling:</p>
