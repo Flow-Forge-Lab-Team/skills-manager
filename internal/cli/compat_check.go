@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -433,7 +435,8 @@ func listCompatCheckLibrarySkills(libraryPath string) ([]string, error) {
 }
 
 func compatCheckCachePath(home, skill string) string {
-	return filepath.Join(home, "compat-check", sanitizeFilePart(skill)+".json")
+	sum := sha256.Sum256([]byte(skill))
+	return filepath.Join(home, "compat-check", sanitizeFilePart(skill)+"-"+hex.EncodeToString(sum[:])[:12]+".json")
 }
 
 func skillFingerprintForFile(path string) (skillFingerprint, error) {

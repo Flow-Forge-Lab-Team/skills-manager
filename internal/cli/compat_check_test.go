@@ -131,6 +131,13 @@ func TestCompatCheckAllIsolatesProviderFailures(t *testing.T) {
 	}
 }
 
+func TestCompatCheckCachePathDisambiguatesCase(t *testing.T) {
+	home := t.TempDir()
+	if compatCheckCachePath(home, "API") == compatCheckCachePath(home, "api") {
+		t.Fatal("cache paths must not collide for distinct case-sensitive skill names")
+	}
+}
+
 func setupCompatCheckBatchHome(t *testing.T) string {
 	t.Helper()
 	home := t.TempDir()
