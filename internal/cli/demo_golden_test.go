@@ -76,6 +76,45 @@ func TestReadmeDemoTranscriptMatchesGolden(t *testing.T) {
 	}
 }
 
+func TestMatchExplainRespectsAlwaysInclude(t *testing.T) {
+	home := t.TempDir()
+	project := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+
+	writeFile(t, filepath.Join(home, "library", "catalog.yaml"), `version: 1
+skills:
+  - name: pinned-skill
+    categories: [Data]
+    tags: [python]
+    compatibility:
+      mode: portable
+    requirements:
+      tools: []
+`)
+	writeFile(t, filepath.Join(home, "library", "pinned-skill", "SKILL.md"), "---\nname: pinned-skill\n---\n")
+	writeFile(t, filepath.Join(project, ".skills", "project.yaml"), `version: 1
+name: demo
+categories: [Engineering]
+tags: [go]
+harnesses: [claude]
+skills:
+  always_include: [pinned-skill]
+`)
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := Run([]string{"match", "--project", project, "--explain"}, &stdout, &stderr)
+	if code != ExitSuccess {
+		t.Fatalf("match returned %d\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+	}
+	if strings.Contains(stdout.String(), "pinned-skill (rejected)") {
+		t.Fatalf("always_include skill was rejected:\n%s", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "pinned-skill (score: 999) - always_include") {
+		t.Fatalf("always_include skill did not appear as accepted:\n%s", stdout.String())
+	}
+}
+
 type demoCommand struct {
 	Display string
 	Args    []string

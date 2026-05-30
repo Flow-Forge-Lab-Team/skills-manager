@@ -115,6 +115,10 @@ func matchRejectionReasons(skill catalogSkill, project projectConfig) []string {
 	if never[skill.Name] {
 		return []string{"listed in project never_include"}
 	}
+	always := set(project.AlwaysInclude)
+	if always[skill.Name] {
+		return nil
+	}
 	pCats := set(project.Categories)
 	pTags := set(project.Tags)
 	if !intersects(set(skill.Categories), pCats) && !intersects(set(skill.Tags), pTags) {
