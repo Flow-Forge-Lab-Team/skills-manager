@@ -48,6 +48,7 @@ func newServeServer(home string) *serveServer {
 	s.mux.HandleFunc("/api/v1/settings", s.handleSettings)
 	s.mux.HandleFunc("/api/v1/notifications", s.handleNotifications)
 	s.mux.HandleFunc("/api/v1/notifications/", s.handleNotificationDelete)
+	s.mux.HandleFunc("/api/v1/scan/auto-ingest", s.handleScanAutoIngest)
 	s.mux.HandleFunc("/api/v1/run", s.handleRunCLI)
 	s.mux.Handle("/", s.handleStatic())
 	return s
@@ -541,6 +542,165 @@ func (s *serveServer) handleNotificationDelete(w http.ResponseWriter, r *http.Re
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+type triageScanAutoIngestRequest struct {
+	Paths []string `json:"paths,omitempty"`
+}
+
+type triageScanAutoIngestResponse struct {
+	DiscoveredCount       int                            `json:"discovered_count"`
+	EligibleAutoIngest    int                            `json:"eligible_auto_ingest_count"`
+	BlockedCount          int                            `json:"blocked_count"`
+	IgnoredCount          int                            `json:"ignored_count"`
+	Outcomes              []triageScanAutoIngestOutcome  `json:"outcomes"`
+	MissingDependencySets []triageMissingDependencyGroup `json:"missing_dependency_groups"`
+}
+
+type triageScanAutoIngestOutcome struct {
+	Name          string                  `json:"name"`
+	Path          string                  `json:"path"`
+	Status        string                  `json:"status"`
+	GuessedOrigin string                  `json:"guessed_origin"`
+	Outcome       string                  `json:"outcome"`
+	Reason        string                  `json:"reason,omitempty"`
+	Confidence    string                  `json:"confidence,omitempty"`
+	Missing       scanMissingDependencies `json:"missing,omitempty"`
+}
+
+type triageMissingDependencyGroup struct {
+	Kind       string   `json:"kind"`
+	Name       string   `json:"name"`
+	Candidates []string `json:"candidates"`
+}
+
+func (s *serveServer) handleScanAutoIngest(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !s.authorizeAPIWrite(w, r) {
+		return
+	}
+	var body triageScanAutoIngestRequest
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil && err != io.EOF {
+		writeAPIError(w, http.StatusBadRequest, fmt.Errorf("invalid JSON body: %w", err))
+		return
+	}
+	resp, err := s.runScanAutoIngest(body.Paths)
+	if err != nil {
+		writeAPIError(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSONResponse(w, resp)
+}
+
+func (s *serveServer) runScanAutoIngest(paths []string) (triageScanAutoIngestResponse, error) {
+	s.runMu.Lock()
+	defer s.runMu.Unlock()
+	prevHome := os.Getenv("SKILLS_MANAGER_HOME")
+	os.Setenv("SKILLS_MANAGER_HOME", s.home)
+	defer func() {
+		if prevHome == "" {
+			os.Unsetenv("SKILLS_MANAGER_HOME")
+		} else {
+			os.Setenv("SKILLS_MANAGER_HOME", prevHome)
+		}
+	}()
+
+	var pathsOverride string
+	if len(paths) > 0 {
+		cleaned := make([]string, 0, len(paths))
+		for _, p := range paths {
+			if trimmed := strings.TrimSpace(p); trimmed != "" {
+				cleaned = append(cleaned, trimmed)
+			}
+		}
+		pathsOverride = strings.Join(cleaned, ",")
+	}
+	searchPaths, err := scanSearchPaths(pathsOverride)
+	if err != nil {
+		return triageScanAutoIngestResponse{}, fmt.Errorf("get home: %w", err)
+	}
+	results, ignoredCount, err := collectScanResults(s.home, searchPaths)
+	if err != nil {
+		return triageScanAutoIngestResponse{}, err
+	}
+
+	opts := ingestOptions{auto: true, yes: true}
+	preflight := buildScanAutoIngestPreflight(results, opts, s.home)
+	candidates := map[string]scanAutoIngestCandidate{}
+	resp := triageScanAutoIngestResponse{
+		DiscoveredCount: len(results) + ignoredCount,
+		IgnoredCount:    ignoredCount,
+		Outcomes:        []triageScanAutoIngestOutcome{},
+	}
+	for _, candidate := range preflight {
+		candidates[candidate.Result.Path] = candidate
+		if candidate.Missing.any() {
+			resp.BlockedCount++
+			continue
+		}
+		if candidate.Confidence == "high" {
+			resp.EligibleAutoIngest++
+		}
+	}
+	resp.MissingDependencySets = triageMissingDependencyGroups(groupScanMissingDependencies(preflight))
+
+	for _, r := range results {
+		outcome := triageScanAutoIngestOutcome{
+			Name:          r.Name,
+			Path:          r.Path,
+			Status:        r.Status,
+			GuessedOrigin: r.GuessedOrigin,
+		}
+		if r.Status != "unregistered" {
+			outcome.Outcome = "known"
+			outcome.Reason = r.Status
+			resp.Outcomes = append(resp.Outcomes, outcome)
+			continue
+		}
+
+		candidate := candidates[r.Path]
+		outcome.Name = candidate.displayName()
+		outcome.Confidence = candidate.Confidence
+		outcome.Missing = candidate.Missing
+		if candidate.Missing.any() {
+			outcome.Outcome = "blocked"
+			outcome.Reason = "missing required dependencies"
+			resp.Outcomes = append(resp.Outcomes, outcome)
+			continue
+		}
+
+		result := ingestFromSource(ingestSource{
+			kind:  "local",
+			raw:   r.Path,
+			path:  r.Path,
+			label: r.Path,
+		}, ingestOptions{auto: true, yes: true, precomputed: candidate.Precomputed}, s.home, io.Discard)
+		if result.Skipped {
+			outcome.Outcome = strings.ToLower(scanIngestOutcome(result))
+			outcome.Reason = result.Reason
+		} else {
+			outcome.Name = result.Name
+			outcome.Outcome = "ingested"
+		}
+		resp.Outcomes = append(resp.Outcomes, outcome)
+	}
+	return resp, nil
+}
+
+func triageMissingDependencyGroups(groups map[string][]string) []triageMissingDependencyGroup {
+	out := make([]triageMissingDependencyGroup, 0, len(groups))
+	for _, key := range sortedMapKeys(groups) {
+		kind, name, _ := strings.Cut(key, "=")
+		out = append(out, triageMissingDependencyGroup{
+			Kind:       kind,
+			Name:       name,
+			Candidates: groups[key],
+		})
+	}
+	return out
 }
 
 // validateNotificationFile ensures name is a bare watch-*.json file with no path

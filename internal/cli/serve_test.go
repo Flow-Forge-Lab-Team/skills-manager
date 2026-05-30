@@ -481,6 +481,88 @@ func TestServeRunCLIWhitelist(t *testing.T) {
 	}
 }
 
+func TestServeScanAutoIngestReturnsStructuredPreflight(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+	skillsDir := filepath.Join(home, ".claude", "skills")
+	writeScanSkill(t, skillsDir, "high-conf", `---
+name: high-conf
+description: Use this skill when reviewing pull requests for security
+exclusive: claude
+---
+
+# high-conf
+
+Secure.
+`)
+	writeScanSkill(t, skillsDir, "needs-model", `---
+name: needs-model
+description: Use this skill when reviewing pull requests for security
+exclusive: claude
+---
+
+# needs-model
+
+Requires tool use.
+`)
+	ignoredDir := writeScanSkill(t, skillsDir, "ignored", `---
+name: ignored
+description: Ignored skill
+---
+
+# ignored
+`)
+	writeFile(t, filepath.Join(home, "scan-ignore.txt"), ignoredDir+"\n")
+
+	srv := newServeServer(home)
+	ts := httptest.NewServer(srv)
+	defer ts.Close()
+
+	sess := serveSessionToken(t, ts.URL)
+	body := strings.NewReader(`{"paths":["` + strings.ReplaceAll(skillsDir, `\`, `\\`) + `"]}`)
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/v1/scan/auto-ingest", body)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Skills-Manager-Token", sess)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		raw, _ := io.ReadAll(resp.Body)
+		t.Fatalf("status = %d, want 200; body=%s", resp.StatusCode, raw)
+	}
+	var got triageScanAutoIngestResponse
+	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
+		t.Fatal(err)
+	}
+	if got.DiscoveredCount != 3 || got.IgnoredCount != 1 || got.EligibleAutoIngest != 1 || got.BlockedCount != 1 {
+		t.Fatalf("counts = %+v, want discovered=3 ignored=1 eligible=1 blocked=1", got)
+	}
+	byName := map[string]triageScanAutoIngestOutcome{}
+	for _, outcome := range got.Outcomes {
+		byName[outcome.Name] = outcome
+	}
+	if byName["high-conf"].Outcome != "ingested" {
+		t.Fatalf("high-conf outcome = %+v, want ingested", byName["high-conf"])
+	}
+	blocked := byName["needs-model"]
+	if blocked.Outcome != "blocked" || len(blocked.Missing.Model) != 1 || blocked.Missing.Model[0] != "tool_use" {
+		t.Fatalf("needs-model outcome = %+v, want blocked by model tool_use", blocked)
+	}
+	if _, err := os.Stat(filepath.Join(home, "library", "high-conf")); err != nil {
+		t.Fatalf("eligible skill not ingested: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(home, "library", "needs-model")); err == nil {
+		t.Fatal("dependency-blocked skill should not be ingested")
+	}
+	if len(got.MissingDependencySets) != 1 ||
+		got.MissingDependencySets[0].Kind != "model" ||
+		got.MissingDependencySets[0].Name != "tool_use" {
+		t.Fatalf("missing_dependency_groups = %+v, want model/tool_use group", got.MissingDependencySets)
+	}
+}
+
 func TestServeBindsLocalhostByDefault(t *testing.T) {
 	opts, err := parseServeOptions(nil)
 	if err != nil {

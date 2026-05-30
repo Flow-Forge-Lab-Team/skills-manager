@@ -60,6 +60,11 @@ html, body {
 .overview-grid { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(280px, 0.8fr); gap: 16px; margin-bottom: 16px; }
 .panel, .empty-state { background: var(--bg-panel); border: 1px solid var(--border); border-radius: 8px; padding: 14px; }
 .panel-title { color: var(--text); font-size: 13px; font-weight: 600; margin-bottom: 12px; }
+.scan-panel { margin-bottom: 16px; }
+.scan-summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; margin-bottom: 12px; }
+.scan-summary .stat { background: var(--bg-elev); padding: 10px; }
+.dependency-groups { display: grid; gap: 8px; margin-bottom: 12px; }
+.dependency-group { display: flex; gap: 8px; align-items: start; }
 .activity-list { display: grid; gap: 10px; }
 .activity-row { display: grid; grid-template-columns: auto 1fr; gap: 10px; align-items: start; }
 .row-title { color: var(--text); font-weight: 600; overflow-wrap: anywhere; }

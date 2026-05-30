@@ -18,11 +18,11 @@ type scanResult struct {
 }
 
 type scanMissingDependencies struct {
-	Tools       []string
-	MCPServers  []string
-	Model       []string
-	Credentials []string
-	Runtimes    []string
+	Tools       []string `json:"tools,omitempty"`
+	MCPServers  []string `json:"mcp_servers,omitempty"`
+	Model       []string `json:"model,omitempty"`
+	Credentials []string `json:"credentials,omitempty"`
+	Runtimes    []string `json:"runtimes,omitempty"`
 }
 
 type scanAutoIngestCandidate struct {
@@ -59,114 +59,21 @@ func runScan(args []string, stdout io.Writer, stderr io.Writer, gf globalFlags) 
 
 	humanOut := gf.outWriter(stdout)
 
-	// Determine search paths
-	var searchPaths []string
-	if pathsOverride != "" {
-		for _, p := range strings.Split(pathsOverride, ",") {
-			searchPaths = append(searchPaths, strings.TrimSpace(p))
-		}
-	} else {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			fmt.Fprintf(stderr, "get home: %v\n", err)
-			return ExitOpError
-		}
-		defaultPaths := []string{
-			filepath.Join(home, ".claude", "skills"),
-			filepath.Join(home, ".codex", "skills"),
-			filepath.Join(home, ".grok", "skills"),
-			filepath.Join(home, ".hermes", "skills"),
-			filepath.Join(home, ".openclaw", "skills"),
-			filepath.Join(home, ".gemini", "antigravity", "skills"),
-		}
-		for _, p := range defaultPaths {
-			if _, err := os.Stat(p); err == nil {
-				searchPaths = append(searchPaths, p)
-			}
-		}
+	searchPaths, err := scanSearchPaths(pathsOverride)
+	if err != nil {
+		fmt.Fprintf(stderr, "get home: %v\n", err)
+		return ExitOpError
 	}
 
-	// Get manager home and library
 	managerHomeDir, err := managerHome()
 	if err != nil {
 		fmt.Fprintf(stderr, "manager home: %v\n", err)
 		return ExitOpError
 	}
-	libraryPath, err := ensureLibrary(managerHomeDir)
+	results, ignoredCount, err := collectScanResults(managerHomeDir, searchPaths)
 	if err != nil {
-		fmt.Fprintf(stderr, "ensure library: %v\n", err)
+		fmt.Fprintf(stderr, "%v\n", err)
 		return ExitOpError
-	}
-
-	// Build fingerprint index of library skills
-	fingerprintIndex := buildFingerprintIndex(libraryPath)
-
-	// Load scan-ignore list
-	ignoreList, _ := loadScanIgnore(managerHomeDir)
-
-	// Scan and collect results
-	var results []scanResult
-	for _, searchPath := range searchPaths {
-		entries, err := os.ReadDir(searchPath)
-		if err != nil {
-			continue
-		}
-
-		for _, entry := range entries {
-			if !entry.IsDir() {
-				continue
-			}
-
-			skillPath := filepath.Join(searchPath, entry.Name())
-			skillMdPath := filepath.Join(skillPath, "SKILL.md")
-
-			if _, err := os.Stat(skillMdPath); err != nil {
-				continue
-			}
-
-			// Check if skill is ignored
-			if inSlice(ignoreList, skillPath) {
-				ignoredCount++
-				continue
-			}
-
-			// Read fingerprint
-			fp, _, err := fingerprintSkillMd(skillMdPath)
-			if err != nil {
-				continue
-			}
-
-			// Check library: match by fingerprint first, then by name as fallback
-			var status string
-			_, hasFingerprintMatch := fingerprintIndex[fp]
-
-			if hasFingerprintMatch {
-				// Found by fingerprint — skill is in library
-				status = "in library"
-			} else {
-				// No fingerprint match; check by directory name (fallback)
-				libraryEntry := filepath.Join(libraryPath, entry.Name())
-				libraryMeta, _ := readSkillMeta(filepath.Join(libraryEntry, ".skill-meta.yaml"))
-
-				if libraryMeta.Fingerprint.SHA256 == "" {
-					status = "unregistered"
-				} else if libraryMeta.Fingerprint.SHA256 == fp {
-					status = "in library"
-				} else {
-					// Name matches but fingerprint differs — drift
-					status = "drift"
-				}
-			}
-
-			guessedOrigin := guessOrigin(skillPath)
-
-			results = append(results, scanResult{
-				Name:          entry.Name(),
-				Path:          skillPath,
-				Status:        status,
-				GuessedOrigin: guessedOrigin,
-			})
-		}
 	}
 
 	// Output results
@@ -264,6 +171,114 @@ func runScan(args []string, stdout io.Writer, stderr io.Writer, gf globalFlags) 
 	}
 
 	return ExitSuccess
+}
+
+func scanSearchPaths(pathsOverride string) ([]string, error) {
+	var searchPaths []string
+	if pathsOverride != "" {
+		for _, p := range strings.Split(pathsOverride, ",") {
+			searchPaths = append(searchPaths, strings.TrimSpace(p))
+		}
+	} else {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return nil, err
+		}
+		defaultPaths := []string{
+			filepath.Join(home, ".claude", "skills"),
+			filepath.Join(home, ".codex", "skills"),
+			filepath.Join(home, ".grok", "skills"),
+			filepath.Join(home, ".hermes", "skills"),
+			filepath.Join(home, ".openclaw", "skills"),
+			filepath.Join(home, ".gemini", "antigravity", "skills"),
+		}
+		for _, p := range defaultPaths {
+			if _, err := os.Stat(p); err == nil {
+				searchPaths = append(searchPaths, p)
+			}
+		}
+	}
+	return searchPaths, nil
+}
+
+func collectScanResults(managerHomeDir string, searchPaths []string) ([]scanResult, int, error) {
+	libraryPath, err := ensureLibrary(managerHomeDir)
+	if err != nil {
+		return nil, 0, fmt.Errorf("ensure library: %w", err)
+	}
+
+	// Build fingerprint index of library skills
+	fingerprintIndex := buildFingerprintIndex(libraryPath)
+
+	// Load scan-ignore list
+	ignoreList, _ := loadScanIgnore(managerHomeDir)
+
+	// Scan and collect results
+	var results []scanResult
+	var ignoredCount int
+	for _, searchPath := range searchPaths {
+		entries, err := os.ReadDir(searchPath)
+		if err != nil {
+			continue
+		}
+
+		for _, entry := range entries {
+			if !entry.IsDir() {
+				continue
+			}
+
+			skillPath := filepath.Join(searchPath, entry.Name())
+			skillMdPath := filepath.Join(skillPath, "SKILL.md")
+
+			if _, err := os.Stat(skillMdPath); err != nil {
+				continue
+			}
+
+			// Check if skill is ignored
+			if inSlice(ignoreList, skillPath) {
+				ignoredCount++
+				continue
+			}
+
+			// Read fingerprint
+			fp, _, err := fingerprintSkillMd(skillMdPath)
+			if err != nil {
+				continue
+			}
+
+			// Check library: match by fingerprint first, then by name as fallback
+			var status string
+			_, hasFingerprintMatch := fingerprintIndex[fp]
+
+			if hasFingerprintMatch {
+				// Found by fingerprint — skill is in library
+				status = "in library"
+			} else {
+				// No fingerprint match; check by directory name (fallback)
+				libraryEntry := filepath.Join(libraryPath, entry.Name())
+				libraryMeta, _ := readSkillMeta(filepath.Join(libraryEntry, ".skill-meta.yaml"))
+
+				if libraryMeta.Fingerprint.SHA256 == "" {
+					status = "unregistered"
+				} else if libraryMeta.Fingerprint.SHA256 == fp {
+					status = "in library"
+				} else {
+					// Name matches but fingerprint differs — drift
+					status = "drift"
+				}
+			}
+
+			guessedOrigin := guessOrigin(skillPath)
+
+			results = append(results, scanResult{
+				Name:          entry.Name(),
+				Path:          skillPath,
+				Status:        status,
+				GuessedOrigin: guessedOrigin,
+			})
+		}
+	}
+	return results, ignoredCount, nil
 }
 
 func buildScanAutoIngestPreflight(results []scanResult, opts ingestOptions, home string) []scanAutoIngestCandidate {

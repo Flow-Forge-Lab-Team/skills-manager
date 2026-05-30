@@ -13,6 +13,7 @@ let currentView = "overview";
 let cacheBust = () => Date.now();
 let sessionToken = null;
 let libraryState = { search: "", category: "", tag: "", source: "", compatibility: "", requirements: "", sort: "name", page: 1, pageSize: 25 };
+let scanAutoIngestState = null;
 
 async function ensureSession() {
   if (sessionToken) return;
@@ -69,6 +70,18 @@ async function deleteNotification(file) {
   return api("/api/v1/notifications/" + encodeURIComponent(file), {
     method: "DELETE",
     headers: { "X-Skills-Manager-Token": sessionToken },
+  });
+}
+
+async function scanAutoIngest() {
+  await ensureSession();
+  return api("/api/v1/scan/auto-ingest", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Skills-Manager-Token": sessionToken,
+    },
+    body: "{}",
   });
 }
 
@@ -207,6 +220,67 @@ function renderWatcherPanel(notifications) {
   return panel;
 }
 
+function outcomeTone(outcome) {
+  if (outcome === "ingested") return "ok";
+  if (outcome === "blocked" || outcome === "failed") return "danger";
+  if (outcome === "refused" || outcome === "skipped") return "warn";
+  return "";
+}
+
+function missingSummary(missing) {
+  const parts = [];
+  if (missing && missing.tools && missing.tools.length) parts.push("tools=" + missing.tools.join(","));
+  if (missing && missing.mcp_servers && missing.mcp_servers.length) parts.push("mcp_servers=" + missing.mcp_servers.join(","));
+  if (missing && missing.model && missing.model.length) parts.push("model=" + missing.model.join(","));
+  if (missing && missing.credentials && missing.credentials.length) parts.push("credentials=" + missing.credentials.join(","));
+  if (missing && missing.runtimes && missing.runtimes.length) parts.push("runtimes=" + missing.runtimes.join(","));
+  return parts.join(", ");
+}
+
+function renderScanAutoIngestPanel(result) {
+  if (!result) return null;
+  const panel = el("section", { className: "panel scan-panel" }, [
+    el("div", { className: "panel-title", text: "Scan auto-ingest result" }),
+    el("div", { className: "scan-summary" }, [
+      statCard("Discovered", result.discovered_count || 0),
+      statCard("Eligible", result.eligible_auto_ingest_count || 0),
+      statCard("Blocked", result.blocked_count || 0),
+      statCard("Ignored", result.ignored_count || 0),
+    ]),
+  ]);
+
+  const groups = result.missing_dependency_groups || [];
+  if (groups.length) {
+    const groupList = el("div", { className: "dependency-groups" });
+    groups.forEach((g) => {
+      groupList.appendChild(el("div", { className: "dependency-group" }, [
+        badge(g.kind + "=" + g.name, "danger"),
+        el("span", { className: "muted", text: (g.candidates || []).join(", ") }),
+      ]));
+    });
+    panel.appendChild(groupList);
+  }
+
+  const outcomes = result.outcomes || [];
+  if (!outcomes.length) {
+    panel.appendChild(el("p", { className: "empty", text: "No candidates found." }));
+    return panel;
+  }
+  const list = el("div", { className: "activity-list" });
+  outcomes.forEach((o) => {
+    const details = [o.path, o.reason, missingSummary(o.missing)].filter(Boolean).join(" · ");
+    list.appendChild(el("div", { className: "activity-row" }, [
+      badge(o.outcome || o.status || "scan", outcomeTone(o.outcome)),
+      el("div", null, [
+        el("div", { className: "row-title", text: o.name || "(unknown skill)" }),
+        el("div", { className: "muted", text: details }),
+      ]),
+    ]));
+  });
+  panel.appendChild(list);
+  return panel;
+}
+
 async function renderOverview(content) {
   const [o, notifications] = await Promise.all([
     api("/api/v1/overview"),
@@ -223,6 +297,8 @@ async function renderOverview(content) {
   ]));
   const watcherPanel = renderWatcherPanel(notifications);
   if (watcherPanel) content.appendChild(watcherPanel);
+  const scanPanel = renderScanAutoIngestPanel(scanAutoIngestState);
+  if (scanPanel) content.appendChild(scanPanel);
   const grid = el("div", { className: "overview-grid" });
   const activity = el("section", { className: "panel" }, [
     el("div", { className: "panel-title", text: "Recent activity" }),
@@ -278,6 +354,20 @@ async function renderOverview(content) {
     }
   };
   actions.appendChild(checkBtn);
+  const scanBtn = el("button", { className: "btn confirm", text: "Scan auto-ingest" });
+  scanBtn.onclick = async () => {
+    if (!confirm("Run scan --auto-ingest now? Eligible candidates may be added to the library; dependency-blocked candidates stay skipped.")) return;
+    scanBtn.disabled = true;
+    try {
+      scanAutoIngestState = await scanAutoIngest();
+      render();
+    } catch (e) {
+      alert(e.message);
+    } finally {
+      scanBtn.disabled = false;
+    }
+  };
+  actions.appendChild(scanBtn);
 }
 
 async function renderLibrary(content) {
