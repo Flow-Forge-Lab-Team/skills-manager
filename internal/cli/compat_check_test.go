@@ -217,6 +217,69 @@ func TestCompatCheckAllReportsHumanSummary(t *testing.T) {
 	}
 }
 
+func TestCompatCheckAllReportsHumanProgress(t *testing.T) {
+	home := setupCompatCheckBatchHome(t)
+	writeFile(t, filepath.Join(home, "library", "alpha", "SKILL.md"), "---\nname: alpha\n---\n# alpha\n")
+	cacheCompatCheckResult(t, home, "alpha", []string{"codex"})
+	writeFile(t, filepath.Join(home, "library", "beta", "SKILL.md"), "---\nname: beta\n---\n# beta\n")
+
+	oldRunner := llmCommandRunner
+	t.Cleanup(func() { llmCommandRunner = oldRunner })
+	llmCommandRunner = func(_ time.Duration, _ string, _ []string, stdin string) (string, error) {
+		if !strings.Contains(stdin, "handoff for beta") {
+			return "", fmt.Errorf("unexpected prompt")
+		}
+		return validCompatCheckProviderJSON("beta", "codex"), nil
+	}
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := Run([]string{"compat-check", "--all", "--to", "codex", "--auto"}, &stdout, &stderr)
+	if code != ExitSuccess {
+		t.Fatalf("Run returned %d\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+	}
+	out := stdout.String()
+	expected := []string{
+		"compat-check --all: checking 2 skills",
+		"alpha: cached (current)",
+		"beta: missing",
+		"beta: running provider",
+		"beta: ran (missing)",
+		"compat-check --all: ran=1 skipped=1 stale=0 failed=0",
+	}
+	for _, want := range expected {
+		if !strings.Contains(out, want) {
+			t.Fatalf("stdout missing %q:\n%s", want, out)
+		}
+	}
+	if strings.Index(out, "beta: running provider") > strings.Index(out, "compat-check --all: ran=1") {
+		t.Fatalf("progress was printed after final summary:\n%s", out)
+	}
+}
+
+func TestCompatCheckAllJSONDoesNotInterleaveProgress(t *testing.T) {
+	home := setupCompatCheckBatchHome(t)
+	writeFile(t, filepath.Join(home, "library", "alpha", "SKILL.md"), "---\nname: alpha\n---\n# alpha\n")
+	cacheCompatCheckResult(t, home, "alpha", []string{"codex"})
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := Run([]string{"--json", "compat-check", "--all", "--to", "codex", "--auto"}, &stdout, &stderr)
+	if code != ExitSuccess {
+		t.Fatalf("Run returned %d\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+	}
+	if strings.Contains(stdout.String(), "compat-check --all:") || strings.Contains(stdout.String(), "alpha: cached") {
+		t.Fatalf("stdout contains progress:\n%s", stdout.String())
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+	var summary compatCheckBatchSummary
+	if err := json.Unmarshal(stdout.Bytes(), &summary); err != nil {
+		t.Fatalf("parse json summary: %v\n%s", err, stdout.String())
+	}
+}
+
 func TestCompatCheckAllIsolatesProviderFailures(t *testing.T) {
 	home := setupCompatCheckBatchHome(t)
 	writeFile(t, filepath.Join(home, "library", "alpha", "SKILL.md"), "---\nname: alpha\n---\n# alpha\n")

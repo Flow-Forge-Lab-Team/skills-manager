@@ -274,59 +274,73 @@ func runCompatCheckBatchAll(home, libraryPath string, targets []string, realStdo
 		return ExitOpError
 	}
 	summary := compatCheckBatchSummary{Mode: "auto", Targets: targets, Results: []compatCheckBatchResult{}}
+	fmt.Fprintf(stdout, "compat-check --all: checking %d skills\n", len(skills))
 	for _, skill := range skills {
 		skillMdPath := filepath.Join(libraryPath, skill, "SKILL.md")
 		fingerprint, fpErr := skillFingerprintForFile(skillMdPath)
 		resultPath := compatCheckCachePath(home, skill)
 		if fpErr != nil {
 			summary.Failed++
+			printCompatCheckBatchProgress(stdout, skill, "failed", "", fpErr.Error())
 			summary.Results = append(summary.Results, compatCheckBatchResult{Skill: skill, Status: "failed", ResultPath: resultPath, Error: fpErr.Error()})
 			continue
 		}
 		current, reason := readCurrentCompatCheckCache(home, skill, targets, fingerprint, cfg.LLM)
 		if current {
 			summary.Skipped++
+			printCompatCheckBatchProgress(stdout, skill, "cached", "current", "")
 			summary.Results = append(summary.Results, compatCheckBatchResult{Skill: skill, Status: "skipped", Reason: "current", ResultPath: resultPath})
 			continue
 		}
 		if reason != "missing" {
 			summary.Stale++
+			printCompatCheckBatchProgress(stdout, skill, "stale", reason, "")
+		} else {
+			printCompatCheckBatchProgress(stdout, skill, "missing", "", "")
 		}
 		skillBodyBytes, err := os.ReadFile(skillMdPath)
 		if err != nil {
 			summary.Failed++
+			printCompatCheckBatchProgress(stdout, skill, "failed", reason, err.Error())
 			summary.Results = append(summary.Results, compatCheckBatchResult{Skill: skill, Status: "failed", Reason: reason, ResultPath: resultPath, Error: err.Error()})
 			continue
 		}
 		prompt, err := buildCompatCheckPrompt(skill, string(skillBodyBytes), targets)
 		if err != nil {
 			summary.Failed++
+			printCompatCheckBatchProgress(stdout, skill, "failed", reason, err.Error())
 			summary.Results = append(summary.Results, compatCheckBatchResult{Skill: skill, Status: "failed", Reason: reason, ResultPath: resultPath, Error: err.Error()})
 			continue
 		}
+		printCompatCheckBatchProgress(stdout, skill, "running provider", "", "")
 		providerResult, err := runConfiguredLLMProviderWithMetadata(home, prompt)
 		if err != nil {
 			summary.Failed++
+			printCompatCheckBatchProgress(stdout, skill, "failed", reason, err.Error())
 			summary.Results = append(summary.Results, compatCheckBatchResult{Skill: skill, Status: "failed", Reason: reason, ResultPath: resultPath, Error: err.Error()})
 			continue
 		}
 		parsed, err := parseCompatCheckOutput([]byte(providerResult.Output), "provider output")
 		if err != nil {
 			summary.Failed++
+			printCompatCheckBatchProgress(stdout, skill, "failed", reason, err.Error())
 			summary.Results = append(summary.Results, compatCheckBatchResult{Skill: skill, Status: "failed", Reason: reason, ResultPath: resultPath, Error: err.Error()})
 			continue
 		}
 		if err := validateCompatCheckParsed(skill, targets, parsed, "provider output"); err != nil {
 			summary.Failed++
+			printCompatCheckBatchProgress(stdout, skill, "failed", reason, err.Error())
 			summary.Results = append(summary.Results, compatCheckBatchResult{Skill: skill, Status: "failed", Reason: reason, ResultPath: resultPath, Error: err.Error()})
 			continue
 		}
 		if err := writeCompatCheckCache(home, skill, targets, fingerprint, parsed, cfg.LLM.Provider, cfg.LLM.Model); err != nil {
 			summary.Failed++
+			printCompatCheckBatchProgress(stdout, skill, "failed", reason, err.Error())
 			summary.Results = append(summary.Results, compatCheckBatchResult{Skill: skill, Status: "failed", Reason: reason, ResultPath: resultPath, Error: err.Error()})
 			continue
 		}
 		summary.Ran++
+		printCompatCheckBatchProgress(stdout, skill, "ran", reason, "")
 		summary.Results = append(summary.Results, compatCheckBatchResult{Skill: skill, Status: "ran", Reason: reason, ResultPath: resultPath})
 	}
 	if gf.JSON {
@@ -354,6 +368,17 @@ func runCompatCheckBatchAll(home, libraryPath string, targets []string, realStdo
 		return ExitPartial
 	}
 	return ExitSuccess
+}
+
+func printCompatCheckBatchProgress(stdout io.Writer, skill, status, reason, errText string) {
+	fmt.Fprintf(stdout, "  %s: %s", skill, status)
+	if reason != "" {
+		fmt.Fprintf(stdout, " (%s)", reason)
+	}
+	if errText != "" {
+		fmt.Fprintf(stdout, " error=%s", errText)
+	}
+	fmt.Fprintln(stdout)
 }
 
 func writeCompatCheckJSON(realStdout, stderr io.Writer, gf globalFlags, result compatCheckResult) int {
