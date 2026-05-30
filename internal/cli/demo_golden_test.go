@@ -16,6 +16,11 @@ func TestReadmeDemoTranscriptMatchesGolden(t *testing.T) {
 
 	writeFile(t, filepath.Join(project, ".codex", "config.json"), "{}\n")
 	writeFile(t, filepath.Join(project, "package.json"), "{\"dependencies\":{\"next\":\"15.0.0\",\"react\":\"19.0.0\"}}\n")
+	for _, dir := range []string{".agents", ".claude", ".grok", ".hermes", ".openclaw"} {
+		if err := os.MkdirAll(filepath.Join(project, dir), 0755); err != nil {
+			t.Fatalf("mkdir %s: %v", dir, err)
+		}
+	}
 
 	root := repoRoot(t)
 	commands := []demoCommand{
