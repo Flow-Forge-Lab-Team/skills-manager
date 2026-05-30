@@ -91,6 +91,38 @@ func TestCompatCheckAllRerunsWhenSkillFingerprintChanges(t *testing.T) {
 	}
 }
 
+func TestCompatCheckAllRerunsWhenModelChanges(t *testing.T) {
+	home := setupCompatCheckBatchHome(t)
+	writeFile(t, filepath.Join(home, "library", "alpha", "SKILL.md"), "---\nname: alpha\n---\n# alpha\n")
+	cacheCompatCheckResult(t, home, "alpha", []string{"codex"})
+	writeFile(t, filepath.Join(home, "config.yaml"), "version: 1\nllm:\n  provider: \"codex-cli\"\n  model: \"gpt-5.6\"\n")
+
+	oldRunner := llmCommandRunner
+	t.Cleanup(func() { llmCommandRunner = oldRunner })
+	calls := 0
+	llmCommandRunner = func(_ time.Duration, _ string, _ []string, _ string) (string, error) {
+		calls++
+		return validCompatCheckProviderJSON("alpha", "codex"), nil
+	}
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := Run([]string{"--json", "compat-check", "--all", "--to", "codex", "--auto"}, &stdout, &stderr)
+	if code != ExitSuccess {
+		t.Fatalf("Run returned %d\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+	}
+	if calls != 1 {
+		t.Fatalf("calls = %d, want 1", calls)
+	}
+	var summary compatCheckBatchSummary
+	if err := json.Unmarshal(stdout.Bytes(), &summary); err != nil {
+		t.Fatalf("parse json summary: %v\n%s", err, stdout.String())
+	}
+	if summary.Ran != 1 || summary.Skipped != 0 || summary.Stale != 1 || summary.Results[0].Reason != "model-mismatch" {
+		t.Fatalf("summary = %+v", summary)
+	}
+}
+
 func TestCompatCheckAllIsolatesProviderFailures(t *testing.T) {
 	home := setupCompatCheckBatchHome(t)
 	writeFile(t, filepath.Join(home, "library", "alpha", "SKILL.md"), "---\nname: alpha\n---\n# alpha\n")

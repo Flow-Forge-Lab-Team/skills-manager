@@ -282,7 +282,7 @@ func runCompatCheckBatchAll(home, libraryPath string, targets []string, realStdo
 			summary.Results = append(summary.Results, compatCheckBatchResult{Skill: skill, Status: "failed", ResultPath: resultPath, Error: fpErr.Error()})
 			continue
 		}
-		current, reason := readCurrentCompatCheckCache(home, skill, targets, fingerprint)
+		current, reason := readCurrentCompatCheckCache(home, skill, targets, fingerprint, cfg.LLM)
 		if current {
 			summary.Skipped++
 			summary.Results = append(summary.Results, compatCheckBatchResult{Skill: skill, Status: "skipped", Reason: "current", ResultPath: resultPath})
@@ -447,7 +447,7 @@ func skillFingerprintForFile(path string) (skillFingerprint, error) {
 	return skillFingerprint{SHA256: sha, Size: size}, nil
 }
 
-func readCurrentCompatCheckCache(home, skill string, targets []string, fingerprint skillFingerprint) (bool, string) {
+func readCurrentCompatCheckCache(home, skill string, targets []string, fingerprint skillFingerprint, llm llmConfig) (bool, string) {
 	data, err := os.ReadFile(compatCheckCachePath(home, skill))
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -467,6 +467,12 @@ func readCurrentCompatCheckCache(home, skill string, targets []string, fingerpri
 	}
 	if !stringSlicesEqual(normalizeCompatCheckTargets(entry.Targets), targets) {
 		return false, "target-mismatch"
+	}
+	if entry.Provider != llm.Provider {
+		return false, "provider-mismatch"
+	}
+	if entry.Model != llm.Model {
+		return false, "model-mismatch"
 	}
 	if len(entry.Output) == 0 {
 		return false, "invalid"
