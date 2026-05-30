@@ -463,6 +463,75 @@ Provider decides confidence.
 	}
 }
 
+func TestScanAutoIngestPreflightDoesNotHideNameCollision(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+
+	libraryPath, err := ensureLibrary(home)
+	if err != nil {
+		t.Fatalf("ensureLibrary: %v", err)
+	}
+	libraryDir := filepath.Join(libraryPath, "existing")
+	librarySkill := `---
+name: existing
+description: Existing skill
+---
+
+# existing
+
+Original.
+`
+	if err := os.MkdirAll(libraryDir, 0755); err != nil {
+		t.Fatalf("create library skill dir: %v", err)
+	}
+	librarySkillMd := filepath.Join(libraryDir, "SKILL.md")
+	if err := os.WriteFile(librarySkillMd, []byte(librarySkill), 0644); err != nil {
+		t.Fatalf("write library SKILL.md: %v", err)
+	}
+	fp, size, err := fingerprintSkillMd(librarySkillMd)
+	if err != nil {
+		t.Fatalf("fingerprint library SKILL.md: %v", err)
+	}
+	if err := writeSkillMeta(filepath.Join(libraryDir, ".skill-meta.yaml"), skillMeta{
+		Version: 1,
+		Fingerprint: skillFingerprint{
+			SHA256: fp,
+			Size:   size,
+		},
+	}); err != nil {
+		t.Fatalf("write skill meta: %v", err)
+	}
+
+	skillsDir := filepath.Join(home, ".claude", "skills")
+	writeScanSkill(t, skillsDir, "renamed", `---
+name: existing
+description: Use this skill when reviewing pull requests for security
+exclusive: claude
+---
+
+# renamed
+
+Requires tool use.
+`)
+
+	args := []string{"--auto-ingest", "--paths=" + skillsDir}
+	var stdout, stderr bytes.Buffer
+	code := runScan(args, &stdout, &stderr, globalFlags{})
+
+	if code != ExitSuccess {
+		t.Fatalf("exit code = %d, want %d; stderr=%s", code, ExitSuccess, stderr.String())
+	}
+
+	output := stdout.String()
+	if strings.Contains(output, "model=tool_use") || strings.Contains(output, "Blocked existing") {
+		t.Fatalf("name collision should not be reported as dependency-blocked:\n%s", output)
+	}
+	want := "Failed existing (" + filepath.Join(skillsDir, "renamed") + "): skill existing already in library with different content"
+	if !strings.Contains(output, want) {
+		t.Fatalf("expected name-collision failure %q, got:\n%s", want, output)
+	}
+}
+
 func TestScanAutoIngestPreflightAllBlockedDoesNotMutate(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("SKILLS_MANAGER_HOME", home)

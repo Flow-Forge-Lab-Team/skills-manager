@@ -294,6 +294,34 @@ func analyzeScanAutoIngestCandidate(result scanResult, src ingestSource, opts in
 		return candidate
 	}
 
+	fp, _, err := fingerprintSkillMd(skillMdPath)
+	if err != nil {
+		return candidate
+	}
+	libraryPath, err := ensureLibrary(home)
+	if err != nil {
+		return candidate
+	}
+	entries, _ := os.ReadDir(libraryPath)
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		metaPath := filepath.Join(libraryPath, entry.Name(), ".skill-meta.yaml")
+		existingMeta, err := readSkillMeta(metaPath)
+		if err == nil && existingMeta.Fingerprint.SHA256 == fp {
+			return candidate
+		}
+	}
+	targetDir := filepath.Join(libraryPath, decl.name)
+	if _, err := os.Stat(targetDir); err == nil {
+		existingMetaPath := filepath.Join(targetDir, ".skill-meta.yaml")
+		existingMeta, _ := readSkillMeta(existingMetaPath)
+		if existingMeta.Fingerprint.SHA256 != fp {
+			return candidate
+		}
+	}
+
 	skillBody, err := os.ReadFile(skillMdPath)
 	if err != nil {
 		return candidate
