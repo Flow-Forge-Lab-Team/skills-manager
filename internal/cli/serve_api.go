@@ -39,6 +39,7 @@ func newServeServer(home string) *serveServer {
 	s.mux.HandleFunc("/api/v1/skills/", s.handleSkillDetail)
 	s.mux.HandleFunc("/api/v1/projects", s.handleProjects)
 	s.mux.HandleFunc("/api/v1/projects/", s.handleProjectDetail)
+	s.mux.HandleFunc("/api/v1/drift", s.handleDrift)
 	s.mux.HandleFunc("/api/v1/updates", s.handleUpdates)
 	s.mux.HandleFunc("/api/v1/updates/", s.handleUpdateSub)
 	s.mux.HandleFunc("/api/v1/matrix", s.handleMatrix)
@@ -90,6 +91,19 @@ func (s *serveServer) handleOverview(w http.ResponseWriter, r *http.Request) {
 	}
 	overview.GeneratedAt = time.Now().UTC().Format(time.RFC3339)
 	writeJSONResponse(w, overview)
+}
+
+func (s *serveServer) handleDrift(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	groups, err := loadTriageDriftGroups(s.home)
+	if err != nil {
+		writeAPIError(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSONResponse(w, groups)
 }
 
 func (s *serveServer) handleSkills(w http.ResponseWriter, r *http.Request) {

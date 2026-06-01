@@ -54,12 +54,16 @@ type discoverInstallation struct {
 }
 
 type discoverDriftGroup struct {
-	GroupID         string   `json:"group_id"`
-	GroupType       string   `json:"group_type"`
-	SkillName       string   `json:"skill_name,omitempty"`
-	ContentSHA256   string   `json:"content_sha256,omitempty"`
-	InstallationIDs []string `json:"installation_ids"`
-	Status          string   `json:"status"`
+	GroupID                 string   `json:"group_id"`
+	GroupType               string   `json:"group_type"`
+	SkillName               string   `json:"skill_name,omitempty"`
+	ContentSHA256           string   `json:"content_sha256,omitempty"`
+	InstallationIDs         []string `json:"installation_ids"`
+	Status                  string   `json:"status"`
+	Classification          string   `json:"classification,omitempty"`
+	ReviewStatus            string   `json:"review_status,omitempty"`
+	ReviewReason            string   `json:"review_reason,omitempty"`
+	CanonicalInstallationID string   `json:"canonical_installation_id,omitempty"`
 }
 
 type discoverSummary struct {
@@ -81,12 +85,17 @@ type discoverReport struct {
 }
 
 type discoverReportItem struct {
-	Kind            string   `json:"kind"`
-	Title           string   `json:"title"`
-	Detail          string   `json:"detail"`
-	SkillName       string   `json:"skill_name,omitempty"`
-	ContentSHA256   string   `json:"content_sha256,omitempty"`
-	InstallationIDs []string `json:"installation_ids,omitempty"`
+	Kind                    string   `json:"kind"`
+	Title                   string   `json:"title"`
+	Detail                  string   `json:"detail"`
+	SkillName               string   `json:"skill_name,omitempty"`
+	ContentSHA256           string   `json:"content_sha256,omitempty"`
+	InstallationIDs         []string `json:"installation_ids,omitempty"`
+	Status                  string   `json:"status,omitempty"`
+	Classification          string   `json:"classification,omitempty"`
+	ReviewStatus            string   `json:"review_status,omitempty"`
+	ReviewReason            string   `json:"review_reason,omitempty"`
+	CanonicalInstallationID string   `json:"canonical_installation_id,omitempty"`
 }
 
 type discoverCoverageGap struct {
@@ -329,6 +338,9 @@ func collectDiscovery(opts discoverOptions) (discoverOutput, error) {
 		return out.Installations[i].InstallationID < out.Installations[j].InstallationID
 	})
 	out.DriftGroups = buildDiscoverDriftGroups(out.Installations)
+	if reviewHome, err := managerHome(); err == nil {
+		out.DriftGroups = annotateDiscoverDriftGroups(reviewHome, out.DriftGroups, out.Installations)
+	}
 	out.Summary = summarizeDiscovery(out)
 	out.Report = buildDiscoverReport(out)
 	return out, nil
@@ -1295,6 +1307,90 @@ func newDiscoverGroup(groupType, name, hash string, ids []string) discoverDriftG
 	}
 }
 
+type driftReviewRecord struct {
+	Status                  string
+	Reason                  string
+	CanonicalInstallationID string
+}
+
+func annotateDiscoverDriftGroups(home string, groups []discoverDriftGroup, installs []discoverInstallation) []discoverDriftGroup {
+	reviews := loadDiscoverDriftReviews(home)
+	installsByID := map[string]discoverInstallation{}
+	for _, inst := range installs {
+		installsByID[inst.InstallationID] = inst
+	}
+	for i := range groups {
+		groups[i].Classification = classifyDiscoverDriftGroup(groups[i], installsByID)
+		if review, ok := reviews[groups[i].GroupID]; ok {
+			groups[i].ReviewStatus = review.Status
+			groups[i].ReviewReason = review.Reason
+			groups[i].CanonicalInstallationID = review.CanonicalInstallationID
+			if review.Status != "" {
+				groups[i].Status = review.Status
+			}
+		}
+	}
+	return groups
+}
+
+func loadDiscoverDriftReviews(home string) map[string]driftReviewRecord {
+	out := map[string]driftReviewRecord{}
+	db, err := state.Open(home)
+	if err != nil {
+		return out
+	}
+	defer db.Close()
+	rows, err := db.Query(`SELECT group_id, COALESCE(status, ''), COALESCE(reason, ''), COALESCE(canonical_installation_id, '')
+FROM discovery_drift_reviews`)
+	if err != nil {
+		return out
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var groupID string
+		var review driftReviewRecord
+		if err := rows.Scan(&groupID, &review.Status, &review.Reason, &review.CanonicalInstallationID); err == nil {
+			out[groupID] = review
+		}
+	}
+	return out
+}
+
+func classifyDiscoverDriftGroup(group discoverDriftGroup, installsByID map[string]discoverInstallation) string {
+	if group.GroupType == "global_project_overlap" {
+		return "project_override"
+	}
+	scopes := map[string]bool{}
+	managedCount := 0
+	compatByInstall := map[string]string{}
+	for _, id := range group.InstallationIDs {
+		inst := installsByID[id]
+		scopes[inst.Scope] = true
+		if inst.Managed {
+			managedCount++
+		}
+		compatByInstall[id] = strings.Join(append([]string{inst.ExclusiveToolID}, inst.CompatibleToolIDs...), ",")
+	}
+	if group.GroupType == "same_name_different_hash" && scopes["global"] && scopes["project"] {
+		return "project_override"
+	}
+	if group.GroupType == "same_name_different_hash" && managedCount > 0 {
+		return "stale_copy"
+	}
+	if group.GroupType == "same_name_different_hash" {
+		seen := map[string]bool{}
+		for _, value := range compatByInstall {
+			if value != "" {
+				seen[value] = true
+			}
+		}
+		if len(seen) > 1 {
+			return "intentional_variant"
+		}
+	}
+	return ""
+}
+
 func summarizeDiscovery(out discoverOutput) discoverSummary {
 	var summary discoverSummary
 	for _, tool := range out.Tools {
@@ -1338,12 +1434,17 @@ func buildDiscoverReport(out discoverOutput) discoverReport {
 	}
 	for _, group := range out.DriftGroups {
 		report.ReviewFacts = append(report.ReviewFacts, discoverReportItem{
-			Kind:            group.GroupType,
-			Title:           discoverGroupTitle(group),
-			Detail:          discoverGroupDetail(group, installsByID),
-			SkillName:       group.SkillName,
-			ContentSHA256:   group.ContentSHA256,
-			InstallationIDs: append([]string{}, group.InstallationIDs...),
+			Kind:                    group.GroupType,
+			Title:                   discoverGroupTitle(group),
+			Detail:                  discoverGroupDetail(group, installsByID),
+			SkillName:               group.SkillName,
+			ContentSHA256:           group.ContentSHA256,
+			InstallationIDs:         append([]string{}, group.InstallationIDs...),
+			Status:                  group.Status,
+			Classification:          group.Classification,
+			ReviewStatus:            group.ReviewStatus,
+			ReviewReason:            group.ReviewReason,
+			CanonicalInstallationID: group.CanonicalInstallationID,
 		})
 	}
 	for _, tool := range out.Tools {
@@ -1385,6 +1486,9 @@ func buildDiscoverRecommendations(out discoverOutput, installsByID map[string]di
 	var recs []discoverRecommendation
 	globalInstallBlocked := map[string]bool{}
 	for _, group := range out.DriftGroups {
+		if group.ReviewStatus == "ignored" || group.ReviewStatus == "accepted" {
+			continue
+		}
 		if group.SkillName != "" && (group.GroupType == "same_name_different_hash" || group.GroupType == "global_project_overlap") {
 			globalInstallBlocked[group.SkillName] = true
 		}
