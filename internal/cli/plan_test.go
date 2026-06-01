@@ -683,8 +683,310 @@ func TestPlanGlobalInstallAllowsDefaultCompatibility(t *testing.T) {
 	if plan.Status != "ready" || len(plan.Blockers) != 0 {
 		t.Fatalf("plan status/blockers = %s %#v", plan.Status, plan.Blockers)
 	}
-	if len(plan.Files.Create) != 1 || plan.Files.Create[0].Path != filepath.Join(targetRoot, "review") {
+	if !containsPlanFile(plan.Files.Create, filepath.Join(targetRoot, "review")) {
 		t.Fatalf("create files = %#v", plan.Files.Create)
+	}
+	if !containsPlanFile(plan.Files.Create, filepath.Join(home, ".skills-manager", "manifests", "global-grok.json")) {
+		t.Fatalf("create files should include global manifest: %#v", plan.Files.Create)
+	}
+}
+
+func TestPlanApplyGlobalInstallRecordsManifestAndRemoveRollsBack(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	managerHome := filepath.Join(home, ".skills-manager")
+	t.Setenv("SKILLS_MANAGER_HOME", managerHome)
+	sourcePath := filepath.Join(home, ".claude", "skills", "review")
+	targetRoot := filepath.Join(home, ".grok", "skills")
+	targetPath := filepath.Join(targetRoot, "review")
+	writeScanSkill(t, filepath.Dir(sourcePath), "review", "---\nname: review\n---\n# Review\n")
+	if err := os.MkdirAll(targetRoot, 0755); err != nil {
+		t.Fatal(err)
+	}
+	inventory := writePlanInventoryFixture(t, home, `{
+  "tools": [{"tool_id": "grok", "global_roots": [%q], "status": "present"}],
+  "installations": [{
+    "installation_id": "source-1",
+    "skill_name": "review",
+    "tool_id": "claude",
+    "scope": "global",
+    "source_path": %q,
+    "content_path": %q,
+    "content_sha256": "abc",
+    "managed": false,
+    "ownership": "unmanaged",
+    "format": "skill_md",
+    "present": true
+  }],
+  "report": {"recommendations": [{
+    "recommendation_id": "rec-global",
+    "kind": "install_global",
+    "title": "Install globally",
+    "reason": "coverage",
+    "confidence": "medium",
+    "skill_name": "review",
+    "source_installation_ids": ["source-1"],
+    "target_tool_id": "grok",
+    "requires_plan": true
+  }]}
+}`, targetRoot, sourcePath, filepath.Join(sourcePath, "SKILL.md"))
+
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{"plan", "--inventory", inventory, "--recommendation", "rec-global", "--apply", "--confirm"}, &stdout, &stderr)
+	if code != ExitSuccess {
+		t.Fatalf("plan apply exit = %d\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+	}
+	if _, err := os.Stat(filepath.Join(targetPath, "SKILL.md")); err != nil {
+		t.Fatalf("expected global target copy: %v", err)
+	}
+	manifestPath := filepath.Join(managerHome, "manifests", "global-grok.json")
+	manifest, err := readManifest(manifestPath)
+	if err != nil {
+		t.Fatalf("read global manifest: %v", err)
+	}
+	if manifest.ProjectPath != targetRoot || !containsPlanString(manifest.ManagedPaths, "review") {
+		t.Fatalf("global manifest = %#v", manifest)
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	code = Run([]string{"--json", "discover", "--global"}, &stdout, &stderr)
+	if code != ExitSuccess {
+		t.Fatalf("discover exit = %d\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+	}
+	var discovered discoverOutput
+	if err := json.Unmarshal(stdout.Bytes(), &discovered); err != nil {
+		t.Fatalf("unmarshal discover: %v", err)
+	}
+	foundManaged := false
+	for _, inst := range discovered.Installations {
+		if inst.ToolID == "grok" && inst.SkillName == "review" && inst.Managed && inst.Ownership == "manager" {
+			foundManaged = true
+		}
+	}
+	if !foundManaged {
+		t.Fatalf("discover did not mark global install manager-owned: %#v", discovered.Installations)
+	}
+
+	removeInventory := writePlanInventoryFixture(t, home, `{
+  "tools": [{"tool_id": "grok", "global_roots": [%q], "status": "present"}],
+  "installations": [
+    {
+      "installation_id": "source-1",
+      "skill_name": "review",
+      "tool_id": "claude",
+      "scope": "global",
+      "source_path": %q,
+      "content_path": %q,
+      "content_sha256": "abc",
+      "managed": false,
+      "ownership": "unmanaged",
+      "format": "skill_md",
+      "present": true
+    },
+    {
+      "installation_id": "target-1",
+      "skill_name": "review",
+      "tool_id": "grok",
+      "scope": "global",
+      "source_path": %q,
+      "content_path": %q,
+      "content_sha256": "def",
+      "managed": true,
+      "ownership": "manager",
+      "format": "skill_md",
+      "present": true
+    }
+  ],
+  "report": {"recommendations": [{
+    "recommendation_id": "rec-remove",
+    "kind": "remove",
+    "title": "Remove duplicate",
+    "reason": "rollback",
+    "confidence": "medium",
+    "skill_name": "review",
+    "source_installation_ids": ["source-1", "target-1"],
+    "requires_plan": true
+  }]}
+}`, targetRoot, sourcePath, filepath.Join(sourcePath, "SKILL.md"), targetPath, filepath.Join(targetPath, "SKILL.md"))
+
+	stdout.Reset()
+	stderr.Reset()
+	code = Run([]string{"plan", "--inventory", removeInventory, "--recommendation", "rec-remove", "--apply", "--confirm"}, &stdout, &stderr)
+	if code != ExitSuccess {
+		t.Fatalf("remove apply exit = %d\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+	}
+	if _, err := os.Stat(targetPath); !os.IsNotExist(err) {
+		t.Fatalf("target still exists after remove apply: %v", err)
+	}
+	if _, err := os.Stat(manifestPath); !os.IsNotExist(err) {
+		t.Fatalf("global manifest should be removed: %v", err)
+	}
+}
+
+func TestPlanApplyProjectInstallKeepsProjectMetadataAndUninstallRollsBack(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	managerHome := filepath.Join(home, ".skills-manager")
+	t.Setenv("SKILLS_MANAGER_HOME", managerHome)
+	project := filepath.Join(home, "app")
+	sourcePath := filepath.Join(project, ".claude", "skills", "review")
+	targetPath := filepath.Join(project, ".codex", "skills", "review")
+	writeScanSkill(t, filepath.Dir(sourcePath), "review", "---\nname: review\n---\n# Review\n")
+	writeFile(t, filepath.Join(project, ".skills", "project.yaml"), "version: 1\nname: app\nharnesses:\n  - claude\n")
+	if err := os.MkdirAll(filepath.Dir(targetPath), 0755); err != nil {
+		t.Fatal(err)
+	}
+	inventory := writePlanInventoryFixture(t, home, `{
+  "projects": [{"project_id": "proj-1", "root_path": %q}],
+  "installations": [{
+    "installation_id": "source-1",
+    "skill_name": "review",
+    "tool_id": "claude",
+    "scope": "project",
+    "project_id": "proj-1",
+    "source_path": %q,
+    "content_path": %q,
+    "content_sha256": "abc",
+    "managed": true,
+    "ownership": "manager",
+    "format": "skill_md",
+    "compatible_tool_ids": ["codex"],
+    "present": true
+  }],
+  "report": {"recommendations": [{
+    "recommendation_id": "rec-project",
+    "kind": "install_project",
+    "title": "Install review into project",
+    "reason": "coverage",
+    "confidence": "medium",
+    "skill_name": "review",
+    "source_installation_ids": ["source-1"],
+    "target_tool_id": "codex",
+    "target_project_id": "proj-1",
+    "requires_plan": true
+  }]}
+}`, project, sourcePath, filepath.Join(sourcePath, "SKILL.md"))
+
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{"plan", "--inventory", inventory, "--recommendation", "rec-project", "--apply", "--confirm"}, &stdout, &stderr)
+	if code != ExitSuccess {
+		t.Fatalf("project apply exit = %d\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+	}
+	if _, err := os.Stat(filepath.Join(targetPath, "SKILL.md")); err != nil {
+		t.Fatalf("expected project target copy: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(project, ".skills", "project.yaml")); err != nil {
+		t.Fatalf("expected project config: %v", err)
+	}
+	projectConfig, err := readProjectConfig(filepath.Join(project, ".skills", "project.yaml"))
+	if err != nil {
+		t.Fatalf("read project config: %v", err)
+	}
+	if !containsPlanString(projectConfig.Harnesses, "codex") {
+		t.Fatalf("project config harnesses = %#v", projectConfig.Harnesses)
+	}
+	lock, err := readInstallLock(filepath.Join(project, ".skills", "installed.lock"))
+	if err != nil {
+		t.Fatalf("read lock: %v", err)
+	}
+	if len(lock.Skills) != 1 || lock.Skills[0].Name != "review" || !containsPlanString(lock.Skills[0].Harnesses, "codex") {
+		t.Fatalf("lock = %#v", lock)
+	}
+	manifest, err := readManifest(manifestPath(managerHome, project))
+	if err != nil {
+		t.Fatalf("read project manifest: %v", err)
+	}
+	if !containsPlanString(manifest.ManagedPaths, filepath.ToSlash(filepath.Join(".codex", "skills", "review"))) ||
+		!containsPlanString(manifest.ManagedPaths, filepath.ToSlash(filepath.Join(".skills", "installed.lock"))) {
+		t.Fatalf("project manifest = %#v", manifest)
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	code = Run([]string{"uninstall", "--project", project, "--confirm", "--no-backup"}, &stdout, &stderr)
+	if code != ExitSuccess {
+		t.Fatalf("uninstall exit = %d\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+	}
+	if _, err := os.Stat(targetPath); !os.IsNotExist(err) {
+		t.Fatalf("target still exists after uninstall: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(project, ".skills", "installed.lock")); !os.IsNotExist(err) {
+		t.Fatalf("lock still exists after uninstall: %v", err)
+	}
+}
+
+func TestPlanApplyProjectInstallRefusesUnmanagedConflict(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("SKILLS_MANAGER_HOME", filepath.Join(home, ".skills-manager"))
+	project := filepath.Join(home, "app")
+	sourcePath := filepath.Join(project, ".claude", "skills", "review")
+	targetPath := filepath.Join(project, ".codex", "skills", "review")
+	writeScanSkill(t, filepath.Dir(sourcePath), "review", "---\nname: review\n---\n# Review\n")
+	writeScanSkill(t, filepath.Dir(targetPath), "review", "---\nname: review\n---\n# Local Review\n")
+	inventory := writePlanInventoryFixture(t, home, `{
+  "projects": [{"project_id": "proj-1", "root_path": %q}],
+  "installations": [
+    {
+      "installation_id": "source-1",
+      "skill_name": "review",
+      "tool_id": "claude",
+      "scope": "project",
+      "project_id": "proj-1",
+      "source_path": %q,
+      "content_path": %q,
+      "content_sha256": "abc",
+      "managed": true,
+      "ownership": "manager",
+      "format": "skill_md",
+      "compatible_tool_ids": ["codex"],
+      "present": true
+    },
+    {
+      "installation_id": "target-1",
+      "skill_name": "review",
+      "tool_id": "codex",
+      "scope": "project",
+      "project_id": "proj-1",
+      "source_path": %q,
+      "content_path": %q,
+      "content_sha256": "def",
+      "managed": false,
+      "ownership": "unmanaged",
+      "format": "skill_md",
+      "present": true
+    }
+  ],
+  "report": {"recommendations": [{
+    "recommendation_id": "rec-project",
+    "kind": "install_project",
+    "title": "Install review into project",
+    "reason": "coverage",
+    "confidence": "medium",
+    "skill_name": "review",
+    "source_installation_ids": ["source-1"],
+    "target_tool_id": "codex",
+    "target_project_id": "proj-1",
+    "requires_plan": true
+  }]}
+}`, project, sourcePath, filepath.Join(sourcePath, "SKILL.md"), targetPath, filepath.Join(targetPath, "SKILL.md"))
+
+	before, err := os.ReadFile(filepath.Join(targetPath, "SKILL.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{"plan", "--inventory", inventory, "--recommendation", "rec-project", "--apply", "--confirm"}, &stdout, &stderr)
+	if code != ExitOpError {
+		t.Fatalf("plan apply exit = %d, want %d\nstdout:\n%s\nstderr:\n%s", code, ExitOpError, stdout.String(), stderr.String())
+	}
+	after, err := os.ReadFile(filepath.Join(targetPath, "SKILL.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != string(before) {
+		t.Fatalf("unmanaged target changed:\nbefore:\n%s\nafter:\n%s", before, after)
 	}
 }
 

@@ -295,16 +295,19 @@ Flags:
 
 ` + globalFlagHelp()
 	case "plan":
-		return `skills-manager plan --inventory <discover.json> [--recommendation <id>]
+		return `skills-manager plan --inventory <discover.json> [--recommendation <id>] [--apply --confirm]
 
-Build read-only dry-run action plans from discovery recommendations. Plans list
-files to create, update, preserve, skip, or remove and block when ownership,
-compatibility, or target paths are uncertain.
+Build dry-run action plans from discovery recommendations. Plans list files to
+create, update, preserve, skip, or remove and block when ownership,
+compatibility, or target paths are uncertain. Reviewed install/remove plans can
+be applied with --apply --confirm.
 
 Flags:
   --inventory <file>          saved JSON output from skills-manager discover
   --recommendation <id>       plan only one recommendation (default: all)
   --all                       plan every recommendation
+  --apply                     execute a ready install/remove recommendation
+  --confirm                   required with --apply
 
 ` + globalFlagHelp()
 	case "show":
