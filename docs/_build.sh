@@ -9,7 +9,7 @@ cd "$(dirname "$0")"
 # Docs in this directory.
 docs=(TUTORIAL VISION ARCHITECTURE ROADMAP DATA_MODEL DISCOVERY LOADING_COSTS CLI_REFERENCE TAXONOMY \
       COMPATIBILITY INGEST_FLOW UPDATE_FLOW BUNDLED_SKILLS SCHEDULING CROSS_MACHINE \
-      USAGE_TRACKING SECURITY_MODEL ACCEPTANCE_FLO_242)
+      USAGE_TRACKING SECURITY_MODEL RELEASE_CHECKLIST ACCEPTANCE_FLO_242)
 
 # Pretty titles for each doc (used in <title> + nav).
 declare -A titles=(
@@ -30,6 +30,7 @@ declare -A titles=(
   [CROSS_MACHINE]="Cross-machine sync"
   [USAGE_TRACKING]="Usage tracking"
   [SECURITY_MODEL]="Security model"
+  [RELEASE_CHECKLIST]="Release checklist"
   [ACCEPTANCE_FLO_242]="FLO-242 acceptance smoke"
 )
 

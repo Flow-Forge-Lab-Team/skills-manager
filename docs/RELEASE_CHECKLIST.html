@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Release checklist — skills-manager</title>
+<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/styles/atom-one-dark.min.css">
+<script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/highlight.min.js"></script>
+<script>document.addEventListener('DOMContentLoaded', () => {
+  // Pandoc emits class="sourceCode <lang>"; normalize to language-<lang> for hljs.
+  document.querySelectorAll('pre code.sourceCode').forEach(el => {
+    const lang = [...el.classList].find(c => c !== 'sourceCode');
+    if (lang) {
+      el.classList.add('language-' + lang);
+      hljs.highlightElement(el);
+    }
+  });
+});</script>
+</head>
+<body>
+<div class="app">
+  <nav class="sidebar">
+    <a href="index.html" class="brand">
+      <span class="brand-logo">s</span>
+      <span class="brand-name">skills-manager</span>
+    </a>
+    <div class="nav-section">Foundation</div>
+    <a href="VISION.html" class="nav-item">Vision</a>
+    <a href="ARCHITECTURE.html" class="nav-item">Architecture</a>
+    <a href="ROADMAP.html" class="nav-item">Roadmap</a>
+    <a href="DATA_MODEL.html" class="nav-item">Data model</a>
+    <div class="nav-section">Surface</div>
+    <a href="CLI_REFERENCE.html" class="nav-item">CLI reference</a>
+    <a href="TAXONOMY.html" class="nav-item">Taxonomy</a>
+    <div class="nav-section">Subsystems</div>
+    <a href="COMPATIBILITY.html" class="nav-item">Compatibility</a>
+    <a href="INGEST_FLOW.html" class="nav-item">Ingest flow</a>
+    <a href="UPDATE_FLOW.html" class="nav-item">Update flow</a>
+    <a href="BUNDLED_SKILLS.html" class="nav-item">Bundled skills</a>
+    <a href="SCHEDULING.html" class="nav-item">Scheduling</a>
+    <a href="CROSS_MACHINE.html" class="nav-item">Cross-machine sync</a>
+    <div class="nav-section">Out-of-band</div>
+    <a href="../mockup.html" class="nav-item">UI mockup ↗</a>
+    <a href="../README.html" class="nav-item">README</a>
+  </nav>
+  <main class="content">
+    <div class="doc-meta">
+      <span class="crumb"><a href="index.html">docs</a></span>
+      <span class="sep">/</span>
+      <span class="crumb">RELEASE_CHECKLIST.md</span>
+    </div>
+<h1 id="release-checklist">Release checklist</h1>
+<p>Run this checklist before pushing a version tag.</p>
+<h2 id="required-validation">Required validation</h2>
+<div class="sourceCode" id="cb1"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="ex">go</span> test ./...</span>
+<span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="ex">./scripts/validate-discover-first.sh</span></span>
+<span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a><span class="ex">./docs/_build.sh</span></span>
+<span id="cb1-4"><a href="#cb1-4" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> diff <span class="at">--check</span> <span class="at">--</span> .</span></code></pre></div>
+<p><code>scripts/validate-discover-first.sh</code> is the release gate
+for the install-to-discover-to-dashboard workflow. It builds the CLI,
+creates an isolated temporary HOME, seeds Codex, Claude Code, Cursor,
+Grok, generic <code>.agents/skills</code>, and <code>AGENTS.md</code>
+fixtures, verifies discovery output and snapshot persistence, checks
+dashboard API responses, runs a dry-run action plan, applies one safe
+manager-owned install, and verifies README/tutorial commands that claim
+exact first-run behavior.</p>
+<p>Do not tag a release if this validation fails.</p>
+<h2 id="tagging">Tagging</h2>
+<ol type="1">
+<li>Confirm the working tree is clean.</li>
+<li>Confirm generated HTML docs are committed after
+<code>./docs/_build.sh</code>.</li>
+<li>Confirm the GitHub Actions <code>test</code> job passed on the
+release commit.</li>
+<li>Push the version tag only after the checks above pass locally.</li>
+</ol>
+    <footer class="doc-footer">
+      <span>skills-manager · design doc</span>
+      <span><a href="RELEASE_CHECKLIST.md">view source (.md)</a></span>
+    </footer>
+  </main>
+</div>
+</body>
+</html>

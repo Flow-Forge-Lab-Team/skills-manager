@@ -556,8 +556,9 @@ func updateMachine(library string) error {
 }
 
 func writeMachineInventorySnapshot(library string) (machineInventorySummary, error) {
-	home := filepath.Dir(library)
-	inventory, err := loadDiscoverOutputFromState(home)
+	managerHome := filepath.Dir(library)
+	userHome := snapshotUserHome(managerHome)
+	inventory, err := loadDiscoverOutputFromState(managerHome)
 	if err != nil {
 		return machineInventorySummary{}, err
 	}
@@ -576,7 +577,7 @@ func writeMachineInventorySnapshot(library string) (machineInventorySummary, err
 			ToolID:        inst.ToolID,
 			Scope:         inst.Scope,
 			ProjectID:     inst.ProjectID,
-			SourcePath:    normalizeSnapshotPath(home, inst.SourcePath),
+			SourcePath:    normalizeSnapshotPath(userHome, inst.SourcePath),
 			ContentSHA256: inst.ContentSHA256,
 			Managed:       inst.Managed,
 			Ownership:     inst.Ownership,
@@ -588,7 +589,7 @@ func writeMachineInventorySnapshot(library string) (machineInventorySummary, err
 	for _, project := range inventory.Projects {
 		snapshot.Projects = append(snapshot.Projects, machineInventoryProject{
 			ProjectID: project.ProjectID,
-			RootPath:  normalizeSnapshotPath(home, project.RootPath),
+			RootPath:  normalizeSnapshotPath(userHome, project.RootPath),
 		})
 	}
 	sort.Slice(snapshot.Installations, func(i, j int) bool {
@@ -630,6 +631,16 @@ func writeMachineInventorySnapshot(library string) (machineInventorySummary, err
 		return machineInventorySummary{}, err
 	}
 	return summary, nil
+}
+
+func snapshotUserHome(managerHome string) string {
+	if filepath.Base(managerHome) == ".skills-manager" {
+		return filepath.Dir(managerHome)
+	}
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		return home
+	}
+	return managerHome
 }
 
 func normalizeSnapshotPath(home, raw string) string {
