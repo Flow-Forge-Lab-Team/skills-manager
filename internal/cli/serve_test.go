@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"encoding/json"
 	"io"
 	"net"
@@ -1020,6 +1021,44 @@ func TestServeNotificationsEndpoint(t *testing.T) {
 	r4.Body.Close()
 	if r4.StatusCode != http.StatusNotFound {
 		t.Fatalf("DELETE missing file = %d, want 404", r4.StatusCode)
+	}
+}
+
+func TestAssessmentAPIReturnsPersistedDiscovery(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("SKILLS_MANAGER_HOME", filepath.Join(home, ".skills-manager"))
+	writeScanSkill(t, filepath.Join(home, ".claude", "skills"), "review", "---\nname: review\n---\n# Review\n")
+	writeScanSkill(t, filepath.Join(home, ".codex", "skills"), "review", "---\nname: review\n---\n# Review changed\n")
+
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{"--json", "discover", "--global"}, &stdout, &stderr)
+	if code != ExitSuccess {
+		t.Fatalf("discover exit = %d\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+	}
+
+	ts := httptest.NewServer(newServeServer(filepath.Join(home, ".skills-manager")))
+	defer ts.Close()
+	resp, err := http.Get(ts.URL + "/api/v1/assessment")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET assessment status = %d", resp.StatusCode)
+	}
+	var got triageAssessment
+	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
+		t.Fatalf("decode assessment: %v", err)
+	}
+	if got.Summary.GlobalSkills != 2 || got.Summary.DriftGroups != 1 {
+		t.Fatalf("summary = %#v", got.Summary)
+	}
+	if len(got.Installations) != 2 || len(got.DriftGroups) != 1 {
+		t.Fatalf("assessment inventory = installs:%d drift:%d", len(got.Installations), len(got.DriftGroups))
+	}
+	if len(got.Recommendations) == 0 || len(got.ReviewFacts) == 0 {
+		t.Fatalf("recommendations/review facts missing: %#v", got)
 	}
 }
 

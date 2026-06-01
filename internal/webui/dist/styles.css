@@ -63,6 +63,17 @@ html, body {
 .scan-panel { margin-bottom: 16px; }
 .scan-summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; margin-bottom: 12px; }
 .scan-summary .stat { background: var(--bg-elev); padding: 10px; }
+.assessment-stats { grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); }
+.assessment-tabs { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 14px; }
+.assessment-tabs .btn.active { background: var(--accent); color: #f7f7ff; }
+.assessment-body { display: grid; gap: 14px; }
+.assessment-row { grid-template-columns: minmax(120px, auto) 1fr; }
+.assessment-table { table-layout: fixed; }
+.path-cell { overflow-wrap: anywhere; color: var(--text-muted); }
+.hash-cell { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--text-muted); }
+.link-button { background: none; border: 0; color: var(--accent); cursor: pointer; font: inherit; padding: 0; text-align: left; }
+.link-button:hover { text-decoration: underline; }
+.subhead { color: var(--text-faint); font-size: 11px; font-weight: 600; text-transform: uppercase; margin: 12px 0 8px; }
 .dependency-groups { display: grid; gap: 8px; margin-bottom: 12px; }
 .dependency-group { display: flex; gap: 8px; align-items: start; }
 .activity-list { display: grid; gap: 10px; }
