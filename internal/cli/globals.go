@@ -537,6 +537,17 @@ Flags:
   --auto-ingest           auto-ingest high-confidence unregistered skills
 
 ` + globalFlagHelp()
+	case "discover":
+		return `skills-manager discover (--global | --projects <roots>) [flags]
+
+Build a read-only inventory of existing skill and rule installations. Discovery
+requires an explicit consent scope and writes only manager-local state.
+
+Flags:
+  --global               scan known global tool skill roots
+  --projects <roots>     comma-separated approved roots to search for git repos
+
+` + globalFlagHelp()
 	case "new":
 		return `skills-manager new <name> [--guided [--auto | --handoff | --apply <file>]]
 
@@ -575,6 +586,7 @@ Commands:
   init        set up project config from filesystem detection
   add         bring a skill into the library
   scan        discover skills in harness directories
+  discover    read-only global/project skill inventory
   new         create a new skill
   check       poll GitHub for new commits on skills
   compat-check  deeper LLM compatibility + requirements analysis

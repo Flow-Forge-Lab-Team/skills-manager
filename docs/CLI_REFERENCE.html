@@ -155,6 +155,24 @@ class="sourceCode json"><code class="sourceCode json"><span id="cb7-1"><a href="
 <span id="cb7-7"><a href="#cb7-7" aria-hidden="true" tabindex="-1"></a>  <span class="ot">]</span></span>
 <span id="cb7-8"><a href="#cb7-8" aria-hidden="true" tabindex="-1"></a><span class="fu">}</span></span></code></pre></div>
 <h3
+id="skills-manager-discover"><code>skills-manager discover</code></h3>
+<p>Build a read-only inventory of installed skills and rules. This is
+the assessment-first path: it reports what exists before recommending or
+applying changes.</p>
+<pre><code>skills-manager discover --global
+skills-manager discover --projects ~/dev
+skills-manager discover --global --projects ~/dev --json</code></pre>
+<p>Discovery requires an explicit consent scope. <code>--global</code>
+checks known global tool roots such as Claude, Codex, Grok,
+Gemini/Antigravity, Hermes, and OpenClaw. <code>--projects</code>
+searches approved roots for git repositories, pruning generated
+directories such as <code>node_modules</code>, <code>.next</code>,
+<code>dist</code>, <code>build</code>, <code>.git</code>, vendored
+caches, and Codex scratch workspaces.</p>
+<p>JSON output includes detected tools, projects, concrete
+installations, content hashes, ownership, scope, and drift groups.
+Missing tools are coverage gaps, not errors.</p>
+<h3
 id="skills-manager-list---filter-"><code>skills-manager list [--filter ...]</code></h3>
 <p>List skills in the library.</p>
 <pre><code>skills-manager list
@@ -218,16 +236,16 @@ skills-manager check --source github      # only check GitHub-sourced skills
 skills-manager check --since 7d           # only check skills last polled more than 7d ago
 skills-manager check --non-interactive --json   # for cron / scheduled use</code></pre>
 <p>Output (JSON mode):</p>
-<div class="sourceCode" id="cb16"><pre
-class="sourceCode json"><code class="sourceCode json"><span id="cb16-1"><a href="#cb16-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span></span>
-<span id="cb16-2"><a href="#cb16-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;checked_at&quot;</span><span class="fu">:</span> <span class="st">&quot;2026-05-22T14:30:00Z&quot;</span><span class="fu">,</span></span>
-<span id="cb16-3"><a href="#cb16-3" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;skills_checked&quot;</span><span class="fu">:</span> <span class="dv">251</span><span class="fu">,</span></span>
-<span id="cb16-4"><a href="#cb16-4" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;updates_available&quot;</span><span class="fu">:</span> <span class="dv">4</span><span class="fu">,</span></span>
-<span id="cb16-5"><a href="#cb16-5" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;errors&quot;</span><span class="fu">:</span> <span class="ot">[]</span><span class="fu">,</span></span>
-<span id="cb16-6"><a href="#cb16-6" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;updates&quot;</span><span class="fu">:</span> <span class="ot">[</span></span>
-<span id="cb16-7"><a href="#cb16-7" aria-hidden="true" tabindex="-1"></a>    <span class="fu">{</span><span class="dt">&quot;name&quot;</span><span class="fu">:</span> <span class="st">&quot;pdf&quot;</span><span class="fu">,</span> <span class="dt">&quot;from&quot;</span><span class="fu">:</span> <span class="st">&quot;1.4.2&quot;</span><span class="fu">,</span> <span class="dt">&quot;to&quot;</span><span class="fu">:</span> <span class="st">&quot;1.5.0&quot;</span><span class="fu">,</span> <span class="dt">&quot;source&quot;</span><span class="fu">:</span> <span class="st">&quot;marketplace&quot;</span><span class="fu">}</span></span>
-<span id="cb16-8"><a href="#cb16-8" aria-hidden="true" tabindex="-1"></a>  <span class="ot">]</span></span>
-<span id="cb16-9"><a href="#cb16-9" aria-hidden="true" tabindex="-1"></a><span class="fu">}</span></span></code></pre></div>
+<div class="sourceCode" id="cb17"><pre
+class="sourceCode json"><code class="sourceCode json"><span id="cb17-1"><a href="#cb17-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span></span>
+<span id="cb17-2"><a href="#cb17-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;checked_at&quot;</span><span class="fu">:</span> <span class="st">&quot;2026-05-22T14:30:00Z&quot;</span><span class="fu">,</span></span>
+<span id="cb17-3"><a href="#cb17-3" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;skills_checked&quot;</span><span class="fu">:</span> <span class="dv">251</span><span class="fu">,</span></span>
+<span id="cb17-4"><a href="#cb17-4" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;updates_available&quot;</span><span class="fu">:</span> <span class="dv">4</span><span class="fu">,</span></span>
+<span id="cb17-5"><a href="#cb17-5" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;errors&quot;</span><span class="fu">:</span> <span class="ot">[]</span><span class="fu">,</span></span>
+<span id="cb17-6"><a href="#cb17-6" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;updates&quot;</span><span class="fu">:</span> <span class="ot">[</span></span>
+<span id="cb17-7"><a href="#cb17-7" aria-hidden="true" tabindex="-1"></a>    <span class="fu">{</span><span class="dt">&quot;name&quot;</span><span class="fu">:</span> <span class="st">&quot;pdf&quot;</span><span class="fu">,</span> <span class="dt">&quot;from&quot;</span><span class="fu">:</span> <span class="st">&quot;1.4.2&quot;</span><span class="fu">,</span> <span class="dt">&quot;to&quot;</span><span class="fu">:</span> <span class="st">&quot;1.5.0&quot;</span><span class="fu">,</span> <span class="dt">&quot;source&quot;</span><span class="fu">:</span> <span class="st">&quot;marketplace&quot;</span><span class="fu">}</span></span>
+<span id="cb17-8"><a href="#cb17-8" aria-hidden="true" tabindex="-1"></a>  <span class="ot">]</span></span>
+<span id="cb17-9"><a href="#cb17-9" aria-hidden="true" tabindex="-1"></a><span class="fu">}</span></span></code></pre></div>
 <h3
 id="skills-manager-update-skill"><code>skills-manager update [&lt;skill&gt;]</code></h3>
 <p>Show pending updates (interactive review). Or accept/reject specific
@@ -405,10 +423,10 @@ id="skills-manager---version"><code>skills-manager --version</code></h3>
 <h2 id="v1-command-checklist">v1 command checklist</h2>
 <p>Commands in v0.1: <code>init</code>, <code>add</code>,
 <code>install</code>, <code>sync</code>, <code>uninstall</code>,
-<code>scan</code>, <code>list</code>, <code>show</code>,
-<code>match</code>, <code>check</code>, <code>update</code>,
-<code>status</code>, <code>doctor</code>, <code>config</code>,
-<code>help</code>, <code>--version</code></p>
+<code>scan</code>, <code>discover</code>, <code>list</code>,
+<code>show</code>, <code>match</code>, <code>check</code>,
+<code>update</code>, <code>status</code>, <code>doctor</code>,
+<code>config</code>, <code>help</code>, <code>--version</code></p>
 <p>Added in v0.2: <code>summarize</code>, <code>ingest</code>,
 <code>setup-schedule</code>, <code>unschedule</code>,
 <code>sync-library</code>, <code>join</code>, <code>machines</code>,

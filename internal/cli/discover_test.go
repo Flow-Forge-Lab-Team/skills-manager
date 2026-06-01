@@ -1,0 +1,141 @@
+package cli
+
+import (
+	"bytes"
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+func TestDiscoverRequiresExplicitScope(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{"discover"}, &stdout, &stderr)
+	if code != ExitUsageError {
+		t.Fatalf("code = %d, want %d", code, ExitUsageError)
+	}
+	if !strings.Contains(stderr.String(), "explicit scope") {
+		t.Fatalf("stderr = %q, want explicit scope error", stderr.String())
+	}
+}
+
+func TestDiscoverGlobalReportsSkillsAndMissingTools(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("SKILLS_MANAGER_HOME", filepath.Join(home, ".skills-manager"))
+
+	writeScanSkill(t, filepath.Join(home, ".claude", "skills"), "review", "---\nname: review\n---\n# Review\n")
+	writeScanSkill(t, filepath.Join(home, ".codex", "skills"), "review", "---\nname: review\n---\n# Review changed\n")
+	writeScanSkill(t, filepath.Join(home, ".grok", "skills"), "review-copy", "---\nname: review\n---\n# Review\n")
+
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{"--json", "discover", "--global"}, &stdout, &stderr)
+	if code != ExitSuccess {
+		t.Fatalf("code = %d, want %d\nstderr:\n%s", code, ExitSuccess, stderr.String())
+	}
+
+	var got discoverOutput
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal discover output: %v\n%s", err, stdout.String())
+	}
+	if got.Summary.ToolsFound != 3 {
+		t.Fatalf("tools found = %d, want 3: %+v", got.Summary.ToolsFound, got.Tools)
+	}
+	if got.Summary.ToolsMissing == 0 {
+		t.Fatalf("tools missing = 0, want coverage gaps")
+	}
+	if got.Summary.GlobalSkills != 3 {
+		t.Fatalf("global skills = %d, want 3", got.Summary.GlobalSkills)
+	}
+	if got.Summary.DriftGroups == 0 {
+		t.Fatalf("expected drift group for same-name different hash: %+v", got.DriftGroups)
+	}
+	if got.Summary.DuplicateContent == 0 {
+		t.Fatalf("expected duplicate content group: %+v", got.DriftGroups)
+	}
+	for _, inst := range got.Installations {
+		if inst.Scope != "global" {
+			t.Fatalf("scope = %q, want global", inst.Scope)
+		}
+		if inst.ContentSHA256 == "" || inst.ContentSizeBytes == 0 {
+			t.Fatalf("missing hash info: %+v", inst)
+		}
+		if inst.Ownership != "unmanaged" {
+			t.Fatalf("ownership = %q, want unmanaged", inst.Ownership)
+		}
+	}
+}
+
+func TestDiscoverProjectsPrunesGeneratedDirs(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("SKILLS_MANAGER_HOME", filepath.Join(home, ".skills-manager"))
+
+	devRoot := filepath.Join(home, "dev")
+	repo := filepath.Join(devRoot, "app")
+	if err := os.MkdirAll(filepath.Join(repo, ".git"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	writeScanSkill(t, filepath.Join(repo, ".codex", "skills"), "project-skill", "---\nname: project-skill\n---\n# Project\n")
+	writeFile(t, filepath.Join(repo, ".cursor", "rules", "react.mdc"), "# Cursor rule\n")
+	writeFile(t, filepath.Join(repo, "AGENTS.md"), "# Agent instructions\n")
+
+	generatedRepo := filepath.Join(devRoot, "node_modules", "ignored")
+	if err := os.MkdirAll(filepath.Join(generatedRepo, ".git"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	writeScanSkill(t, filepath.Join(generatedRepo, ".codex", "skills"), "ignored", "---\nname: ignored\n---\n# Ignored\n")
+
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{"--json", "discover", "--projects", devRoot}, &stdout, &stderr)
+	if code != ExitSuccess {
+		t.Fatalf("code = %d, want %d\nstderr:\n%s", code, ExitSuccess, stderr.String())
+	}
+
+	var got discoverOutput
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal discover output: %v\n%s", err, stdout.String())
+	}
+	if got.Summary.ProjectsFound != 1 {
+		t.Fatalf("projects found = %d, want 1: %+v", got.Summary.ProjectsFound, got.Projects)
+	}
+	if got.Summary.ProjectLocalSkills != 3 {
+		t.Fatalf("project skills = %d, want 3: %+v", got.Summary.ProjectLocalSkills, got.Installations)
+	}
+	for _, inst := range got.Installations {
+		if strings.Contains(inst.SourcePath, "node_modules") {
+			t.Fatalf("generated path should be pruned: %+v", inst)
+		}
+		if inst.ProjectID == "" || inst.Scope != "project" {
+			t.Fatalf("bad project install fields: %+v", inst)
+		}
+	}
+}
+
+func TestDiscoverProjectsAcceptsGitFileWorktree(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("SKILLS_MANAGER_HOME", filepath.Join(home, ".skills-manager"))
+
+	repo := filepath.Join(home, "worktree")
+	if err := os.MkdirAll(repo, 0755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(repo, ".git"), "gitdir: /tmp/example\n")
+	writeScanSkill(t, filepath.Join(repo, ".claude", "skills"), "worktree-skill", "---\nname: worktree-skill\n---\n# Worktree\n")
+
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{"--json", "discover", "--projects", repo}, &stdout, &stderr)
+	if code != ExitSuccess {
+		t.Fatalf("code = %d, want %d\nstderr:\n%s", code, ExitSuccess, stderr.String())
+	}
+
+	var got discoverOutput
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal discover output: %v\n%s", err, stdout.String())
+	}
+	if got.Summary.ProjectsFound != 1 || got.Summary.ProjectLocalSkills != 1 {
+		t.Fatalf("summary = %+v, want one project and one project-local skill", got.Summary)
+	}
+}

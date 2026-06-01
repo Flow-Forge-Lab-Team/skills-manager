@@ -7,7 +7,7 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 # Docs in this directory.
-docs=(TUTORIAL VISION ARCHITECTURE ROADMAP DATA_MODEL CLI_REFERENCE TAXONOMY \
+docs=(TUTORIAL VISION ARCHITECTURE ROADMAP DATA_MODEL DISCOVERY CLI_REFERENCE TAXONOMY \
       COMPATIBILITY INGEST_FLOW UPDATE_FLOW BUNDLED_SKILLS SCHEDULING CROSS_MACHINE \
       USAGE_TRACKING SECURITY_MODEL ACCEPTANCE_FLO_242)
 
@@ -18,6 +18,7 @@ declare -A titles=(
   [ARCHITECTURE]="Architecture"
   [ROADMAP]="Roadmap"
   [DATA_MODEL]="Data model"
+  [DISCOVERY]="Discover-first inventory"
   [CLI_REFERENCE]="CLI reference"
   [TAXONOMY]="Taxonomy"
   [COMPATIBILITY]="Compatibility"
@@ -114,6 +115,7 @@ edit_in_place 's|href="VISION.html"|href="docs/VISION.html"|g' ../README.html
 edit_in_place 's|href="ARCHITECTURE.html"|href="docs/ARCHITECTURE.html"|g' ../README.html
 edit_in_place 's|href="ROADMAP.html"|href="docs/ROADMAP.html"|g' ../README.html
 edit_in_place 's|href="DATA_MODEL.html"|href="docs/DATA_MODEL.html"|g' ../README.html
+edit_in_place 's|href="DISCOVERY.html"|href="docs/DISCOVERY.html"|g' ../README.html
 edit_in_place 's|href="CLI_REFERENCE.html"|href="docs/CLI_REFERENCE.html"|g' ../README.html
 edit_in_place 's|href="TAXONOMY.html"|href="docs/TAXONOMY.html"|g' ../README.html
 edit_in_place 's|href="COMPATIBILITY.html"|href="docs/COMPATIBILITY.html"|g' ../README.html

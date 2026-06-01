@@ -43,6 +43,17 @@ brew install Flow-Forge-Lab-Team/tap/skills-manager
 
 Then run the [5-minute tutorial](docs/TUTORIAL.md), or `skills-manager --help`.
 
+To inspect existing local skill installs without changing them, run:
+
+```sh
+skills-manager discover --global
+skills-manager discover --projects ~/dev
+```
+
+Discovery is read-only for tool and project directories. It reports detected
+tools, global and project-local skills, content hashes, drift groups, duplicate
+content, and missing tool coverage before any install or cleanup action.
+
 ## Real CLI Demo
 
 This transcript was generated from the current CLI with a temporary manager home
@@ -123,15 +134,16 @@ Read in this order:
 2. [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — the how
 3. [`docs/ROADMAP.md`](docs/ROADMAP.md) — what ships when
 4. [`docs/DATA_MODEL.md`](docs/DATA_MODEL.md) — schemas
-5. [`docs/CLI_REFERENCE.md`](docs/CLI_REFERENCE.md) — command surface
-6. [`docs/TAXONOMY.md`](docs/TAXONOMY.md) — categories + tags
-7. [`docs/COMPATIBILITY.md`](docs/COMPATIBILITY.md) — compatibility + execution requirements
-8. [`docs/INGEST_FLOW.md`](docs/INGEST_FLOW.md) — adding skills
-9. [`docs/UPDATE_FLOW.md`](docs/UPDATE_FLOW.md) — tracking changes
-10. [`docs/BUNDLED_SKILLS.md`](docs/BUNDLED_SKILLS.md) — manager skills
-11. [`docs/SCHEDULING.md`](docs/SCHEDULING.md) — scheduling design
-12. [`docs/CROSS_MACHINE.md`](docs/CROSS_MACHINE.md) — git sync
-13. [`docs/SECURITY_MODEL.md`](docs/SECURITY_MODEL.md) — install and release trust boundaries
+5. [`docs/DISCOVERY.md`](docs/DISCOVERY.md) — discover-first inventory
+6. [`docs/CLI_REFERENCE.md`](docs/CLI_REFERENCE.md) — command surface
+7. [`docs/TAXONOMY.md`](docs/TAXONOMY.md) — categories + tags
+8. [`docs/COMPATIBILITY.md`](docs/COMPATIBILITY.md) — compatibility + execution requirements
+9. [`docs/INGEST_FLOW.md`](docs/INGEST_FLOW.md) — adding skills
+10. [`docs/UPDATE_FLOW.md`](docs/UPDATE_FLOW.md) — tracking changes
+11. [`docs/BUNDLED_SKILLS.md`](docs/BUNDLED_SKILLS.md) — manager skills
+12. [`docs/SCHEDULING.md`](docs/SCHEDULING.md) — scheduling design
+13. [`docs/CROSS_MACHINE.md`](docs/CROSS_MACHINE.md) — git sync
+14. [`docs/SECURITY_MODEL.md`](docs/SECURITY_MODEL.md) — install and release trust boundaries
 
 ## Naming
 

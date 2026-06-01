@@ -1,0 +1,344 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Discover-first inventory — skills-manager</title>
+<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/styles/atom-one-dark.min.css">
+<script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/highlight.min.js"></script>
+<script>document.addEventListener('DOMContentLoaded', () => {
+  // Pandoc emits class="sourceCode <lang>"; normalize to language-<lang> for hljs.
+  document.querySelectorAll('pre code.sourceCode').forEach(el => {
+    const lang = [...el.classList].find(c => c !== 'sourceCode');
+    if (lang) {
+      el.classList.add('language-' + lang);
+      hljs.highlightElement(el);
+    }
+  });
+});</script>
+</head>
+<body>
+<div class="app">
+  <nav class="sidebar">
+    <a href="index.html" class="brand">
+      <span class="brand-logo">s</span>
+      <span class="brand-name">skills-manager</span>
+    </a>
+    <div class="nav-section">Foundation</div>
+    <a href="VISION.html" class="nav-item">Vision</a>
+    <a href="ARCHITECTURE.html" class="nav-item">Architecture</a>
+    <a href="ROADMAP.html" class="nav-item">Roadmap</a>
+    <a href="DATA_MODEL.html" class="nav-item">Data model</a>
+    <div class="nav-section">Surface</div>
+    <a href="CLI_REFERENCE.html" class="nav-item">CLI reference</a>
+    <a href="TAXONOMY.html" class="nav-item">Taxonomy</a>
+    <div class="nav-section">Subsystems</div>
+    <a href="COMPATIBILITY.html" class="nav-item">Compatibility</a>
+    <a href="INGEST_FLOW.html" class="nav-item">Ingest flow</a>
+    <a href="UPDATE_FLOW.html" class="nav-item">Update flow</a>
+    <a href="BUNDLED_SKILLS.html" class="nav-item">Bundled skills</a>
+    <a href="SCHEDULING.html" class="nav-item">Scheduling</a>
+    <a href="CROSS_MACHINE.html" class="nav-item">Cross-machine sync</a>
+    <div class="nav-section">Out-of-band</div>
+    <a href="../mockup.html" class="nav-item">UI mockup ↗</a>
+    <a href="../README.html" class="nav-item">README</a>
+  </nav>
+  <main class="content">
+    <div class="doc-meta">
+      <span class="crumb"><a href="index.html">docs</a></span>
+      <span class="sep">/</span>
+      <span class="crumb">DISCOVERY.md</span>
+    </div>
+<h1 id="discover-first-inventory">Discover-first inventory</h1>
+<p>This document defines the first-run product contract for the
+discover-first workflow tracked by FLO-381. It is the source of truth
+for the follow-up implementation work in global discovery, project
+discovery, inventory persistence, recommendations, dashboard views, and
+release validation.</p>
+<h2 id="first-run-flow">First-run flow</h2>
+<p>The first successful experience should answer "what skills do I
+already have, where are they installed, what differs, and what should I
+review next?" before it asks the user to install or modify anything.</p>
+<ol type="1">
+<li><p>Install the binary.</p></li>
+<li><p>Run a read-only inventory command:</p>
+<div class="sourceCode" id="cb1"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="ex">skills-manager</span> discover <span class="at">--global</span></span></code></pre></div></li>
+<li><p>Review the summary: detected tools, global skill roots, skill
+counts, unmanaged skills, same-name drift, duplicate content, and
+coverage gaps.</p></li>
+<li><p>Optionally approve project roots:</p>
+<div class="sourceCode" id="cb2"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="ex">skills-manager</span> discover <span class="at">--projects</span> ~/dev</span></code></pre></div></li>
+<li><p>Open the local dashboard:</p>
+<div class="sourceCode" id="cb3"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="ex">skills-manager</span> serve</span></code></pre></div></li>
+<li><p>Review deterministic recommendations and dry-run action plans
+before any write operation.</p></li>
+</ol>
+<p><code>discover</code> is read-only for tool and project directories.
+It may write only to <code>~/.skills-manager</code> for local state,
+logs, saved approved roots, and inventory snapshots.</p>
+<h2 id="consent-boundaries">Consent boundaries</h2>
+<p>Discovery has three consent scopes.</p>
+<table>
+<thead>
+<tr>
+<th>Scope</th>
+<th>Example command</th>
+<th>What can be read</th>
+<th>Default behavior</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Known global paths</td>
+<td><code>skills-manager discover --global</code></td>
+<td>Supported tool skill roots under the user's home directory</td>
+<td>Allowed only after the user chooses <code>--global</code> or
+confirms an interactive prompt</td>
+</tr>
+<tr>
+<td>Approved project roots</td>
+<td><code>skills-manager discover --projects ~/dev,~/work</code></td>
+<td>Git repositories under the approved roots, with generated
+directories pruned</td>
+<td>Allowed only for roots passed on the command line or saved earlier
+by the user</td>
+</tr>
+<tr>
+<td>Broader scans</td>
+<td><code>skills-manager discover --projects ~/ --include-codex-workspaces</code></td>
+<td>Larger user-selected roots</td>
+<td>Must be explicit and should show a warning before scanning</td>
+</tr>
+</tbody>
+</table>
+<p>The command must not run a full-home or arbitrary filesystem scan
+just because no flags were provided. In non-interactive mode, missing
+scan scope is a usage error.</p>
+<p>Project discovery prunes noisy or generated areas by default:</p>
+<ul>
+<li><code>.git</code></li>
+<li><code>node_modules</code></li>
+<li><code>.next</code></li>
+<li><code>dist</code></li>
+<li><code>build</code></li>
+<li><code>vendor</code></li>
+<li><code>.venv</code></li>
+<li><code>.cache</code></li>
+<li><code>.turbo</code></li>
+<li>Codex scratch/workspaces under
+<code>Documents/Codex/.../work</code></li>
+</ul>
+<p>Those paths can be included only through an explicit flag designed
+for that purpose.</p>
+<h2 id="inventory-entities">Inventory entities</h2>
+<p>The inventory model is fact-first. Recommendations and AI assessment
+are separate layers that read inventory facts; they do not replace
+them.</p>
+<h3 id="tool">Tool</h3>
+<p>A supported tool or instruction harness that can own skill or rule
+locations.</p>
+<p>Fields:</p>
+<ul>
+<li><code>tool_id</code>: stable id such as <code>claude</code>,
+<code>codex</code>, <code>grok</code>, <code>cursor</code>,
+<code>gemini</code>, <code>antigravity</code>, <code>hermes</code>,
+<code>openclaw</code>, <code>agents</code>, or
+<code>agents_md</code>.</li>
+<li><code>display_name</code>: human-readable name.</li>
+<li><code>detected</code>: whether any known root or signal exists.</li>
+<li><code>global_roots</code>: known global directories checked for this
+tool.</li>
+<li><code>project_patterns</code>: project-local paths or files checked
+for this tool.</li>
+<li><code>status</code>: <code>present</code>, <code>missing</code>,
+<code>unsupported</code>, or <code>unknown</code>.</li>
+</ul>
+<p>Missing tools are coverage gaps, not command errors.</p>
+<h3 id="project">Project</h3>
+<p>A git repository or approved directory that may contain project-local
+skills or rules.</p>
+<p>Fields:</p>
+<ul>
+<li><code>project_id</code>: stable local id derived from normalized
+path and repository identity when available.</li>
+<li><code>root_path</code>: local path. Human output may display it;
+exported artifacts should support path-prefix redaction.</li>
+<li><code>repo_remote</code>: optional remote URL, redacted or omitted
+in export modes where repository identity is sensitive.</li>
+<li><code>detected_tools</code>: tool ids with project-local
+findings.</li>
+<li><code>last_scanned_at</code>: timestamp for the latest inventory
+pass.</li>
+</ul>
+<h3 id="skill-installation">Skill installation</h3>
+<p>A concrete skill or rule file discovered on disk.</p>
+<p>Fields:</p>
+<ul>
+<li><code>installation_id</code>: stable id derived from path, scope,
+and tool.</li>
+<li><code>skill_name</code>: directory name, frontmatter name, rule
+filename, or AGENTS.md label depending on source.</li>
+<li><code>tool_id</code>: owning tool or harness.</li>
+<li><code>scope</code>: <code>global</code> or
+<code>project</code>.</li>
+<li><code>project_id</code>: present only for project-local
+findings.</li>
+<li><code>source_path</code>: file or directory that contains the
+instruction content.</li>
+<li><code>content_path</code>: exact file hashed when the source is a
+directory.</li>
+<li><code>content_sha256</code>: exact content identity for the
+instruction file.</li>
+<li><code>content_size_bytes</code>: size of hashed content.</li>
+<li><code>modified_at</code>: filesystem modification time when
+available.</li>
+<li><code>managed</code>: whether the manager has manifest evidence that
+it created this installation.</li>
+<li><code>ownership</code>: <code>manager</code>,
+<code>unmanaged</code>, or <code>unknown</code>.</li>
+<li><code>format</code>: <code>skill_md</code>,
+<code>cursor_rule</code>, <code>github_instruction</code>,
+<code>agents_md</code>, or <code>unknown</code>.</li>
+<li><code>present</code>: false when a previously persisted installation
+is no longer found.</li>
+</ul>
+<h3 id="content-hash">Content hash</h3>
+<p><code>content_sha256</code> is exact identity only. It proves two
+discovered files have the same bytes; it does not prove two different
+files are semantically equivalent.</p>
+<p>Near-duplicate and similarity review must use an explicit diff or
+similarity step after inventory, and the UI must label those findings as
+review signals, not exact facts.</p>
+<h3 id="drift-group">Drift group</h3>
+<p>A group used for review.</p>
+<p>Fields:</p>
+<ul>
+<li><code>group_id</code>: stable local id.</li>
+<li><code>group_type</code>: <code>same_name_different_hash</code>,
+<code>same_hash_different_name</code>, or
+<code>global_project_overlap</code>.</li>
+<li><code>skill_name</code>: present for same-name groups.</li>
+<li><code>content_sha256</code>: present for same-content groups.</li>
+<li><code>installation_ids</code>: discovered installations in the
+group.</li>
+<li><code>status</code>: <code>new</code>, <code>accepted</code>,
+<code>ignored</code>, or <code>resolved</code>.</li>
+<li><code>review_reason</code>: optional user-supplied reason.</li>
+</ul>
+<p>Same-name/different-hash is drift. Different-name/same-hash is
+duplicate content. Global/project overlap is a coverage or override
+signal depending on tool and project context.</p>
+<h3 id="recommendation">Recommendation</h3>
+<p>A deterministic proposal generated from inventory facts.</p>
+<p>Fields:</p>
+<ul>
+<li><code>recommendation_id</code></li>
+<li><code>kind</code>: <code>install_global</code>,
+<code>install_project</code>, <code>ingest</code>, <code>remove</code>,
+<code>ignore</code>, <code>review_drift</code>, or
+<code>needs_port</code></li>
+<li><code>confidence</code>: <code>high</code>, <code>medium</code>, or
+<code>low</code></li>
+<li><code>reason</code>: human-readable explanation tied to inventory
+facts</li>
+<li><code>source_installation_ids</code></li>
+<li><code>target_tool_id</code></li>
+<li><code>target_project_id</code></li>
+<li><code>requires_plan</code>: always true for write-capable
+recommendations</li>
+</ul>
+<p>Recommendations do not write files. They feed dry-run action
+plans.</p>
+<h2 id="reuse-and-replacement-map">Reuse and replacement map</h2>
+<p>Current implementation pieces are useful, but they map unevenly to
+the discover-first model.</p>
+<table>
+<thead>
+<tr>
+<th>Current surface</th>
+<th>Reuse</th>
+<th>Replace or extend</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>scan</code></td>
+<td>Reuse fingerprinting, global skill directory walking, ignore list,
+and ingest preflight concepts</td>
+<td><code>scan</code> remains ingest-oriented; <code>discover</code>
+should become the assessment-first command with stable inventory schema
+and explicit consent scopes</td>
+</tr>
+<tr>
+<td><code>status</code></td>
+<td>Reuse library, update, detected, watcher, and usage summaries</td>
+<td>Add inventory snapshot status: last scan, detected tools,
+global/project counts, drift groups, and coverage gaps</td>
+</tr>
+<tr>
+<td><code>serve</code></td>
+<td>Reuse local HTTP server, static app, auth token, and CLI-run
+endpoint</td>
+<td>Add inventory, drift, coverage, recommendations, action-plan, and
+review-state APIs</td>
+</tr>
+<tr>
+<td><code>detected</code> table</td>
+<td>Reuse as legacy scan/ingest staging data</td>
+<td>Add versioned inventory snapshot tables rather than overloading
+<code>detected</code></td>
+</tr>
+<tr>
+<td><code>skills</code>, <code>projects</code>, <code>installs</code>
+tables</td>
+<td>Reuse canonical library and manager-owned install state</td>
+<td>Link discovered unmanaged installations to tools/projects and
+manager manifests</td>
+</tr>
+<tr>
+<td>Manifest tracking</td>
+<td>Reuse for ownership checks and rollback boundaries</td>
+<td>Add global install ownership and action-plan audit records</td>
+</tr>
+</tbody>
+</table>
+<h2 id="dashboard-contract">Dashboard contract</h2>
+<p>The dashboard should open on an assessment-first view once inventory
+exists.</p>
+<p>Required sections:</p>
+<ul>
+<li>Inventory</li>
+<li>Drift</li>
+<li>Global vs Project</li>
+<li>Tool Coverage</li>
+<li>Recommendations</li>
+<li>Actions</li>
+</ul>
+<p>All write-capable controls must require a dry-run plan preview. The
+dashboard must label deterministic facts separately from optional AI
+advisory output.</p>
+<h2 id="verification-sample">Verification sample</h2>
+<p>For FLO-381, review this design against a real local sample by
+running a read-only scan with an isolated manager home:</p>
+<div class="sourceCode" id="cb4"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a><span class="va">tmp_home</span><span class="op">=</span><span class="st">&quot;</span><span class="va">$(</span><span class="fu">mktemp</span> <span class="at">-d</span><span class="va">)</span><span class="st">&quot;</span></span>
+<span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a><span class="va">SKILLS_MANAGER_HOME</span><span class="op">=</span><span class="st">&quot;</span><span class="va">$tmp_home</span><span class="st">&quot;</span> <span class="ex">skills-manager</span> scan <span class="at">--json</span> <span class="dt">\</span></span>
+<span id="cb4-3"><a href="#cb4-3" aria-hidden="true" tabindex="-1"></a>  <span class="at">--paths</span><span class="op">=</span><span class="st">&quot;</span><span class="va">$HOME</span><span class="st">/.claude/skills,</span><span class="va">$HOME</span><span class="st">/.codex/skills,</span><span class="va">$HOME</span><span class="st">/.grok/skills&quot;</span></span>
+<span id="cb4-4"><a href="#cb4-4" aria-hidden="true" tabindex="-1"></a><span class="fu">rm</span> <span class="at">-rf</span> <span class="st">&quot;</span><span class="va">$tmp_home</span><span class="st">&quot;</span></span></code></pre></div>
+<p>The command may create state under the temporary manager home. It
+must not write into the scanned global skill directories.</p>
+<p>This sample intentionally uses the existing <code>scan</code> command
+only as current-state evidence. It is not the final
+<code>discover</code> interface.</p>
+    <footer class="doc-footer">
+      <span>skills-manager · design doc</span>
+      <span><a href="DISCOVERY.md">view source (.md)</a></span>
+    </footer>
+  </main>
+</div>
+</body>
+</html>
