@@ -403,11 +403,11 @@ func discoverSkillDir(root discoverRoot, scope, projectID, basePath string) []di
 			return nil
 		}
 		sourcePath := discoverSourcePath(root.path, walkRoot, path)
-		if path != walkRoot && shouldPruneDiscoverDir(d.Name(), sourcePath) {
-			return filepath.SkipDir
-		}
 		contentPath := filepath.Join(sourcePath, "SKILL.md")
 		if !fileExists(contentPath) {
+			if path != walkRoot && shouldPruneDiscoverDir(d.Name(), sourcePath) {
+				return filepath.SkipDir
+			}
 			if !d.IsDir() {
 				return nil
 			}

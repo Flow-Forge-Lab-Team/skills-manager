@@ -26,6 +26,7 @@ func TestDiscoverGlobalReportsSkillsAndMissingTools(t *testing.T) {
 	t.Setenv("SKILLS_MANAGER_HOME", filepath.Join(home, ".skills-manager"))
 
 	writeScanSkill(t, filepath.Join(home, ".claude", "skills"), "review", "---\nname: review\n---\n# Review\n")
+	writeScanSkill(t, filepath.Join(home, ".claude", "skills"), "build", "---\nname: build\n---\n# Build\n")
 	writeScanSkill(t, filepath.Join(home, ".codex", "skills"), "review", "---\nname: review\n---\n# Review changed\n")
 	writeScanSkill(t, filepath.Join(home, ".codex", "skills", ".system"), "openai-docs", "---\nname: openai-docs\n---\n# OpenAI Docs\n")
 	writeScanSkill(t, filepath.Join(home, ".grok", "skills"), "review-copy", "---\nname: review\n---\n# Review\n")
@@ -48,8 +49,8 @@ func TestDiscoverGlobalReportsSkillsAndMissingTools(t *testing.T) {
 	if got.Summary.ToolsMissing == 0 {
 		t.Fatalf("tools missing = 0, want coverage gaps")
 	}
-	if got.Summary.GlobalSkills != 6 {
-		t.Fatalf("global skills = %d, want 6", got.Summary.GlobalSkills)
+	if got.Summary.GlobalSkills != 7 {
+		t.Fatalf("global skills = %d, want 7", got.Summary.GlobalSkills)
 	}
 	if got.Summary.DriftGroups == 0 {
 		t.Fatalf("expected drift group for same-name different hash: %+v", got.DriftGroups)
@@ -73,6 +74,9 @@ func TestDiscoverGlobalReportsSkillsAndMissingTools(t *testing.T) {
 	}
 	if !hasDiscoverInstall(got.Installations, "grok", "review", filepath.Join(".grok", "skills", "review-copy")) {
 		t.Fatalf("missing declared-name skill install: %+v", got.Installations)
+	}
+	if !hasDiscoverInstall(got.Installations, "claude", "build", filepath.Join(".claude", "skills", "build")) {
+		t.Fatalf("missing generated-name skill install: %+v", got.Installations)
 	}
 }
 
