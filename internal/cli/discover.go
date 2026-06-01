@@ -2,7 +2,9 @@ package cli
 
 import (
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
 	"io/fs"
@@ -11,6 +13,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/Flow-Forge-Lab-Team/skills-manager/internal/state"
 )
 
 type discoverTool struct {
@@ -147,6 +151,10 @@ func runDiscover(args []string, stdout io.Writer, stderr io.Writer, gf globalFla
 	}
 	out.ApprovedProjectRoots, _ = loadDiscoverProjectRoots(home)
 	out.SkippedProjectRoots = opts.skippedProjectRoots
+	if err := persistDiscoverOutput(home, out, opts); err != nil {
+		fmt.Fprintf(stderr, "persist discovery: %v\n", err)
+		return ExitOpError
+	}
 
 	if gf.JSON {
 		if err := writeJSON(stdout, out); err != nil {
@@ -272,6 +280,266 @@ func collectDiscovery(opts discoverOptions) (discoverOutput, error) {
 	out.DriftGroups = buildDiscoverDriftGroups(out.Installations)
 	out.Summary = summarizeDiscovery(out)
 	return out, nil
+}
+
+func persistDiscoverOutput(home string, out discoverOutput, opts discoverOptions) error {
+	db, err := state.Open(home)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	scanID := "scan-" + shortHash(out.ScannedAt+"|"+strings.Join(opts.projectRoots, ",")+"|"+fmt.Sprint(opts.global)+"|"+time.Now().UTC().Format(time.RFC3339Nano))
+	projectRootsJSON, err := jsonString(opts.projectRoots)
+	if err != nil {
+		return err
+	}
+	globalScope := 0
+	if opts.global {
+		globalScope = 1
+	}
+	if _, err := tx.Exec(`INSERT INTO discovery_scans (scan_id, scanned_at, global_scope, project_roots)
+VALUES (?, ?, ?, ?)
+ON CONFLICT(scan_id) DO UPDATE SET
+  scanned_at=excluded.scanned_at,
+  global_scope=excluded.global_scope,
+  project_roots=excluded.project_roots`,
+		scanID, out.ScannedAt, globalScope, projectRootsJSON); err != nil {
+		return err
+	}
+
+	for _, tool := range out.Tools {
+		globalRoots, err := jsonString(tool.GlobalRoots)
+		if err != nil {
+			return err
+		}
+		projectPatterns, err := jsonString(tool.ProjectPatterns)
+		if err != nil {
+			return err
+		}
+		if _, err := tx.Exec(`INSERT INTO discovery_tools
+(tool_id, display_name, detected, status, global_roots, project_patterns, last_seen_at)
+VALUES (?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT(tool_id) DO UPDATE SET
+  display_name=excluded.display_name,
+  detected=excluded.detected,
+  status=excluded.status,
+  global_roots=excluded.global_roots,
+  project_patterns=excluded.project_patterns,
+  last_seen_at=excluded.last_seen_at`,
+			tool.ToolID, tool.DisplayName, boolInt(tool.Detected), tool.Status, globalRoots, projectPatterns, out.ScannedAt); err != nil {
+			return err
+		}
+	}
+
+	seenProjects := map[string]bool{}
+	for _, project := range out.Projects {
+		seenProjects[project.ProjectID] = true
+		detectedTools, err := jsonString(project.DetectedTools)
+		if err != nil {
+			return err
+		}
+		if _, err := tx.Exec(`INSERT INTO discovery_projects
+(project_id, root_path, repo_remote, detected_tools, last_scanned_at, present, missing_since)
+VALUES (?, ?, ?, ?, ?, 1, NULL)
+ON CONFLICT(project_id) DO UPDATE SET
+  root_path=excluded.root_path,
+  repo_remote=excluded.repo_remote,
+  detected_tools=excluded.detected_tools,
+  last_scanned_at=excluded.last_scanned_at,
+  present=1,
+  missing_since=NULL`,
+			project.ProjectID, project.RootPath, project.RepoRemote, detectedTools, project.LastScannedAt); err != nil {
+			return err
+		}
+	}
+
+	seenGlobalInstalls := map[string]bool{}
+	seenProjectInstalls := map[string]bool{}
+	for _, inst := range out.Installations {
+		if inst.Scope == "global" {
+			seenGlobalInstalls[inst.InstallationID] = true
+		}
+		if inst.Scope == "project" {
+			seenProjectInstalls[inst.InstallationID] = true
+		}
+		if _, err := tx.Exec(`INSERT INTO discovery_installations
+(installation_id, skill_name, tool_id, scope, project_id, source_path, content_path,
+ content_sha256, content_size_bytes, modified_at, managed, ownership, format, present,
+ first_seen_at, last_seen_at, missing_since)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, NULL)
+ON CONFLICT(installation_id) DO UPDATE SET
+  skill_name=excluded.skill_name,
+  tool_id=excluded.tool_id,
+  scope=excluded.scope,
+  project_id=excluded.project_id,
+  source_path=excluded.source_path,
+  content_path=excluded.content_path,
+  content_sha256=excluded.content_sha256,
+  content_size_bytes=excluded.content_size_bytes,
+  modified_at=excluded.modified_at,
+  managed=excluded.managed,
+  ownership=excluded.ownership,
+  format=excluded.format,
+  present=1,
+  first_seen_at=discovery_installations.first_seen_at,
+  last_seen_at=excluded.last_seen_at,
+  missing_since=NULL`,
+			inst.InstallationID, inst.SkillName, inst.ToolID, inst.Scope, inst.ProjectID, inst.SourcePath,
+			inst.ContentPath, inst.ContentSHA256, inst.ContentSizeBytes, inst.ModifiedAt, boolInt(inst.Managed),
+			inst.Ownership, inst.Format, out.ScannedAt, out.ScannedAt); err != nil {
+			return err
+		}
+	}
+
+	if opts.global {
+		if err := markMissingInstallations(tx, "global", nil, seenGlobalInstalls, out.ScannedAt); err != nil {
+			return err
+		}
+	}
+	if len(opts.projectRoots) > 0 {
+		if err := markMissingProjects(tx, opts.projectRoots, seenProjects, out.ScannedAt); err != nil {
+			return err
+		}
+		if err := markMissingInstallations(tx, "project", opts.projectRoots, seenProjectInstalls, out.ScannedAt); err != nil {
+			return err
+		}
+	}
+
+	seenGroups := map[string]bool{}
+	for _, group := range out.DriftGroups {
+		seenGroups[group.GroupID] = true
+		if _, err := tx.Exec(`INSERT INTO discovery_drift_groups
+(group_id, group_type, skill_name, content_sha256, status, present, last_seen_at)
+VALUES (?, ?, ?, ?, ?, 1, ?)
+ON CONFLICT(group_id) DO UPDATE SET
+  group_type=excluded.group_type,
+  skill_name=excluded.skill_name,
+  content_sha256=excluded.content_sha256,
+  status=excluded.status,
+  present=1,
+  last_seen_at=excluded.last_seen_at`,
+			group.GroupID, group.GroupType, group.SkillName, group.ContentSHA256, group.Status, out.ScannedAt); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(`DELETE FROM discovery_drift_group_installations WHERE group_id=?`, group.GroupID); err != nil {
+			return err
+		}
+		for _, instID := range group.InstallationIDs {
+			if _, err := tx.Exec(`INSERT OR REPLACE INTO discovery_drift_group_installations (group_id, installation_id) VALUES (?, ?)`, group.GroupID, instID); err != nil {
+				return err
+			}
+		}
+	}
+	if err := markMissingDriftGroups(tx, seenGroups); err != nil {
+		return err
+	}
+
+	return tx.Commit()
+}
+
+func markMissingProjects(tx *sql.Tx, roots []string, seen map[string]bool, missingSince string) error {
+	rows, err := tx.Query(`SELECT project_id, root_path FROM discovery_projects WHERE present=1`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var projectID, rootPath string
+		if err := rows.Scan(&projectID, &rootPath); err != nil {
+			return err
+		}
+		if seen[projectID] || !pathUnderAny(rootPath, roots) {
+			continue
+		}
+		if _, err := tx.Exec(`UPDATE discovery_projects
+SET present=0, missing_since=COALESCE(missing_since, ?)
+WHERE project_id=?`, missingSince, projectID); err != nil {
+			return err
+		}
+	}
+	return rows.Err()
+}
+
+func markMissingInstallations(tx *sql.Tx, scope string, roots []string, seen map[string]bool, missingSince string) error {
+	rows, err := tx.Query(`SELECT installation_id, source_path FROM discovery_installations WHERE scope=? AND present=1`, scope)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var installID, sourcePath string
+		if err := rows.Scan(&installID, &sourcePath); err != nil {
+			return err
+		}
+		if seen[installID] {
+			continue
+		}
+		if len(roots) > 0 && !pathUnderAny(sourcePath, roots) {
+			continue
+		}
+		if _, err := tx.Exec(`UPDATE discovery_installations
+SET present=0, missing_since=COALESCE(missing_since, ?)
+WHERE installation_id=?`, missingSince, installID); err != nil {
+			return err
+		}
+	}
+	return rows.Err()
+}
+
+func markMissingDriftGroups(tx *sql.Tx, seen map[string]bool) error {
+	rows, err := tx.Query(`SELECT group_id FROM discovery_drift_groups WHERE present=1`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var groupID string
+		if err := rows.Scan(&groupID); err != nil {
+			return err
+		}
+		if seen[groupID] {
+			continue
+		}
+		if _, err := tx.Exec(`UPDATE discovery_drift_groups SET present=0 WHERE group_id=?`, groupID); err != nil {
+			return err
+		}
+	}
+	return rows.Err()
+}
+
+func pathUnderAny(path string, roots []string) bool {
+	for _, root := range roots {
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			continue
+		}
+		if rel == "." || (!strings.HasPrefix(rel, ".."+string(filepath.Separator)) && rel != "..") {
+			return true
+		}
+	}
+	return false
+}
+
+func jsonString(value any) (string, error) {
+	data, err := json.Marshal(value)
+	if err != nil {
+		return "", err
+	}
+	return string(data), nil
+}
+
+func boolInt(value bool) int {
+	if value {
+		return 1
+	}
+	return 0
 }
 
 func discoverGlobal(home string) ([]discoverTool, []discoverInstallation) {

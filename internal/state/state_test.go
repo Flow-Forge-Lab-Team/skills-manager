@@ -11,6 +11,9 @@ func expectedTables() []string {
 		"skills", "projects", "installs", "updates",
 		"invocations", "detected", "requirement_checks", "schema_version",
 		"skill_polls",
+		"discovery_scans", "discovery_tools", "discovery_projects",
+		"discovery_installations", "discovery_drift_groups",
+		"discovery_drift_group_installations",
 	}
 }
 

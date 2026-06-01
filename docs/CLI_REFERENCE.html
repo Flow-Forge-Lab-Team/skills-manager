@@ -172,6 +172,10 @@ searches approved roots for git repositories, pruning generated
 directories such as <code>node_modules</code>, <code>.next</code>,
 <code>dist</code>, <code>build</code>, <code>.git</code>, vendored
 caches, and Codex scratch workspaces.</p>
+<p>Each scan persists a manager-local inventory snapshot in
+<code>~/.skills-manager/state.db</code>. Repeated scans update existing
+rows, keep scan timestamps, and mark previously seen installations or
+projects no longer found inside the current consent scope.</p>
 <p>Use <code>--save-project-roots</code> with <code>--projects</code> to
 persist approved roots under <code>~/.skills-manager</code>,
 <code>--saved-project-roots</code> to scan them later,
