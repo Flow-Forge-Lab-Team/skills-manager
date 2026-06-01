@@ -1062,6 +1062,158 @@ func TestAssessmentAPIReturnsPersistedDiscovery(t *testing.T) {
 	}
 }
 
+func TestDashboardActionsRequirePreviewConfirmAndRecordState(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	managerHome := filepath.Join(home, ".skills-manager")
+	t.Setenv("SKILLS_MANAGER_HOME", managerHome)
+	writeScanSkill(t, filepath.Join(home, ".claude", "skills"), "review", "---\nname: review\n---\n# Review\n")
+	writeScanSkill(t, filepath.Join(home, ".claude", "skills"), "broken", "---\nname: broken\n---\n# Broken\n")
+	if err := os.MkdirAll(filepath.Join(home, ".openclaw", "skills"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{"--json", "discover", "--global"}, &stdout, &stderr)
+	if code != ExitSuccess {
+		t.Fatalf("discover exit = %d\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+	}
+
+	srv := newServeServer(managerHome)
+	ts := httptest.NewServer(srv)
+	defer ts.Close()
+	assessment := getTestAssessment(t, ts.URL)
+	reviewRec := findTestRecommendation(t, assessment, "review", "install_global")
+	brokenRec := findTestRecommendation(t, assessment, "broken", "install_global")
+
+	preview := postTestAction[triageActionPlanResponse](t, ts.URL, srv.token, "plan", map[string]string{
+		"recommendation_id": reviewRec.RecommendationID,
+	})
+	if preview.Plan.Status != "ready" || preview.Review.Status != "new" {
+		t.Fatalf("preview = %#v", preview)
+	}
+
+	status, _ := postTestActionRaw(t, ts.URL, srv.token, "apply", map[string]any{
+		"recommendation_id": reviewRec.RecommendationID,
+		"plan":              preview.Plan,
+	})
+	if status != http.StatusBadRequest {
+		t.Fatalf("apply without confirm status = %d, want 400", status)
+	}
+
+	review := postTestAction[triageActionReview](t, ts.URL, srv.token, "review", map[string]string{
+		"recommendation_id": reviewRec.RecommendationID,
+		"status":            "accepted",
+		"reason":            "looks safe",
+	})
+	if review.Status != "accepted" || review.Reason != "looks safe" {
+		t.Fatalf("review = %#v", review)
+	}
+
+	tampered := preview.Plan
+	tampered.Title = "tampered"
+	status, _ = postTestActionRaw(t, ts.URL, srv.token, "apply", map[string]any{
+		"recommendation_id": reviewRec.RecommendationID,
+		"plan":              tampered,
+		"confirm":           true,
+	})
+	if status != http.StatusConflict {
+		t.Fatalf("tampered apply status = %d, want 409", status)
+	}
+
+	applied := postTestAction[triageActionPlanResponse](t, ts.URL, srv.token, "apply", map[string]any{
+		"recommendation_id": reviewRec.RecommendationID,
+		"plan":              preview.Plan,
+		"confirm":           true,
+	})
+	if applied.Review.Status != "applied" || len(applied.AuditEntries) == 0 {
+		t.Fatalf("applied = %#v", applied)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".openclaw", "skills", "review", "SKILL.md")); err != nil {
+		t.Fatalf("openclaw install missing: %v", err)
+	}
+
+	failingPreview := postTestAction[triageActionPlanResponse](t, ts.URL, srv.token, "plan", map[string]string{
+		"recommendation_id": brokenRec.RecommendationID,
+	})
+	if err := os.RemoveAll(filepath.Join(home, ".claude", "skills", "broken")); err != nil {
+		t.Fatal(err)
+	}
+	failed := postTestAction[triageActionPlanResponse](t, ts.URL, srv.token, "apply", map[string]any{
+		"recommendation_id": brokenRec.RecommendationID,
+		"plan":              failingPreview.Plan,
+		"confirm":           true,
+	})
+	if failed.Review.Status != "failed" || failed.Review.ErrorDetail == "" {
+		t.Fatalf("failed review = %#v", failed.Review)
+	}
+}
+
+func getTestAssessment(t *testing.T, baseURL string) triageAssessment {
+	t.Helper()
+	resp, err := http.Get(baseURL + "/api/v1/assessment")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("assessment status = %d", resp.StatusCode)
+	}
+	var assessment triageAssessment
+	if err := json.NewDecoder(resp.Body).Decode(&assessment); err != nil {
+		t.Fatal(err)
+	}
+	return assessment
+}
+
+func findTestRecommendation(t *testing.T, assessment triageAssessment, skillName, kind string) discoverRecommendation {
+	t.Helper()
+	for _, rec := range assessment.Recommendations {
+		if rec.SkillName == skillName && rec.Kind == kind {
+			return rec
+		}
+	}
+	t.Fatalf("recommendation not found for %s/%s: %#v", skillName, kind, assessment.Recommendations)
+	return discoverRecommendation{}
+}
+
+func postTestAction[T any](t *testing.T, baseURL, token, endpoint string, body any) T {
+	t.Helper()
+	status, raw := postTestActionRaw(t, baseURL, token, endpoint, body)
+	if status != http.StatusOK {
+		t.Fatalf("POST %s status = %d body=%s", endpoint, status, raw)
+	}
+	var out T
+	if err := json.Unmarshal(raw, &out); err != nil {
+		t.Fatalf("decode %s: %v\n%s", endpoint, err, raw)
+	}
+	return out
+}
+
+func postTestActionRaw(t *testing.T, baseURL, token, endpoint string, body any) (int, []byte) {
+	t.Helper()
+	raw, err := json.Marshal(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req, err := http.NewRequest(http.MethodPost, baseURL+"/api/v1/actions/"+endpoint, bytes.NewReader(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Skills-Manager-Token", token)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return resp.StatusCode, respBody
+}
+
 func TestValidateNotificationFile(t *testing.T) {
 	valid := []string{"watch-drift-abc123.json", "watch-ingest-candidate-0.json", "watch-user-edit-ff.json"}
 	for _, name := range valid {

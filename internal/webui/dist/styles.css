@@ -74,6 +74,11 @@ html, body {
 .link-button { background: none; border: 0; color: var(--accent); cursor: pointer; font: inherit; padding: 0; text-align: left; }
 .link-button:hover { text-decoration: underline; }
 .subhead { color: var(--text-faint); font-size: 11px; font-weight: 600; text-transform: uppercase; margin: 12px 0 8px; }
+.action-card { border-top: 1px solid var(--border); display: grid; gap: 10px; padding: 12px 0; }
+.action-card-head { display: grid; grid-template-columns: minmax(90px, auto) 1fr; gap: 10px; align-items: start; }
+.action-controls { display: flex; flex-wrap: wrap; gap: 8px; }
+.action-preview { display: grid; gap: 8px; }
+.action-preview-table { font-size: 12px; }
 .dependency-groups { display: grid; gap: 8px; margin-bottom: 12px; }
 .dependency-group { display: flex; gap: 8px; align-items: start; }
 .activity-list { display: grid; gap: 10px; }

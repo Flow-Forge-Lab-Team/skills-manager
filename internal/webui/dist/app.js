@@ -14,6 +14,7 @@ let cacheBust = () => Date.now();
 let sessionToken = null;
 let libraryState = { search: "", category: "", tag: "", source: "", compatibility: "", requirements: "", sort: "name", page: 1, pageSize: 25 };
 let scanAutoIngestState = null;
+let assessmentActionState = {};
 
 async function ensureSession() {
   if (sessionToken) return;
@@ -82,6 +83,18 @@ async function scanAutoIngest() {
       "X-Skills-Manager-Token": sessionToken,
     },
     body: "{}",
+  });
+}
+
+async function dashboardAction(endpoint, body) {
+  await ensureSession();
+  return api("/api/v1/actions/" + endpoint, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Skills-Manager-Token": sessionToken,
+    },
+    body: JSON.stringify(body || {}),
   });
 }
 
@@ -1223,12 +1236,110 @@ function renderAssessmentRecommendations(content, a) {
 }
 
 function renderAssessmentActions(content, a) {
+  content.replaceChildren();
   const panel = el("section", { className: "panel" }, [
     el("div", { className: "panel-title", text: "Actions" }),
-    el("p", { className: "muted", text: "This dashboard is read-only for first-run assessment. Filesystem changes stay behind CLI dry-run plans and explicit confirmation." }),
+    el("p", { className: "muted", text: "Filesystem changes require a precomputed dry-run plan, explicit confirmation, and an audit entry." }),
   ]);
-  panel.appendChild(el("pre", { className: "diff compact", text: "skills-manager discover --global --projects <roots> --json > discover.json\nskills-manager plan --inventory discover.json --recommendation <id>\nskills-manager plan --inventory discover.json --recommendation <id> --apply --confirm" }));
+  const reviews = {};
+  (a.action_reviews || []).forEach((r) => { reviews[r.recommendation_id] = r; });
+  const installsByPath = {};
+  (a.installations || []).forEach((i) => { installsByPath[i.source_path] = i; });
+  const recs = (a.recommendations || []).slice(0, 20);
+  if (!recs.length) {
+    panel.appendChild(el("p", { className: "empty", text: "No actionable recommendations in the latest inventory." }));
+  }
+  recs.forEach((r) => {
+    const id = r.recommendation_id;
+    const local = assessmentActionState[id] || {};
+    const review = local.review || reviews[id] || { status: "new" };
+    const row = el("div", { className: "action-card" });
+    row.appendChild(el("div", { className: "action-card-head" }, [
+      badge(review.status || "new", actionStatusTone(review.status)),
+      el("div", null, [
+        el("div", { className: "row-title", text: r.title || r.skill_name || id }),
+        el("div", { className: "muted", text: r.reason || "" }),
+      ]),
+    ]));
+    const controls = el("div", { className: "action-controls" }, [
+      el("button", { className: "btn", text: "Preview plan", onClick: async () => {
+        local.message = "Generating dry-run plan...";
+        assessmentActionState[id] = local;
+        renderAssessmentActions(content, a);
+        try {
+          assessmentActionState[id] = await dashboardAction("plan", { recommendation_id: id });
+        } catch (e) {
+          assessmentActionState[id] = { error: e.message };
+        }
+        renderAssessmentActions(content, a);
+      } }),
+      el("button", { className: "btn", text: "Accept", onClick: async () => {
+        assessmentActionState[id] = { review: await dashboardAction("review", { recommendation_id: id, status: "accepted", reason: "accepted in dashboard" }) };
+        renderAssessmentActions(content, a);
+      } }),
+      el("button", { className: "btn", text: "Ignore", onClick: async () => {
+        assessmentActionState[id] = { review: await dashboardAction("review", { recommendation_id: id, status: "ignored", reason: "ignored in dashboard" }) };
+        renderAssessmentActions(content, a);
+      } }),
+    ]);
+    if (local.plan && local.plan.status === "ready" && ["install_global", "install_project", "remove"].includes(local.plan.kind)) {
+      controls.appendChild(el("button", { className: "btn danger", text: "Confirm apply", onClick: async () => {
+        if (!window.confirm("Apply this precomputed dry-run plan and record an audit entry?")) return;
+        assessmentActionState[id] = await dashboardAction("apply", { recommendation_id: id, plan: local.plan, confirm: true, reason: "confirmed in dashboard" });
+        renderAssessmentActions(content, a);
+      } }));
+    }
+    row.appendChild(controls);
+    if (local.message) row.appendChild(el("p", { className: "muted", text: local.message }));
+    if (local.error) row.appendChild(el("p", { className: "error", text: local.error }));
+    if (local.plan) row.appendChild(renderActionPlanPreview(local.plan, installsByPath));
+    if (local.stdout) row.appendChild(el("pre", { className: "diff compact", text: local.stdout }));
+    panel.appendChild(row);
+  });
+  panel.appendChild(el("pre", { className: "diff compact", text: "CLI equivalent:\nskills-manager discover --global --projects <roots> --json > discover.json\nskills-manager plan --inventory discover.json --recommendation <id>\nskills-manager plan --inventory discover.json --recommendation <id> --apply --confirm" }));
   content.appendChild(panel);
+}
+
+function actionStatusTone(status) {
+  if (status === "applied" || status === "accepted") return "ok";
+  if (status === "failed") return "danger";
+  if (status === "ignored") return "warn";
+  return "";
+}
+
+function renderActionPlanPreview(plan, installsByPath) {
+  const wrap = el("div", { className: "action-preview" }, [
+    el("div", { className: "subhead", text: "Dry-run plan preview" }),
+    el("div", { className: "muted", text: [plan.kind, plan.status, plan.target_tool_id, plan.target_project_id].filter(Boolean).join(" · ") }),
+  ]);
+  if ((plan.blockers || []).length) wrap.appendChild(el("p", { className: "error", text: "Blocked: " + plan.blockers.join("; ") }));
+  const rows = [];
+  ["create", "update", "remove", "preserve", "skip"].forEach((kind) => {
+    ((plan.files && plan.files[kind]) || []).forEach((f) => rows.push({ kind, file: f }));
+  });
+  if (!rows.length) {
+    wrap.appendChild(el("p", { className: "empty", text: "No filesystem changes in this plan." }));
+    return wrap;
+  }
+  const table = el("table", { className: "assessment-table action-preview-table" });
+  table.appendChild(el("thead", null, [el("tr", null, [
+    el("th", { text: "Action" }), el("th", { text: "Source path" }), el("th", { text: "Destination path" }),
+    el("th", { text: "Tool target" }), el("th", { text: "Hash impact" }),
+  ])]));
+  const tbody = el("tbody");
+  rows.forEach(({ kind, file }) => {
+    const source = installsByPath[file.source] || {};
+    tbody.appendChild(el("tr", null, [
+      el("td", null, [badge(kind, kind === "remove" ? "danger" : kind === "skip" ? "warn" : "ok")]),
+      el("td", { className: "path-cell", text: file.source || "" }),
+      el("td", { className: "path-cell", text: file.path || "" }),
+      el("td", { text: plan.target_tool_id || source.tool_id || "" }),
+      el("td", { className: "hash-cell", text: source.content_sha256 ? source.content_sha256.slice(0, 12) + " -> target recalculated" : "target recalculated" }),
+    ]));
+  });
+  table.appendChild(tbody);
+  wrap.appendChild(table);
+  return wrap;
 }
 
 render();

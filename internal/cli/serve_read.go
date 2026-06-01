@@ -117,7 +117,16 @@ type triageAssessment struct {
 	ReviewFacts      []discoverReportItem     `json:"review_facts"`
 	CoverageGaps     []discoverCoverageGap    `json:"coverage_gaps"`
 	Recommendations  []discoverRecommendation `json:"recommendations"`
+	ActionReviews    []triageActionReview     `json:"action_reviews"`
 	DeterministicRun bool                     `json:"deterministic_run"`
+}
+
+type triageActionReview struct {
+	RecommendationID string `json:"recommendation_id"`
+	Status           string `json:"status"`
+	Reason           string `json:"reason,omitempty"`
+	ErrorDetail      string `json:"error_detail,omitempty"`
+	UpdatedAt        string `json:"updated_at,omitempty"`
 }
 
 type triageDependencyWarning struct {
@@ -249,6 +258,33 @@ func loadTriageSkills(home string) ([]triageSkill, error) {
 }
 
 func loadTriageAssessment(home string) (triageAssessment, error) {
+	out, err := loadDiscoverOutputFromState(home)
+	if err != nil {
+		return triageAssessment{}, err
+	}
+	out.DriftGroups = annotateDiscoverDriftGroups(home, out.DriftGroups, out.Installations)
+	out.Summary = summarizeDiscovery(out)
+	out.Report = buildDiscoverReport(out)
+	reviews, err := loadTriageActionReviews(home)
+	if err != nil {
+		return triageAssessment{}, err
+	}
+	return triageAssessment{
+		GeneratedAt:      time.Now().UTC().Format(time.RFC3339),
+		Summary:          out.Summary,
+		Tools:            out.Tools,
+		Projects:         out.Projects,
+		Installations:    out.Installations,
+		DriftGroups:      out.DriftGroups,
+		ReviewFacts:      out.Report.ReviewFacts,
+		CoverageGaps:     out.Report.CoverageGaps,
+		Recommendations:  out.Report.Recommendations,
+		ActionReviews:    reviews,
+		DeterministicRun: true,
+	}, nil
+}
+
+func loadDiscoverOutputFromState(home string) (discoverOutput, error) {
 	out := discoverOutput{
 		Tools:         []discoverTool{},
 		Projects:      []discoverProject{},
@@ -257,14 +293,14 @@ func loadTriageAssessment(home string) (triageAssessment, error) {
 	}
 	db, err := state.Open(home)
 	if err != nil {
-		return triageAssessment{}, err
+		return discoverOutput{}, err
 	}
 	defer db.Close()
 
 	toolRows, err := db.Query(`SELECT tool_id, display_name, detected, status, COALESCE(global_roots, '[]'), COALESCE(project_patterns, '[]')
 FROM discovery_tools ORDER BY tool_id`)
 	if err != nil {
-		return triageAssessment{}, err
+		return discoverOutput{}, err
 	}
 	for toolRows.Next() {
 		var tool discoverTool
@@ -272,7 +308,7 @@ FROM discovery_tools ORDER BY tool_id`)
 		var rootsJSON, patternsJSON string
 		if err := toolRows.Scan(&tool.ToolID, &tool.DisplayName, &detected, &tool.Status, &rootsJSON, &patternsJSON); err != nil {
 			toolRows.Close()
-			return triageAssessment{}, err
+			return discoverOutput{}, err
 		}
 		tool.Detected = detected == 1
 		_ = json.Unmarshal([]byte(rootsJSON), &tool.GlobalRoots)
@@ -284,14 +320,14 @@ FROM discovery_tools ORDER BY tool_id`)
 	projectRows, err := db.Query(`SELECT project_id, root_path, COALESCE(repo_remote, ''), COALESCE(detected_tools, '[]'), COALESCE(last_scanned_at, '')
 FROM discovery_projects WHERE present=1 ORDER BY root_path`)
 	if err != nil {
-		return triageAssessment{}, err
+		return discoverOutput{}, err
 	}
 	for projectRows.Next() {
 		var project discoverProject
 		var toolsJSON string
 		if err := projectRows.Scan(&project.ProjectID, &project.RootPath, &project.RepoRemote, &toolsJSON, &project.LastScannedAt); err != nil {
 			projectRows.Close()
-			return triageAssessment{}, err
+			return discoverOutput{}, err
 		}
 		_ = json.Unmarshal([]byte(toolsJSON), &project.DetectedTools)
 		out.Projects = append(out.Projects, project)
@@ -302,7 +338,7 @@ FROM discovery_projects WHERE present=1 ORDER BY root_path`)
 content_path, content_sha256, content_size_bytes, COALESCE(modified_at, ''), managed, ownership, format
 FROM discovery_installations WHERE present=1 ORDER BY skill_name, tool_id, scope, source_path`)
 	if err != nil {
-		return triageAssessment{}, err
+		return discoverOutput{}, err
 	}
 	for installRows.Next() {
 		var inst discoverInstallation
@@ -312,7 +348,7 @@ FROM discovery_installations WHERE present=1 ORDER BY skill_name, tool_id, scope
 			&inst.ContentPath, &inst.ContentSHA256, &inst.ContentSizeBytes, &inst.ModifiedAt, &managed, &inst.Ownership, &inst.Format,
 		); err != nil {
 			installRows.Close()
-			return triageAssessment{}, err
+			return discoverOutput{}, err
 		}
 		inst.Managed = managed == 1
 		inst.Present = true
@@ -323,33 +359,44 @@ FROM discovery_installations WHERE present=1 ORDER BY skill_name, tool_id, scope
 	groupRows, err := db.Query(`SELECT group_id, group_type, COALESCE(skill_name, ''), COALESCE(content_sha256, ''), COALESCE(status, '')
 FROM discovery_drift_groups WHERE present=1 ORDER BY group_id`)
 	if err != nil {
-		return triageAssessment{}, err
+		return discoverOutput{}, err
 	}
 	for groupRows.Next() {
 		var group discoverDriftGroup
 		if err := groupRows.Scan(&group.GroupID, &group.GroupType, &group.SkillName, &group.ContentSHA256, &group.Status); err != nil {
 			groupRows.Close()
-			return triageAssessment{}, err
+			return discoverOutput{}, err
 		}
 		group.InstallationIDs = loadTriageDriftGroupInstallIDs(db, group.GroupID)
 		out.DriftGroups = append(out.DriftGroups, group)
 	}
 	groupRows.Close()
-	out.DriftGroups = annotateDiscoverDriftGroups(home, out.DriftGroups, out.Installations)
 	out.Summary = summarizeDiscovery(out)
 	out.Report = buildDiscoverReport(out)
-	return triageAssessment{
-		GeneratedAt:      time.Now().UTC().Format(time.RFC3339),
-		Summary:          out.Summary,
-		Tools:            out.Tools,
-		Projects:         out.Projects,
-		Installations:    out.Installations,
-		DriftGroups:      out.DriftGroups,
-		ReviewFacts:      out.Report.ReviewFacts,
-		CoverageGaps:     out.Report.CoverageGaps,
-		Recommendations:  out.Report.Recommendations,
-		DeterministicRun: true,
-	}, nil
+	return out, nil
+}
+
+func loadTriageActionReviews(home string) ([]triageActionReview, error) {
+	db, err := state.Open(home)
+	if err != nil {
+		return nil, err
+	}
+	defer db.Close()
+	rows, err := db.Query(`SELECT recommendation_id, status, COALESCE(reason, ''), COALESCE(error_detail, ''), updated_at
+FROM dashboard_action_reviews ORDER BY recommendation_id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	reviews := []triageActionReview{}
+	for rows.Next() {
+		var review triageActionReview
+		if err := rows.Scan(&review.RecommendationID, &review.Status, &review.Reason, &review.ErrorDetail, &review.UpdatedAt); err != nil {
+			return nil, err
+		}
+		reviews = append(reviews, review)
+	}
+	return reviews, rows.Err()
 }
 
 func loadTriageDriftGroups(home string) ([]triageDriftGroup, error) {

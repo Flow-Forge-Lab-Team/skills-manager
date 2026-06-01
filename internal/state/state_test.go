@@ -14,6 +14,7 @@ func expectedTables() []string {
 		"discovery_scans", "discovery_tools", "discovery_projects",
 		"discovery_installations", "discovery_drift_groups",
 		"discovery_drift_group_installations", "discovery_drift_reviews",
+		"dashboard_action_reviews", "dashboard_action_audit",
 	}
 }
 
