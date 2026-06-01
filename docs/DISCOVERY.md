@@ -192,6 +192,11 @@ Fields:
 
 Recommendations do not write files. They feed dry-run action plans.
 
+Recommendation confidence must account for tool-specific loading cost. Use
+[LOADING_COSTS.md](LOADING_COSTS.md) to decide whether a finding is safe to
+recommend globally, should stay project-local, or needs explicit validation
+before any install plan.
+
 ## Reuse and replacement map
 
 Current implementation pieces are useful, but they map unevenly to the
