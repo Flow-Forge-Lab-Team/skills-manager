@@ -275,6 +275,25 @@ Archive and merge are not applied by this command.
 Alias: dedupe
 
 ` + globalFlagHelp()
+	case "assess":
+		return `skills-manager assess <skill> [--project <path>] [--target <harness>] (--auto | --handoff | --from <file>)
+
+Run an optional advisory assessment for a skill against a target harness and
+project context. Inventory and deterministic recommendations remain separate
+from AI judgment.
+
+Forms:
+  --auto          run the configured LLM provider and cache the result
+  --handoff       write a privacy-bounded prompt file for an agent fallback
+  --from <file>   validate and cache saved agent/provider output
+
+Flags:
+  --project <path>      include project signals and local instruction files
+  --target <harness>    target harness (default: codex)
+  --inventory <file>    include matching entries from saved discover JSON
+  --deep                explicitly include bounded repo file signals
+
+` + globalFlagHelp()
 	case "show":
 		return `skills-manager show <skill> [flags]
 
@@ -592,6 +611,7 @@ Commands:
   add         bring a skill into the library
   scan        discover skills in harness directories
   discover    read-only global/project skill inventory
+  assess      optional cached AI skill assessment
   new         create a new skill
   check       poll GitHub for new commits on skills
   compat-check  deeper LLM compatibility + requirements analysis
