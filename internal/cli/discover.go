@@ -180,6 +180,7 @@ func collectDiscovery(opts discoverOptions) (discoverOutput, error) {
 			out.Installations = append(out.Installations, installs...)
 		}
 	}
+	out.Tools = mergeProjectTools(out.Tools, out.Projects)
 
 	sort.Slice(out.Tools, func(i, j int) bool { return out.Tools[i].ToolID < out.Tools[j].ToolID })
 	sort.Slice(out.Projects, func(i, j int) bool { return out.Projects[i].RootPath < out.Projects[j].RootPath })
@@ -192,15 +193,7 @@ func collectDiscovery(opts discoverOptions) (discoverOutput, error) {
 }
 
 func discoverGlobal(home string) ([]discoverTool, []discoverInstallation) {
-	roots := []discoverRoot{
-		{"antigravity", "Antigravity", filepath.Join(home, ".gemini", "antigravity", "skills"), "~/.gemini/antigravity/skills", "skill_md"},
-		{"claude", "Claude Code", filepath.Join(home, ".claude", "skills"), "~/.claude/skills", "skill_md"},
-		{"codex", "Codex", filepath.Join(home, ".codex", "skills"), "~/.codex/skills", "skill_md"},
-		{"gemini", "Gemini CLI", filepath.Join(home, ".gemini", "skills"), "~/.gemini/skills", "skill_md"},
-		{"grok", "Grok", filepath.Join(home, ".grok", "skills"), "~/.grok/skills", "skill_md"},
-		{"hermes", "Hermes", filepath.Join(home, ".hermes", "skills"), "~/.hermes/skills", "skill_md"},
-		{"openclaw", "OpenClaw", filepath.Join(home, ".openclaw", "skills"), "~/.openclaw/skills", "skill_md"},
-	}
+	roots := globalDiscoverRoots(home)
 	var tools []discoverTool
 	var installs []discoverInstallation
 	for _, root := range roots {
@@ -219,6 +212,18 @@ func discoverGlobal(home string) ([]discoverTool, []discoverInstallation) {
 		tools = append(tools, tool)
 	}
 	return tools, installs
+}
+
+func globalDiscoverRoots(home string) []discoverRoot {
+	return []discoverRoot{
+		{"antigravity", "Antigravity", filepath.Join(home, ".gemini", "antigravity", "skills"), "~/.gemini/antigravity/skills", "skill_md"},
+		{"claude", "Claude Code", filepath.Join(home, ".claude", "skills"), "~/.claude/skills", "skill_md"},
+		{"codex", "Codex", filepath.Join(home, ".codex", "skills"), "~/.codex/skills", "skill_md"},
+		{"gemini", "Gemini CLI", filepath.Join(home, ".gemini", "skills"), "~/.gemini/skills", "skill_md"},
+		{"grok", "Grok", filepath.Join(home, ".grok", "skills"), "~/.grok/skills", "skill_md"},
+		{"hermes", "Hermes", filepath.Join(home, ".hermes", "skills"), "~/.hermes/skills", "skill_md"},
+		{"openclaw", "OpenClaw", filepath.Join(home, ".openclaw", "skills"), "~/.openclaw/skills", "skill_md"},
+	}
 }
 
 func discoverProjectRoots(paths []string) ([]string, error) {
@@ -277,15 +282,7 @@ func collectProjectDiscovery(root string, scannedAt string) (discoverProject, []
 		RepoRemote:    discoverGitRemote(root),
 		LastScannedAt: scannedAt,
 	}
-	projectRoots := []discoverRoot{
-		{"agents", "Agents", filepath.Join(root, ".agents", "skills"), ".agents/skills", "skill_md"},
-		{"claude", "Claude Code", filepath.Join(root, ".claude", "skills"), ".claude/skills", "skill_md"},
-		{"codex", "Codex", filepath.Join(root, ".codex", "skills"), ".codex/skills", "skill_md"},
-		{"cursor", "Cursor", filepath.Join(root, ".cursor", "rules"), ".cursor/rules", "cursor_rule"},
-		{"github_instructions", "GitHub Instructions", filepath.Join(root, ".github", "instructions"), ".github/instructions", "github_instruction"},
-		{"grok", "Grok", filepath.Join(root, ".grok", "skills"), ".grok/skills", "skill_md"},
-		{"agents_md", "AGENTS.md", filepath.Join(root, "AGENTS.md"), "AGENTS.md", "agents_md"},
-	}
+	projectRoots := projectDiscoverRoots(root)
 
 	toolSeen := map[string]bool{}
 	var installs []discoverInstallation
@@ -324,25 +321,104 @@ func collectProjectDiscovery(root string, scannedAt string) (discoverProject, []
 }
 
 func discoverSkillDir(root discoverRoot, scope, projectID, basePath string) []discoverInstallation {
-	entries, err := os.ReadDir(root.path)
+	var installs []discoverInstallation
+	err := filepath.WalkDir(root.path, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if !d.IsDir() {
+			return nil
+		}
+		if path != root.path && shouldPruneDiscoverDir(d.Name(), path) {
+			return filepath.SkipDir
+		}
+		contentPath := filepath.Join(path, "SKILL.md")
+		if !fileExists(contentPath) {
+			return nil
+		}
+		if inst, ok := discoverInstallFromFile(root, scope, projectID, basePath, filepath.Base(path), path, contentPath); ok {
+			installs = append(installs, inst)
+		}
+		return filepath.SkipDir
+	})
 	if err != nil {
 		return nil
 	}
-	var installs []discoverInstallation
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
+	sort.Slice(installs, func(i, j int) bool { return installs[i].SourcePath < installs[j].SourcePath })
+	return installs
+}
+
+func projectDiscoverRoots(projectRoot string) []discoverRoot {
+	return []discoverRoot{
+		{"agents", "Agents", filepath.Join(projectRoot, ".agents", "skills"), ".agents/skills", "skill_md"},
+		{"claude", "Claude Code", filepath.Join(projectRoot, ".claude", "skills"), ".claude/skills", "skill_md"},
+		{"codex", "Codex", filepath.Join(projectRoot, ".codex", "skills"), ".codex/skills", "skill_md"},
+		{"cursor", "Cursor", filepath.Join(projectRoot, ".cursor", "rules"), ".cursor/rules", "cursor_rule"},
+		{"github_instructions", "GitHub Instructions", filepath.Join(projectRoot, ".github", "instructions"), ".github/instructions", "github_instruction"},
+		{"grok", "Grok", filepath.Join(projectRoot, ".grok", "skills"), ".grok/skills", "skill_md"},
+		{"agents_md", "AGENTS.md", filepath.Join(projectRoot, "AGENTS.md"), "AGENTS.md", "agents_md"},
+	}
+}
+
+func mergeProjectTools(tools []discoverTool, projects []discoverProject) []discoverTool {
+	byID := map[string]discoverTool{}
+	for _, tool := range tools {
+		byID[tool.ToolID] = tool
+	}
+	metadata := discoverToolMetadata()
+	for _, project := range projects {
+		patternByTool := map[string][]string{}
+		for _, root := range projectDiscoverRoots(project.RootPath) {
+			patternByTool[root.toolID] = append(patternByTool[root.toolID], root.pattern)
 		}
-		sourcePath := filepath.Join(root.path, entry.Name())
-		contentPath := filepath.Join(sourcePath, "SKILL.md")
-		if !fileExists(contentPath) {
-			continue
-		}
-		if inst, ok := discoverInstallFromFile(root, scope, projectID, basePath, entry.Name(), sourcePath, contentPath); ok {
-			installs = append(installs, inst)
+		for _, toolID := range project.DetectedTools {
+			tool := byID[toolID]
+			if tool.ToolID == "" {
+				tool = metadata[toolID]
+				if tool.ToolID == "" {
+					tool = discoverTool{ToolID: toolID, DisplayName: toolID}
+				}
+			}
+			tool.Detected = true
+			tool.Status = "present"
+			tool.ProjectPatterns = appendUniqueStrings(tool.ProjectPatterns, patternByTool[toolID]...)
+			byID[toolID] = tool
 		}
 	}
-	return installs
+	merged := make([]discoverTool, 0, len(byID))
+	for _, tool := range byID {
+		sort.Strings(tool.ProjectPatterns)
+		merged = append(merged, tool)
+	}
+	return merged
+}
+
+func discoverToolMetadata() map[string]discoverTool {
+	meta := map[string]discoverTool{}
+	for _, root := range globalDiscoverRoots("") {
+		meta[root.toolID] = discoverTool{ToolID: root.toolID, DisplayName: root.displayName, Status: "missing"}
+	}
+	for _, root := range projectDiscoverRoots("") {
+		if _, ok := meta[root.toolID]; !ok {
+			meta[root.toolID] = discoverTool{ToolID: root.toolID, DisplayName: root.displayName, Status: "missing"}
+		}
+	}
+	return meta
+}
+
+func appendUniqueStrings(values []string, additions ...string) []string {
+	seen := map[string]bool{}
+	for _, value := range values {
+		seen[value] = true
+	}
+	for _, value := range additions {
+		if value == "" || seen[value] {
+			continue
+		}
+		seen[value] = true
+		values = append(values, value)
+	}
+	return values
 }
 
 func discoverFlatFiles(root discoverRoot, scope, projectID, basePath string) []discoverInstallation {

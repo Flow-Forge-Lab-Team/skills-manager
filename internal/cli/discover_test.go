@@ -27,6 +27,7 @@ func TestDiscoverGlobalReportsSkillsAndMissingTools(t *testing.T) {
 
 	writeScanSkill(t, filepath.Join(home, ".claude", "skills"), "review", "---\nname: review\n---\n# Review\n")
 	writeScanSkill(t, filepath.Join(home, ".codex", "skills"), "review", "---\nname: review\n---\n# Review changed\n")
+	writeScanSkill(t, filepath.Join(home, ".codex", "skills", ".system"), "openai-docs", "---\nname: openai-docs\n---\n# OpenAI Docs\n")
 	writeScanSkill(t, filepath.Join(home, ".grok", "skills"), "review-copy", "---\nname: review\n---\n# Review\n")
 
 	var stdout, stderr bytes.Buffer
@@ -45,8 +46,8 @@ func TestDiscoverGlobalReportsSkillsAndMissingTools(t *testing.T) {
 	if got.Summary.ToolsMissing == 0 {
 		t.Fatalf("tools missing = 0, want coverage gaps")
 	}
-	if got.Summary.GlobalSkills != 3 {
-		t.Fatalf("global skills = %d, want 3", got.Summary.GlobalSkills)
+	if got.Summary.GlobalSkills != 4 {
+		t.Fatalf("global skills = %d, want 4", got.Summary.GlobalSkills)
 	}
 	if got.Summary.DriftGroups == 0 {
 		t.Fatalf("expected drift group for same-name different hash: %+v", got.DriftGroups)
@@ -64,6 +65,9 @@ func TestDiscoverGlobalReportsSkillsAndMissingTools(t *testing.T) {
 		if inst.Ownership != "unmanaged" {
 			t.Fatalf("ownership = %q, want unmanaged", inst.Ownership)
 		}
+	}
+	if !hasDiscoverInstall(got.Installations, "codex", "openai-docs", filepath.Join(".codex", "skills", ".system", "openai-docs")) {
+		t.Fatalf("missing nested codex skill install: %+v", got.Installations)
 	}
 }
 
@@ -102,6 +106,18 @@ func TestDiscoverProjectsPrunesGeneratedDirs(t *testing.T) {
 	}
 	if got.Summary.ProjectLocalSkills != 3 {
 		t.Fatalf("project skills = %d, want 3: %+v", got.Summary.ProjectLocalSkills, got.Installations)
+	}
+	if got.Summary.ToolsFound != 3 {
+		t.Fatalf("tools found = %d, want 3: %+v", got.Summary.ToolsFound, got.Tools)
+	}
+	if !hasDiscoverToolPattern(got.Tools, "codex", ".codex/skills") {
+		t.Fatalf("missing codex project pattern: %+v", got.Tools)
+	}
+	if !hasDiscoverToolPattern(got.Tools, "cursor", ".cursor/rules") {
+		t.Fatalf("missing cursor project pattern: %+v", got.Tools)
+	}
+	if !hasDiscoverToolPattern(got.Tools, "agents_md", "AGENTS.md") {
+		t.Fatalf("missing AGENTS.md project pattern: %+v", got.Tools)
 	}
 	for _, inst := range got.Installations {
 		if strings.Contains(inst.SourcePath, "node_modules") {
@@ -163,4 +179,28 @@ func TestDiscoverProjectsErrorsForMissingRoot(t *testing.T) {
 	if !strings.Contains(stderr.String(), "no such file or directory") {
 		t.Fatalf("stderr = %q, want missing root error", stderr.String())
 	}
+}
+
+func hasDiscoverInstall(installs []discoverInstallation, toolID, skillName, pathFragment string) bool {
+	pathFragment = filepath.ToSlash(pathFragment)
+	for _, inst := range installs {
+		if inst.ToolID == toolID && inst.SkillName == skillName && strings.Contains(filepath.ToSlash(inst.SourcePath), pathFragment) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasDiscoverToolPattern(tools []discoverTool, toolID, pattern string) bool {
+	for _, tool := range tools {
+		if tool.ToolID != toolID || !tool.Detected || tool.Status != "present" {
+			continue
+		}
+		for _, got := range tool.ProjectPatterns {
+			if got == pattern {
+				return true
+			}
+		}
+	}
+	return false
 }
