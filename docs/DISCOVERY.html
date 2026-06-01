@@ -70,10 +70,15 @@ counts, unmanaged skills, same-name drift, duplicate content, and
 coverage gaps.</p></li>
 <li><p>Optionally approve project roots:</p>
 <div class="sourceCode" id="cb2"><pre
-class="sourceCode bash"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="ex">skills-manager</span> discover <span class="at">--projects</span> ~/dev</span></code></pre></div></li>
-<li><p>Open the local dashboard:</p>
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="ex">skills-manager</span> discover <span class="at">--projects</span> ~/dev <span class="at">--save-project-roots</span></span></code></pre></div></li>
+<li><p>Reuse or revoke saved project roots later:</p>
 <div class="sourceCode" id="cb3"><pre
-class="sourceCode bash"><code class="sourceCode bash"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="ex">skills-manager</span> serve</span></code></pre></div></li>
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="ex">skills-manager</span> discover <span class="at">--saved-project-roots</span></span>
+<span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a><span class="ex">skills-manager</span> discover <span class="at">--list-project-roots</span></span>
+<span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a><span class="ex">skills-manager</span> discover <span class="at">--remove-project-root</span> ~/dev</span></code></pre></div></li>
+<li><p>Open the local dashboard:</p>
+<div class="sourceCode" id="cb4"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a><span class="ex">skills-manager</span> serve</span></code></pre></div></li>
 <li><p>Review deterministic recommendations and dry-run action plans
 before any write operation.</p></li>
 </ol>
@@ -101,7 +106,8 @@ confirms an interactive prompt</td>
 </tr>
 <tr>
 <td>Approved project roots</td>
-<td><code>skills-manager discover --projects ~/dev,~/work</code></td>
+<td><code>skills-manager discover --projects ~/dev,~/work --save-project-roots</code>
+or <code>skills-manager discover --saved-project-roots</code></td>
 <td>Git repositories under the approved roots, with generated
 directories pruned</td>
 <td>Allowed only for roots passed on the command line or saved earlier
@@ -134,6 +140,14 @@ scan scope is a usage error.</p>
 </ul>
 <p>Those paths can be included only through an explicit flag designed
 for that purpose.</p>
+<p>Saved approved roots are manager-local consent state. They are stored
+under <code>~/.skills-manager</code>, can be inspected with
+<code>--list-project-roots</code>, and can be revoked with
+<code>--remove-project-root &lt;root&gt;</code>. A saved root is not
+scanned unless the user explicitly passes
+<code>--saved-project-roots</code>. If a saved root no longer exists, it
+is skipped and reported as a stale saved root instead of blocking the
+rest of the scan.</p>
 <h2 id="inventory-entities">Inventory entities</h2>
 <p>The inventory model is fact-first. Recommendations and AI assessment
 are separate layers that read inventory facts; they do not replace
@@ -324,11 +338,11 @@ advisory output.</p>
 <h2 id="verification-sample">Verification sample</h2>
 <p>For FLO-381, review this design against a real local sample by
 running a read-only scan with an isolated manager home:</p>
-<div class="sourceCode" id="cb4"><pre
-class="sourceCode bash"><code class="sourceCode bash"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a><span class="va">tmp_home</span><span class="op">=</span><span class="st">&quot;</span><span class="va">$(</span><span class="fu">mktemp</span> <span class="at">-d</span><span class="va">)</span><span class="st">&quot;</span></span>
-<span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a><span class="va">SKILLS_MANAGER_HOME</span><span class="op">=</span><span class="st">&quot;</span><span class="va">$tmp_home</span><span class="st">&quot;</span> <span class="ex">skills-manager</span> scan <span class="at">--json</span> <span class="dt">\</span></span>
-<span id="cb4-3"><a href="#cb4-3" aria-hidden="true" tabindex="-1"></a>  <span class="at">--paths</span><span class="op">=</span><span class="st">&quot;</span><span class="va">$HOME</span><span class="st">/.claude/skills,</span><span class="va">$HOME</span><span class="st">/.codex/skills,</span><span class="va">$HOME</span><span class="st">/.grok/skills&quot;</span></span>
-<span id="cb4-4"><a href="#cb4-4" aria-hidden="true" tabindex="-1"></a><span class="fu">rm</span> <span class="at">-rf</span> <span class="st">&quot;</span><span class="va">$tmp_home</span><span class="st">&quot;</span></span></code></pre></div>
+<div class="sourceCode" id="cb5"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a><span class="va">tmp_home</span><span class="op">=</span><span class="st">&quot;</span><span class="va">$(</span><span class="fu">mktemp</span> <span class="at">-d</span><span class="va">)</span><span class="st">&quot;</span></span>
+<span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a><span class="va">SKILLS_MANAGER_HOME</span><span class="op">=</span><span class="st">&quot;</span><span class="va">$tmp_home</span><span class="st">&quot;</span> <span class="ex">skills-manager</span> scan <span class="at">--json</span> <span class="dt">\</span></span>
+<span id="cb5-3"><a href="#cb5-3" aria-hidden="true" tabindex="-1"></a>  <span class="at">--paths</span><span class="op">=</span><span class="st">&quot;</span><span class="va">$HOME</span><span class="st">/.claude/skills,</span><span class="va">$HOME</span><span class="st">/.codex/skills,</span><span class="va">$HOME</span><span class="st">/.grok/skills&quot;</span></span>
+<span id="cb5-4"><a href="#cb5-4" aria-hidden="true" tabindex="-1"></a><span class="fu">rm</span> <span class="at">-rf</span> <span class="st">&quot;</span><span class="va">$tmp_home</span><span class="st">&quot;</span></span></code></pre></div>
 <p>The command may create state under the temporary manager home. It
 must not write into the scanned global skill directories.</p>
 <p>This sample intentionally uses the existing <code>scan</code> command

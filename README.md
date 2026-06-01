@@ -47,12 +47,15 @@ To inspect existing local skill installs without changing them, run:
 
 ```sh
 skills-manager discover --global
-skills-manager discover --projects ~/dev
+skills-manager discover --projects ~/dev --save-project-roots
+skills-manager discover --saved-project-roots
 ```
 
 Discovery is read-only for tool and project directories. It reports detected
 tools, global and project-local skills, content hashes, drift groups, duplicate
-content, and missing tool coverage before any install or cleanup action.
+content, and missing tool coverage before any install or cleanup action. Saved
+project roots are manager-local consent state and can be listed or removed
+later.
 
 ## Real CLI Demo
 

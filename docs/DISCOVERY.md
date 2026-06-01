@@ -23,16 +23,24 @@ it asks the user to install or modify anything.
 4. Optionally approve project roots:
 
    ```bash
-   skills-manager discover --projects ~/dev
+   skills-manager discover --projects ~/dev --save-project-roots
    ```
 
-5. Open the local dashboard:
+5. Reuse or revoke saved project roots later:
+
+   ```bash
+   skills-manager discover --saved-project-roots
+   skills-manager discover --list-project-roots
+   skills-manager discover --remove-project-root ~/dev
+   ```
+
+6. Open the local dashboard:
 
    ```bash
    skills-manager serve
    ```
 
-6. Review deterministic recommendations and dry-run action plans before any
+7. Review deterministic recommendations and dry-run action plans before any
    write operation.
 
 `discover` is read-only for tool and project directories. It may write only to
@@ -46,7 +54,7 @@ Discovery has three consent scopes.
 | Scope | Example command | What can be read | Default behavior |
 |---|---|---|---|
 | Known global paths | `skills-manager discover --global` | Supported tool skill roots under the user's home directory | Allowed only after the user chooses `--global` or confirms an interactive prompt |
-| Approved project roots | `skills-manager discover --projects ~/dev,~/work` | Git repositories under the approved roots, with generated directories pruned | Allowed only for roots passed on the command line or saved earlier by the user |
+| Approved project roots | `skills-manager discover --projects ~/dev,~/work --save-project-roots` or `skills-manager discover --saved-project-roots` | Git repositories under the approved roots, with generated directories pruned | Allowed only for roots passed on the command line or saved earlier by the user |
 | Broader scans | `skills-manager discover --projects ~/ --include-codex-workspaces` | Larger user-selected roots | Must be explicit and should show a warning before scanning |
 
 The command must not run a full-home or arbitrary filesystem scan just because
@@ -68,6 +76,13 @@ Project discovery prunes noisy or generated areas by default:
 
 Those paths can be included only through an explicit flag designed for that
 purpose.
+
+Saved approved roots are manager-local consent state. They are stored under
+`~/.skills-manager`, can be inspected with `--list-project-roots`, and can be
+revoked with `--remove-project-root <root>`. A saved root is not scanned unless
+the user explicitly passes `--saved-project-roots`. If a saved root no longer
+exists, it is skipped and reported as a stale saved root instead of blocking the
+rest of the scan.
 
 ## Inventory entities
 

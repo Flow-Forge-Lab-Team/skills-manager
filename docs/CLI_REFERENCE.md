@@ -123,7 +123,10 @@ changes.
 
 ```
 skills-manager discover --global
-skills-manager discover --projects ~/dev
+skills-manager discover --projects ~/dev --save-project-roots
+skills-manager discover --saved-project-roots
+skills-manager discover --list-project-roots
+skills-manager discover --remove-project-root ~/dev
 skills-manager discover --global --projects ~/dev --json
 ```
 
@@ -132,6 +135,12 @@ tool roots such as Claude, Codex, Grok, Gemini/Antigravity, Hermes, and
 OpenClaw. `--projects` searches approved roots for git repositories, pruning
 generated directories such as `node_modules`, `.next`, `dist`, `build`, `.git`,
 vendored caches, and Codex scratch workspaces.
+
+Use `--save-project-roots` with `--projects` to persist approved roots under
+`~/.skills-manager`, `--saved-project-roots` to scan them later,
+`--list-project-roots` to inspect them, and `--remove-project-root <root>` to
+revoke one. Stale saved roots are skipped during `--saved-project-roots` scans
+and reported as `skipped_project_roots` in JSON output.
 
 JSON output includes detected tools, projects, concrete installations, content
 hashes, ownership, scope, and drift groups. Missing tools are coverage gaps, not
