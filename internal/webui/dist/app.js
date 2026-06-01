@@ -878,7 +878,7 @@ async function render() {
     else if (currentView === "matrix") await renderMatrix(content);
     else if (currentView === "cross-machine") await renderCrossMachine(content);
     else if (currentView === "settings") await renderSettings(content);
-    else if (currentView === "discover") renderDiscover(content);
+    else if (currentView === "discover") await renderDiscover(content);
     else if (currentView.startsWith("skill:")) await renderSkillDetail(content, currentView.slice("skill:".length));
     else if (currentView.startsWith("project:")) await renderProjectDetail(content, currentView.slice("project:".length));
   } catch (e) {
@@ -1065,12 +1065,170 @@ async function renderSettings(content) {
   content.appendChild(el("p", { className: "advisory-note", text: "Cloud scheduling (Claude routines / Codex automation) is intentionally not configurable here." }));
 }
 
-function renderDiscover(content) {
-  document.getElementById("page-subtitle").textContent = "deferred";
-  content.appendChild(el("section", { className: "panel" }, [
-    el("div", { className: "panel-title", text: "Discover" }),
-    el("p", { className: "muted", text: "Searching across skill marketplaces is deferred functionality. This view is a placeholder until cross-marketplace discovery ships." }),
+async function renderDiscover(content) {
+  const a = await api("/api/v1/assessment");
+  document.getElementById("page-subtitle").textContent =
+    "Latest persisted discovery · " + (a.generated_at || "");
+  const s = a.summary || {};
+  content.appendChild(el("div", { className: "stats assessment-stats" }, [
+    statCard("Global skills", s.global_skills || 0),
+    statCard("Project-local", s.project_local_skills || 0),
+    statCard("Detected tools", s.tools_found || 0),
+    statCard("Projects", s.projects_found || 0),
+    statCard("Drift groups", s.drift_groups || 0),
+    statCard("Duplicates", s.duplicate_content || 0),
+    statCard("Missing coverage", s.missing_tool_coverage || 0),
   ]));
+
+  const tabs = el("div", { className: "assessment-tabs" });
+  const sections = [
+    ["inventory", "Inventory"],
+    ["drift", "Drift"],
+    ["scope", "Global vs Project"],
+    ["coverage", "Tool Coverage"],
+    ["recommendations", "Recommendations"],
+    ["actions", "Actions"],
+  ];
+  const body = el("div", { className: "assessment-body" });
+  const renderSection = (id) => {
+    body.replaceChildren();
+    tabs.querySelectorAll("button").forEach((b) => b.classList.toggle("active", b.dataset.section === id));
+    if (id === "inventory") renderAssessmentInventory(body, a);
+    else if (id === "drift") renderAssessmentDrift(body, a);
+    else if (id === "scope") renderAssessmentScope(body, a);
+    else if (id === "coverage") renderAssessmentCoverage(body, a);
+    else if (id === "recommendations") renderAssessmentRecommendations(body, a);
+    else renderAssessmentActions(body, a);
+  };
+  sections.forEach(([id, label]) => {
+    tabs.appendChild(el("button", { className: "btn", "data-section": id, text: label, onClick: () => renderSection(id) }));
+  });
+  content.appendChild(tabs);
+  content.appendChild(body);
+  renderSection("inventory");
+}
+
+function renderAssessmentInventory(content, a) {
+  const installs = a.installations || [];
+  const panel = el("section", { className: "panel" }, [el("div", { className: "panel-title", text: "Inventory" })]);
+  if (!installs.length) {
+    panel.appendChild(el("p", { className: "empty", text: "No discovery inventory yet. Run `skills-manager discover --global` or scan project roots." }));
+    content.appendChild(panel);
+    return;
+  }
+  const table = el("table", { className: "assessment-table" });
+  table.appendChild(el("thead", null, [el("tr", null, [
+    el("th", { text: "Skill" }), el("th", { text: "Tool" }), el("th", { text: "Scope" }),
+    el("th", { text: "Project" }), el("th", { text: "Path" }), el("th", { text: "Hash" }), el("th", { text: "Ownership" }),
+  ])]));
+  const tbody = el("tbody");
+  installs.forEach((i) => {
+    const skillCell = el("td", null, [el("button", { className: "link-button", text: i.skill_name, onClick: () => { currentView = "skill:" + i.skill_name; render(); } })]);
+    tbody.appendChild(el("tr", null, [
+      skillCell,
+      el("td", { text: i.tool_id || "" }),
+      el("td", null, [badge(i.scope || "unknown")]),
+      el("td", { text: i.project_id || "global" }),
+      el("td", { className: "path-cell", text: i.source_path || "" }),
+      el("td", { className: "hash-cell", text: (i.content_sha256 || "").slice(0, 12) }),
+      el("td", null, [badge(i.managed ? "managed" : "unmanaged", i.managed ? "ok" : "warn")]),
+    ]));
+  });
+  table.appendChild(tbody);
+  panel.appendChild(table);
+  content.appendChild(panel);
+}
+
+function renderAssessmentDrift(content, a) {
+  const groups = a.drift_groups || [];
+  const panel = el("section", { className: "panel" }, [el("div", { className: "panel-title", text: "Drift" })]);
+  if (!groups.length) {
+    panel.appendChild(el("p", { className: "empty", text: "No drift groups in the latest inventory." }));
+  } else {
+    const list = el("div", { className: "activity-list" });
+    groups.forEach((g) => {
+      list.appendChild(el("div", { className: "activity-row assessment-row" }, [
+        badge(g.group_type || "drift", g.review_status === "ignored" ? "warn" : ""),
+        el("div", null, [
+          el("div", { className: "row-title", text: g.skill_name || g.content_sha256 || g.group_id }),
+          el("div", { className: "muted", text: [g.classification, g.review_status, g.review_reason].filter(Boolean).join(" · ") }),
+          el("div", { className: "muted", text: (g.installation_ids || []).join(", ") }),
+        ]),
+      ]));
+    });
+    panel.appendChild(list);
+  }
+  content.appendChild(panel);
+}
+
+function renderAssessmentScope(content, a) {
+  const bySkill = {};
+  (a.installations || []).forEach((i) => {
+    bySkill[i.skill_name] = bySkill[i.skill_name] || { global: 0, project: 0, tools: new Set() };
+    bySkill[i.skill_name][i.scope] = (bySkill[i.skill_name][i.scope] || 0) + 1;
+    if (i.tool_id) bySkill[i.skill_name].tools.add(i.tool_id);
+  });
+  const rows = Object.entries(bySkill).sort((a, b) => a[0].localeCompare(b[0]));
+  const panel = el("section", { className: "panel" }, [el("div", { className: "panel-title", text: "Global vs Project" })]);
+  const table = el("table");
+  table.appendChild(el("thead", null, [el("tr", null, [el("th", { text: "Skill" }), el("th", { text: "Global" }), el("th", { text: "Project" }), el("th", { text: "Tools" })])]));
+  const tbody = el("tbody");
+  rows.forEach(([skill, r]) => tbody.appendChild(el("tr", null, [
+    el("td", { text: skill }), el("td", { text: String(r.global || 0) }), el("td", { text: String(r.project || 0) }),
+    el("td", { text: Array.from(r.tools).sort().join(", ") }),
+  ])));
+  table.appendChild(tbody);
+  panel.appendChild(table);
+  content.appendChild(panel);
+}
+
+function renderAssessmentCoverage(content, a) {
+  const panel = el("section", { className: "panel" }, [el("div", { className: "panel-title", text: "Tool Coverage" })]);
+  const tools = a.tools || [];
+  if (!tools.length) panel.appendChild(el("p", { className: "empty", text: "No tool scan data has been persisted yet." }));
+  else tools.forEach((t) => panel.appendChild(el("div", { className: "activity-row" }, [
+    badge(t.detected ? "detected" : "missing", t.detected ? "ok" : "danger"),
+    el("div", null, [
+      el("div", { className: "row-title", text: t.display_name || t.tool_id }),
+      el("div", { className: "muted", text: (t.global_roots || []).concat(t.project_patterns || []).join(" · ") }),
+    ]),
+  ])));
+  content.appendChild(panel);
+}
+
+function renderAssessmentRecommendations(content, a) {
+  const panel = el("section", { className: "panel" }, [
+    el("div", { className: "panel-title", text: "Recommendations" }),
+    el("p", { className: "advisory-note", text: "Deterministic facts come from inventory. AI advisory output is not mixed into these recommendations." }),
+  ]);
+  const facts = a.review_facts || [];
+  if (facts.length) {
+    panel.appendChild(el("div", { className: "subhead", text: "Deterministic facts" }));
+    facts.slice(0, 12).forEach((f) => panel.appendChild(el("div", { className: "activity-row" }, [badge(f.kind || "fact"), el("div", null, [el("div", { className: "row-title", text: f.title || f.skill_name || "fact" }), el("div", { className: "muted", text: f.detail || "" })])])));
+  }
+  panel.appendChild(el("div", { className: "subhead", text: "AI advisory output" }));
+  panel.appendChild(el("p", { className: "muted", text: "No AI advisory output is generated for this local assessment." }));
+  const recs = a.recommendations || [];
+  panel.appendChild(el("div", { className: "subhead", text: "Recommended actions" }));
+  if (!recs.length) panel.appendChild(el("p", { className: "empty", text: "No recommendations in the latest inventory." }));
+  recs.slice(0, 20).forEach((r) => panel.appendChild(el("div", { className: "activity-row assessment-row" }, [
+    badge(r.kind || "action", r.kind === "needs_port" ? "warn" : ""),
+    el("div", null, [
+      el("div", { className: "row-title", text: r.title || r.skill_name || r.recommendation_id }),
+      el("div", { className: "muted", text: r.reason || "" }),
+      el("div", { className: "advisory-note", text: "Dry-run plan required before write: skills-manager plan --inventory <discover.json> --recommendation " + r.recommendation_id }),
+    ]),
+  ])));
+  content.appendChild(panel);
+}
+
+function renderAssessmentActions(content, a) {
+  const panel = el("section", { className: "panel" }, [
+    el("div", { className: "panel-title", text: "Actions" }),
+    el("p", { className: "muted", text: "This dashboard is read-only for first-run assessment. Filesystem changes stay behind CLI dry-run plans and explicit confirmation." }),
+  ]);
+  panel.appendChild(el("pre", { className: "diff compact", text: "skills-manager discover --global --projects <roots> --json > discover.json\nskills-manager plan --inventory discover.json --recommendation <id>\nskills-manager plan --inventory discover.json --recommendation <id> --apply --confirm" }));
+  content.appendChild(panel);
 }
 
 render();

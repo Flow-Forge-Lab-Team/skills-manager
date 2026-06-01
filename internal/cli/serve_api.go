@@ -35,6 +35,7 @@ func newServeServer(home string) *serveServer {
 	s := &serveServer{home: home, token: token, mux: http.NewServeMux()}
 	s.mux.HandleFunc("/api/v1/session", s.handleSession)
 	s.mux.HandleFunc("/api/v1/overview", s.handleOverview)
+	s.mux.HandleFunc("/api/v1/assessment", s.handleAssessment)
 	s.mux.HandleFunc("/api/v1/skills", s.handleSkills)
 	s.mux.HandleFunc("/api/v1/skills/", s.handleSkillDetail)
 	s.mux.HandleFunc("/api/v1/projects", s.handleProjects)
@@ -77,6 +78,19 @@ func (s *serveServer) handleSession(w http.ResponseWriter, r *http.Request) {
 		"token": s.token,
 		"home":  s.home,
 	})
+}
+
+func (s *serveServer) handleAssessment(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	assessment, err := loadTriageAssessment(s.home)
+	if err != nil {
+		writeAPIError(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSONResponse(w, assessment)
 }
 
 func (s *serveServer) handleOverview(w http.ResponseWriter, r *http.Request) {
