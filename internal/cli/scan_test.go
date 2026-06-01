@@ -427,6 +427,9 @@ func TestScanAutoIngestPreflightReusesProviderClassification(t *testing.T) {
 		if !strings.Contains(stdin, "Target skill SKILL.md to categorize") || !strings.Contains(stdin, "provider-skill") {
 			t.Fatalf("provider prompt missing skill content:\n%s", stdin)
 		}
+		if strings.Contains(stdin, "sk-scanfixturesecret123456789") || !strings.Contains(stdin, "[REDACTED_SECRET]") {
+			t.Fatalf("provider prompt did not redact secret content:\n%s", stdin)
+		}
 		return `{
   "categories": ["Quality"],
   "tags": ["review"],
@@ -446,6 +449,7 @@ description: Generic provider-classified skill
 # provider-skill
 
 Provider decides confidence.
+OPENAI_API_KEY=sk-scanfixturesecret123456789
 `)
 
 	args := []string{"--auto-ingest", "--paths=" + skillsDir}
@@ -733,6 +737,29 @@ func writeScanSkill(t *testing.T, skillsDir, name, skillMd string) string {
 		t.Fatalf("write %s SKILL.md: %v", name, err)
 	}
 	return skillDir
+}
+
+func TestScanSkipsSecretBearingSkillDirs(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+
+	skillsDir := filepath.Join(home, ".claude", "skills")
+	writeScanSkill(t, skillsDir, "safe-skill", "---\nname: safe-skill\n---\n# Safe\n")
+	writeScanSkill(t, filepath.Join(skillsDir, ".env"), "leaked", "---\nname: leaked\n---\n# Leaked\n")
+	writeScanSkill(t, filepath.Join(skillsDir, "secrets"), "leaked", "---\nname: leaked\n---\n# Leaked\n")
+
+	var stdout, stderr bytes.Buffer
+	code := runScan([]string{"--paths=" + skillsDir}, &stdout, &stderr, globalFlags{JSON: true})
+	if code != ExitSuccess {
+		t.Fatalf("scan returned %d\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+	}
+	var got []scanResult
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal scan output: %v\n%s", err, stdout.String())
+	}
+	if len(got) != 1 || got[0].Name != "safe-skill" {
+		t.Fatalf("scan results = %+v, want only safe-skill", got)
+	}
 }
 
 func TestScanJSONOutput(t *testing.T) {

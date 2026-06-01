@@ -197,6 +197,15 @@ func runDiscover(args []string, stdout io.Writer, stderr io.Writer, gf globalFla
 		fmt.Fprintf(stderr, "persist discovery: %v\n", err)
 		return ExitOpError
 	}
+	writePrivacyAudit("discover.audit", map[string]string{
+		"global":         fmt.Sprint(opts.global),
+		"project_roots":  fmt.Sprint(len(opts.projectRoots)),
+		"projects":       fmt.Sprint(len(out.Projects)),
+		"installations":  fmt.Sprint(len(out.Installations)),
+		"skipped_roots":  fmt.Sprint(len(out.SkippedProjectRoots)),
+		"saved_roots":    fmt.Sprint(opts.savedProjectRoots),
+		"save_requested": fmt.Sprint(opts.saveProjectRoots),
+	})
 
 	if gf.JSON {
 		if err := writeJSON(stdout, out); err != nil {
@@ -843,6 +852,9 @@ func normalizeDiscoverProjectRoot(raw string) (string, error) {
 }
 
 func shouldPruneDiscoverDir(name, path string) bool {
+	if isSensitiveName(name) || isSensitivePath(path) {
+		return true
+	}
 	switch name {
 	case ".git", "node_modules", ".next", "dist", "build", "vendor", ".venv", ".cache", ".turbo":
 		return true
@@ -979,6 +991,12 @@ func discoverSkillDir(root discoverRoot, scope, projectID, basePath string) []di
 			return nil
 		}
 		sourcePath := discoverSourcePath(root.path, walkRoot, path)
+		if isSensitivePath(sourcePath) {
+			if d.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
 		contentPath := filepath.Join(sourcePath, "SKILL.md")
 		if !fileExists(contentPath) {
 			if path != walkRoot && shouldPruneDiscoverDir(d.Name(), sourcePath) {
@@ -1122,6 +1140,9 @@ func discoverFlatFiles(root discoverRoot, scope, projectID, basePath string) []d
 			continue
 		}
 		name := entry.Name()
+		if isSensitiveName(name) {
+			continue
+		}
 		if !strings.HasSuffix(name, ".md") && !strings.HasSuffix(name, ".mdc") {
 			continue
 		}
@@ -1912,6 +1933,12 @@ func hashDirContent(path string) (string, int64, error) {
 	err := filepath.WalkDir(path, func(current string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
+		}
+		if current != path && isSensitivePath(current) {
+			if entry.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
 		}
 		if entry.IsDir() {
 			return nil

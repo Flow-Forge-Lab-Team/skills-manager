@@ -680,7 +680,7 @@ func parseIngestOutput(b []byte, label string) (*ingestOutput, error) {
 
 // writeIngestHandoffPrompt creates a self-contained markdown prompt file the user can
 // paste/attach to any LLM session. It includes instructions for running skills-ingest
-// plus the exact SKILL.md content of the *target* skill being added.
+// plus the redacted SKILL.md content of the target skill being added.
 func writeIngestHandoffPrompt(name, label, rawSource, skillContent string) (string, error) {
 	safe := strings.Map(func(r rune) rune {
 		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' {
@@ -770,5 +770,5 @@ Analyze the SKILL.md that follows these instructions. Output the JSON now.`
 ---
 
 Now output ONLY the JSON described above for the target skill.
-`, name, rawSource, label, time.Now().UTC().Format(time.RFC3339), instructions, skillContent)
+`, name, redactPromptMetadata(rawSource), redactPromptMetadata(label), time.Now().UTC().Format(time.RFC3339), instructions, redactSecretText(skillContent))
 }

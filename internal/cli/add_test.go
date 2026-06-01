@@ -95,6 +95,8 @@ description: Review Go tests with rg
 
 # provider-ingest-skill
 
+OPENAI_API_KEY=sk-addingestfixturesecret123456789
+PASSWORD="correct horse battery staple"
 Use rg and go test to review code.
 `
 	writeFile(t, filepath.Join(sourceDir, "SKILL.md"), skillMdContent)
@@ -120,6 +122,14 @@ Use rg and go test to review code.
 		if len(req.Messages) != 1 || !strings.Contains(req.Messages[0].Content, "# skills-ingest") || !strings.Contains(req.Messages[0].Content, "provider-ingest-skill") {
 			t.Fatalf("provider prompt missing bundled ingest instructions or skill:\n%+v", req)
 		}
+		for _, leaked := range []string{"sk-addingestfixturesecret123456789", "correct horse battery staple"} {
+			if strings.Contains(req.Messages[0].Content, leaked) {
+				t.Fatalf("provider prompt leaked secret %q:\n%s", leaked, req.Messages[0].Content)
+			}
+		}
+		if !strings.Contains(req.Messages[0].Content, "[REDACTED_SECRET]") {
+			t.Fatalf("provider prompt did not redact secret values:\n%s", req.Messages[0].Content)
+		}
 		output := `{"categories":["Engineering"],"tags":["go","testing"],"compatibility":{"mode":"portable","harnesses":[],"harness":"","reason":"general coding skill"},"requirements":{"model":{"tool_use":"none","min_context_tokens":16000,"reasoning":"low","notes":"No tools required"},"tools":[],"mcp_servers":[]},"confidence":{"categories":"high","tags":"high","compatibility":"high","requirements":"high"},"notes":[]}`
 		w.Header().Set("content-type", "application/json")
 		_, _ = w.Write([]byte(`{"content":[{"type":"text","text":` + strconvQuote(output) + `}],"usage":{"input_tokens":20,"output_tokens":10}}`))
@@ -141,6 +151,81 @@ Use rg and go test to review code.
 		if !strings.Contains(meta, want) {
 			t.Fatalf("metadata missing %q:\n%s", want, meta)
 		}
+	}
+}
+
+func TestIngestHandoffPromptRedactsSecretValues(t *testing.T) {
+	prompt := buildIngestPrompt("handoff-secret-skill", "GITHUB_TOKEN=ghp_handofflabelfixture123456789", "https://ghp_handoffsourcefixture123456789@github.com/acme/private-skill.git?token=source-secret", `---
+name: handoff-secret-skill
+---
+# handoff-secret-skill
+GITHUB_TOKEN=ghp_handofffixturesecret123456789
+{"password": "correct horse battery staple", "token": "abcd1234"}
+`)
+	for _, leaked := range []string{"ghp_handofffixturesecret123456789", "ghp_handoffsourcefixture123456789", "ghp_handofflabelfixture123456789", "source-secret", "private-skill.git", "correct horse battery staple", "abcd1234"} {
+		if strings.Contains(prompt, leaked) {
+			t.Fatalf("handoff prompt leaked secret %q:\n%s", leaked, prompt)
+		}
+	}
+	if !strings.Contains(prompt, "**Source:** https://github.com/[redacted]") {
+		t.Fatalf("handoff prompt did not redact token-bearing source URL:\n%s", prompt)
+	}
+	if strings.Count(prompt, "[REDACTED_SECRET]") < 4 {
+		t.Fatalf("handoff prompt did not redact all secrets:\n%s", prompt)
+	}
+}
+
+func TestRedactSecretTextHandlesJSONSecretAssignments(t *testing.T) {
+	redacted := redactSecretText(`{"password": "correct horse battery staple", "token": "abcd1234"}`)
+	for _, leaked := range []string{"correct horse battery staple", "abcd1234"} {
+		if strings.Contains(redacted, leaked) {
+			t.Fatalf("redacted text leaked secret %q: %s", leaked, redacted)
+		}
+	}
+	if strings.Count(redacted, "[REDACTED_SECRET]") != 2 {
+		t.Fatalf("redacted text = %s, want two redactions", redacted)
+	}
+}
+
+func TestRedactSecretTextHandlesUnquotedMultiwordAssignments(t *testing.T) {
+	redacted := redactSecretText("PASSWORD=correct horse battery staple # example")
+	if strings.Contains(redacted, "correct horse battery staple") {
+		t.Fatalf("redacted text leaked secret: %s", redacted)
+	}
+	if !strings.Contains(redacted, "PASSWORD=[REDACTED_SECRET]") || !strings.Contains(redacted, "# example") {
+		t.Fatalf("redacted text = %s, want redaction preserving comment", redacted)
+	}
+}
+
+func TestRedactSecretTextHandlesPrivateKeyAssignments(t *testing.T) {
+	redacted := redactSecretText("PRIVATE_KEY=\"-----BEGIN PRIVATE KEY-----\nabc123\n-----END PRIVATE KEY-----\"\nSSH_PRIVATE_KEY=abc def\nOPENSSH_KEY=-----BEGIN OPENSSH PRIVATE KEY-----\nkey body\n-----END OPENSSH PRIVATE KEY-----")
+	for _, leaked := range []string{"BEGIN PRIVATE KEY", "BEGIN OPENSSH PRIVATE KEY", "abc123", "abc def", "key body"} {
+		if strings.Contains(redacted, leaked) {
+			t.Fatalf("redacted text leaked private key material %q: %s", leaked, redacted)
+		}
+	}
+	if strings.Count(redacted, "[REDACTED_SECRET]") != 3 {
+		t.Fatalf("redacted text = %s, want three private key redactions", redacted)
+	}
+}
+
+func TestRedactSecretTextHandlesBarePrivateKeyBlocks(t *testing.T) {
+	redacted := redactSecretText("before\n-----BEGIN OPENSSH PRIVATE KEY-----\nkey body\n-----END OPENSSH PRIVATE KEY-----\nafter")
+	for _, leaked := range []string{"BEGIN OPENSSH PRIVATE KEY", "key body"} {
+		if strings.Contains(redacted, leaked) {
+			t.Fatalf("redacted text leaked bare private key material %q: %s", leaked, redacted)
+		}
+	}
+	if !strings.Contains(redacted, "before\n[REDACTED_SECRET]\nafter") {
+		t.Fatalf("redacted text = %s, want bare key block redacted in place", redacted)
+	}
+}
+
+func TestRedactSecretTextPreservesNonSecretMetadata(t *testing.T) {
+	input := "min_context_tokens: 32000\ntoken_budget: 4000\ncredential_source: gh\n"
+	redacted := redactSecretText(input)
+	if redacted != input {
+		t.Fatalf("redacted metadata = %q, want unchanged %q", redacted, input)
 	}
 }
 

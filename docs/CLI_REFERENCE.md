@@ -134,7 +134,9 @@ Discovery requires an explicit consent scope. `--global` checks known global
 tool roots such as Claude, Codex, Grok, Gemini/Antigravity, Hermes, and
 OpenClaw. `--projects` searches approved roots for git repositories, pruning
 generated directories such as `node_modules`, `.next`, `dist`, `build`, `.git`,
-vendored caches, and Codex scratch workspaces.
+vendored caches, Codex scratch workspaces, and secret-bearing paths such as
+`.env`, credential files, private keys, and secret directories. It does not scan
+the whole home directory unless you explicitly pass a home-level project root.
 
 Each scan persists a manager-local inventory snapshot in
 `~/.skills-manager/state.db`. Repeated scans update existing rows, keep scan
@@ -195,8 +197,10 @@ writes a prompt file for an external agent; `--from` validates saved
 agent/provider output and caches it. Default assessment input is
 privacy-bounded: skill content, skill metadata, discovery inventory entries,
 project signals, and local instruction files such as `AGENTS.md`, Cursor rules,
-and GitHub instructions. `--deep` is required before bounded repository file
-signals are included.
+and GitHub instructions. Secret-bearing files are skipped, obvious secret values
+are redacted before provider calls or handoff prompt writes, and repository
+remote paths are summarized instead of sent verbatim. `--deep` is required
+before bounded repository file signals are included.
 
 Cached results are keyed by skill/content hash or selected inventory subject,
 project fingerprint, target harness, assessment prompt version, and provider

@@ -13,10 +13,12 @@ import (
 func TestAssessHandoffUsesPrivacyBoundedProjectInput(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("SKILLS_MANAGER_HOME", home)
-	writeScanSkill(t, filepath.Join(home, "library"), "review", "---\nname: review\n---\n# Review\n")
+	writeScanSkill(t, filepath.Join(home, "library"), "review", "---\nname: review\n---\n# Review\nOPENAI_API_KEY=sk-assessfixturesecret123456789\n")
 	project := t.TempDir()
-	writeFile(t, filepath.Join(project, "AGENTS.md"), "# Agent instructions\nUse go test.\n")
+	writeFile(t, filepath.Join(project, ".git", "config"), "[remote \"origin\"]\n\turl = https://ghp_remotecredential123456789@github.com/acme/private.git\n")
+	writeFile(t, filepath.Join(project, "AGENTS.md"), "# Agent instructions\nUse go test.\nGITHUB_TOKEN=ghp_assessfixturesecret123456789\nUse gho_barefixturesecret123456789 for the API.\nPASSWORD=\"correct horse battery staple\"\n")
 	writeFile(t, filepath.Join(project, "secret.txt"), "do not include this source content\n")
+	writeFile(t, filepath.Join(project, ".env"), "PASSWORD=super-secret-password\n")
 
 	var stdout, stderr bytes.Buffer
 	code := Run([]string{"--json", "assess", "review", "--project", project, "--target", "codex", "--handoff"}, &stdout, &stderr)
@@ -38,6 +40,21 @@ func TestAssessHandoffUsesPrivacyBoundedProjectInput(t *testing.T) {
 	}
 	if strings.Contains(prompt, "do not include this source content") || strings.Contains(prompt, "secret.txt") {
 		t.Fatalf("prompt included non-instruction project file:\n%s", prompt)
+	}
+	for _, raw := range []string{"sk-assessfixturesecret123456789", "ghp_assessfixturesecret123456789", "gho_barefixturesecret123456789", "ghp_remotecredential123456789", "correct horse battery staple", "super-secret-password", ".env"} {
+		if strings.Contains(prompt, raw) {
+			t.Fatalf("prompt included secret %q:\n%s", raw, prompt)
+		}
+	}
+	if !strings.Contains(prompt, "https://github.com/[redacted]") {
+		t.Fatalf("prompt missing redacted repo remote:\n%s", prompt)
+	}
+	if got := strings.Count(prompt, "[REDACTED_SECRET]"); got < 2 {
+		t.Fatalf("prompt redactions = %d, want at least 2:\n%s", got, prompt)
+	}
+	logText := readFile(t, filepath.Join(home, "logs", "skills-manager.log"))
+	if !strings.Contains(logText, "assess.audit") || strings.Contains(logText, "sk-assessfixturesecret") || strings.Contains(logText, "ghp_assessfixture") {
+		t.Fatalf("privacy audit log missing safe assess record:\n%s", logText)
 	}
 }
 
