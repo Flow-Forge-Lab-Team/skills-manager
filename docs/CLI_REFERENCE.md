@@ -156,6 +156,34 @@ hashes, ownership, scope, drift groups, and a stable `report` object with
 `facts`, `review_facts`, `coverage_gaps`, and `recommendations`. Missing tools
 are coverage gaps, not errors.
 
+### `skills-manager assess`
+
+Run an optional cached AI advisory assessment for one library skill, one project,
+or a saved discovery inventory subset. Deterministic inventory facts and
+recommendations remain separate from advisory judgment.
+
+```
+skills-manager assess review --project ~/dev/app --target codex --auto
+skills-manager assess review --project ~/dev/app --target grok --handoff
+skills-manager assess --project ~/dev/app --handoff
+skills-manager assess --inventory discover.json --handoff
+skills-manager assess review --from agent-output.json --json
+```
+
+`assess` is opt-in. `--auto` requires a configured `llm.provider`; `--handoff`
+writes a prompt file for an external agent; `--from` validates saved
+agent/provider output and caches it. Default assessment input is
+privacy-bounded: skill content, skill metadata, discovery inventory entries,
+project signals, and local instruction files such as `AGENTS.md`, Cursor rules,
+and GitHub instructions. `--deep` is required before bounded repository file
+signals are included.
+
+Cached results are keyed by skill/content hash or selected inventory subject,
+project fingerprint, target harness, assessment prompt version, and provider
+identity. JSON output separates `input`, `deterministic_facts`, and
+`advisory_judgment` fields such as global fit, project fit, risk,
+compatibility, confidence, and reasons.
+
 ### `skills-manager list [--filter ...]`
 
 List skills in the library.

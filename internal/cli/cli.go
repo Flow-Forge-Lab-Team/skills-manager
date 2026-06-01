@@ -87,6 +87,8 @@ func Run(args []string, stdout io.Writer, stderr io.Writer) int {
 		code = runSet(cmdArgs, stdout, stderr, gf)
 	case "add":
 		code = runAdd(cmdArgs, stdout, stderr, gf)
+	case "assess":
+		code = runAssess(cmdArgs, stdout, stderr, gf)
 	case "scan":
 		code = runScan(cmdArgs, stdout, stderr, gf)
 	case "discover":
