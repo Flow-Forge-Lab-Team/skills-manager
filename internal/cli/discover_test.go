@@ -122,7 +122,14 @@ func TestDiscoverProjectsAcceptsGitFileWorktree(t *testing.T) {
 	if err := os.MkdirAll(repo, 0755); err != nil {
 		t.Fatal(err)
 	}
-	writeFile(t, filepath.Join(repo, ".git"), "gitdir: /tmp/example\n")
+	commonGitDir := filepath.Join(home, "main.git")
+	worktreeGitDir := filepath.Join(commonGitDir, "worktrees", "worktree")
+	if err := os.MkdirAll(worktreeGitDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(worktreeGitDir, "commondir"), "../..\n")
+	writeFile(t, filepath.Join(commonGitDir, "config"), "[remote \"origin\"]\n\turl = https://example.com/repo.git\n")
+	writeFile(t, filepath.Join(repo, ".git"), "gitdir: "+worktreeGitDir+"\n")
 	writeScanSkill(t, filepath.Join(repo, ".claude", "skills"), "worktree-skill", "---\nname: worktree-skill\n---\n# Worktree\n")
 
 	var stdout, stderr bytes.Buffer
@@ -137,6 +144,9 @@ func TestDiscoverProjectsAcceptsGitFileWorktree(t *testing.T) {
 	}
 	if got.Summary.ProjectsFound != 1 || got.Summary.ProjectLocalSkills != 1 {
 		t.Fatalf("summary = %+v, want one project and one project-local skill", got.Summary)
+	}
+	if got.Projects[0].RepoRemote != "https://example.com/repo.git" {
+		t.Fatalf("repo remote = %q, want worktree origin", got.Projects[0].RepoRemote)
 	}
 }
 

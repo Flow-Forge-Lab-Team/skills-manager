@@ -513,7 +513,11 @@ func printDiscoverSummary(out io.Writer, result discoverOutput) {
 }
 
 func discoverGitRemote(root string) string {
-	data, err := os.ReadFile(filepath.Join(root, ".git", "config"))
+	configPath := gitConfigPath(root)
+	if configPath == "" {
+		return ""
+	}
+	data, err := os.ReadFile(configPath)
 	if err != nil {
 		return ""
 	}
@@ -530,6 +534,37 @@ func discoverGitRemote(root string) string {
 		}
 	}
 	return ""
+}
+
+func gitConfigPath(root string) string {
+	gitPath := filepath.Join(root, ".git")
+	info, err := os.Stat(gitPath)
+	if err != nil {
+		return ""
+	}
+	if info.IsDir() {
+		return filepath.Join(gitPath, "config")
+	}
+
+	data, err := os.ReadFile(gitPath)
+	if err != nil {
+		return ""
+	}
+	gitDir := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(string(data)), "gitdir:"))
+	if gitDir == "" || gitDir == string(data) {
+		return ""
+	}
+	if !filepath.IsAbs(gitDir) {
+		gitDir = filepath.Join(root, gitDir)
+	}
+	commonDir := gitDir
+	if commonData, err := os.ReadFile(filepath.Join(gitDir, "commondir")); err == nil {
+		commonDir = strings.TrimSpace(string(commonData))
+		if !filepath.IsAbs(commonDir) {
+			commonDir = filepath.Join(gitDir, commonDir)
+		}
+	}
+	return filepath.Clean(filepath.Join(commonDir, "config"))
 }
 
 func isGitRepositoryRoot(path string) bool {
