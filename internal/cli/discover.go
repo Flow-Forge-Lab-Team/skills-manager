@@ -231,6 +231,9 @@ func discoverProjectRoots(paths []string) ([]string, error) {
 		}
 		err = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 			if err != nil {
+				if path == root {
+					return err
+				}
 				return nil
 			}
 			if !d.IsDir() {

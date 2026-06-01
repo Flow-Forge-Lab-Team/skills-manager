@@ -139,3 +139,18 @@ func TestDiscoverProjectsAcceptsGitFileWorktree(t *testing.T) {
 		t.Fatalf("summary = %+v, want one project and one project-local skill", got.Summary)
 	}
 }
+
+func TestDiscoverProjectsErrorsForMissingRoot(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("SKILLS_MANAGER_HOME", filepath.Join(home, ".skills-manager"))
+
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{"--json", "discover", "--projects", filepath.Join(home, "missing")}, &stdout, &stderr)
+	if code != ExitOpError {
+		t.Fatalf("code = %d, want %d", code, ExitOpError)
+	}
+	if !strings.Contains(stderr.String(), "no such file or directory") {
+		t.Fatalf("stderr = %q, want missing root error", stderr.String())
+	}
+}
