@@ -1,0 +1,380 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Skill loading cost model — skills-manager</title>
+<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/styles/atom-one-dark.min.css">
+<script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/highlight.min.js"></script>
+<script>document.addEventListener('DOMContentLoaded', () => {
+  // Pandoc emits class="sourceCode <lang>"; normalize to language-<lang> for hljs.
+  document.querySelectorAll('pre code.sourceCode').forEach(el => {
+    const lang = [...el.classList].find(c => c !== 'sourceCode');
+    if (lang) {
+      el.classList.add('language-' + lang);
+      hljs.highlightElement(el);
+    }
+  });
+});</script>
+</head>
+<body>
+<div class="app">
+  <nav class="sidebar">
+    <a href="index.html" class="brand">
+      <span class="brand-logo">s</span>
+      <span class="brand-name">skills-manager</span>
+    </a>
+    <div class="nav-section">Foundation</div>
+    <a href="VISION.html" class="nav-item">Vision</a>
+    <a href="ARCHITECTURE.html" class="nav-item">Architecture</a>
+    <a href="ROADMAP.html" class="nav-item">Roadmap</a>
+    <a href="DATA_MODEL.html" class="nav-item">Data model</a>
+    <div class="nav-section">Surface</div>
+    <a href="CLI_REFERENCE.html" class="nav-item">CLI reference</a>
+    <a href="TAXONOMY.html" class="nav-item">Taxonomy</a>
+    <div class="nav-section">Subsystems</div>
+    <a href="COMPATIBILITY.html" class="nav-item">Compatibility</a>
+    <a href="INGEST_FLOW.html" class="nav-item">Ingest flow</a>
+    <a href="UPDATE_FLOW.html" class="nav-item">Update flow</a>
+    <a href="BUNDLED_SKILLS.html" class="nav-item">Bundled skills</a>
+    <a href="SCHEDULING.html" class="nav-item">Scheduling</a>
+    <a href="CROSS_MACHINE.html" class="nav-item">Cross-machine sync</a>
+    <div class="nav-section">Out-of-band</div>
+    <a href="../mockup.html" class="nav-item">UI mockup ↗</a>
+    <a href="../README.html" class="nav-item">README</a>
+  </nav>
+  <main class="content">
+    <div class="doc-meta">
+      <span class="crumb"><a href="index.html">docs</a></span>
+      <span class="sep">/</span>
+      <span class="crumb">LOADING_COSTS.md</span>
+    </div>
+<h1 id="skill-loading-cost-model">Skill loading cost model</h1>
+<p>This document is the recommendation-engine source of truth for
+deciding whether an inventory finding should be suggested as a global
+install, project-local install, rule, or explicit review item. It
+captures current research for FLO-386; recommendation code should treat
+unknown entries as low-confidence until a validation test closes the
+gap.</p>
+<h2 id="classification-vocabulary">Classification vocabulary</h2>
+<table>
+<thead>
+<tr>
+<th>Classification</th>
+<th>Meaning for recommendations</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>always-loaded</code></td>
+<td>Full instruction text is normally added to model context without a
+specific task trigger. Keep global content short and generic; prefer
+project scope for stack-specific rules.</td>
+</tr>
+<tr>
+<td><code>requested/on-demand</code></td>
+<td>The tool sees a compact catalog or metadata first, then loads full
+instructions only when the user or model invokes the skill. Global
+installs are acceptable when the skill is broadly useful and low
+risk.</td>
+</tr>
+<tr>
+<td><code>project-scoped</code></td>
+<td>The tool limits the instruction or skill to a repository, workspace,
+project, folder, or agent. Prefer this for team workflow, repo
+conventions, deployment steps, and high-token reference material.</td>
+</tr>
+<tr>
+<td><code>global-scoped</code></td>
+<td>The tool applies a skill or rule across all or many projects for one
+user or machine. Reserve for personal preferences, general workflows, or
+explicit utilities.</td>
+</tr>
+<tr>
+<td><code>unknown</code></td>
+<td>Behavior is not documented or not verified. Do not make automatic
+global recommendations without a validation note.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="tool-behavior-matrix">Tool behavior matrix</h2>
+<table>
+<thead>
+<tr>
+<th>Tool or harness</th>
+<th>Evidence-backed behavior</th>
+<th>Loading classification</th>
+<th>Recommendation guidance</th>
+<th>Unknowns and validation tests</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Claude Code skills</td>
+<td>Claude Code supports personal
+<code>~/.claude/skills/&lt;name&gt;/SKILL.md</code> and project
+<code>.claude/skills/&lt;name&gt;/SKILL.md</code>. Skill descriptions
+are available for automatic matching; full <code>SKILL.md</code> content
+enters context when invoked and persists for the session. Sources: <a
+href="https://docs.claude.com/en/docs/claude-code/skills">Claude skills
+docs</a>.</td>
+<td><code>requested/on-demand</code>, <code>project-scoped</code>,
+<code>global-scoped</code></td>
+<td>Recommend global Claude skills for reusable personal workflows with
+concise descriptions. Recommend project skills for repo
+build/test/deploy procedures, tool permissions, or anything that should
+be reviewed before trusting a repo. Avoid stuffing large reference docs
+into <code>SKILL.md</code>; put them in referenced files.</td>
+<td>Validate same-name precedence and compaction behavior with a small
+pair of global/project skills before relying on automated de-dupe
+advice.</td>
+</tr>
+<tr>
+<td>Codex skills</td>
+<td>Codex starts with each skill name, description, and file path, then
+loads full <code>SKILL.md</code> only when selected. The initial skills
+list has a context budget and may shorten descriptions or omit skills
+when the set is large. Codex reads repo skills from
+<code>.agents/skills</code> up the path to repo root, user skills from
+<code>$HOME/.agents/skills</code>, admin skills from
+<code>/etc/codex/skills</code>, and bundled system skills. Sources: <a
+href="https://developers.openai.com/codex/skills">Codex skills
+docs</a>.</td>
+<td><code>requested/on-demand</code>, <code>project-scoped</code>,
+<code>global-scoped</code></td>
+<td>Prefer <code>.agents/skills</code> for repo workflows that should
+travel with the codebase. Prefer <code>$HOME/.agents/skills</code> for
+compact personal utilities. Do not assume a global Codex skill is free:
+a large global skill set consumes the initial catalog budget and can
+hide lower-priority skills.</td>
+<td>Existing manager inventory also scans legacy
+<code>~/.codex/skills</code> and <code>.codex/skills</code>. Keep those
+as discovered facts, but recommendation code should prefer the
+documented <code>.agents/skills</code> locations until a compatibility
+migration decision is made.</td>
+</tr>
+<tr>
+<td>Codex <code>AGENTS.md</code></td>
+<td>Codex concatenates global <code>~/.codex/AGENTS.md</code> plus
+project <code>AGENTS.md</code> files from repo root down to the current
+directory, with later/deeper files overriding earlier guidance. Project
+docs are capped by <code>project_doc_max_bytes</code>, 32 KiB by
+default. Sources: <a
+href="https://developers.openai.com/codex/guides/agents-md">Codex
+AGENTS.md guide</a>.</td>
+<td><code>always-loaded</code>, <code>project-scoped</code>,
+<code>global-scoped</code></td>
+<td>Keep global <code>AGENTS.md</code> short: personal operating
+preferences only. Put stack-specific rules, test commands, and repo
+safety rules in project or nested <code>AGENTS.md</code>. Recommend
+assembly only when generated content remains concise and
+reviewable.</td>
+<td>Add a local smoke test that asks Codex to summarize instructions
+from global, root, and nested <code>AGENTS.md</code> files and records
+byte-limit behavior.</td>
+</tr>
+<tr>
+<td>Cursor rules</td>
+<td>Cursor rules are prompt-level persistent context. User Rules are
+global and always applied. Project Rules live in
+<code>.cursor/rules</code> and support <code>Always</code>,
+<code>Auto Attached</code>, <code>Agent Requested</code>, and
+<code>Manual</code> application modes. Sources: <a
+href="https://docs.cursor.com/en/context">Cursor rules docs</a>.</td>
+<td><code>always-loaded</code>, <code>requested/on-demand</code>,
+<code>project-scoped</code>, <code>global-scoped</code></td>
+<td>Avoid recommending broad global Cursor rules except for short
+personal preferences. Prefer project <code>.cursor/rules/*.mdc</code>
+with <code>Agent Requested</code>, <code>Auto Attached</code>, or
+<code>Manual</code> unless a rule is truly always relevant. Compile from
+SKILL.md only when the target rule type is explicit.</td>
+<td>Validate nested <code>.cursor/rules</code> precedence in a sample
+repo before generating cross-directory recommendations.</td>
+</tr>
+<tr>
+<td>Grok skills and <code>AGENTS.md</code></td>
+<td>Local install docs at <code>~/.grok/README.md</code> say Grok
+appends discovered agent rule files to the system prompt, scanning
+<code>~/.grok/</code> and then repo-root-to-cwd files. The same docs
+list skill roots in priority order: <code>./.grok/skills/</code>,
+<code>&lt;repo_root&gt;/.grok/skills/</code>,
+<code>~/.grok/skills/</code>, and <code>~/.claude/skills/</code>. Skills
+can be listed or injected with <code>/skills</code>, and the model can
+invoke them automatically from the <code>description</code>.</td>
+<td>Rules: <code>always-loaded</code>; skills:
+<code>requested/on-demand</code>, <code>project-scoped</code>,
+<code>global-scoped</code></td>
+<td>Treat Grok rule files as always-on cost. Recommend project Grok
+skills for repo-specific workflows and global Grok skills for compact
+reusable workflows. Be cautious about recommending duplicate Claude/Grok
+global installs because Grok can also see
+<code>~/.claude/skills</code>.</td>
+<td>Replace local-doc evidence with an official public URL if one
+becomes available. Test whether Grok includes only skill metadata
+initially or any full skill bodies before automatic invocation.</td>
+</tr>
+<tr>
+<td>Gemini CLI <code>GEMINI.md</code></td>
+<td>Gemini CLI loads <code>~/.gemini/GEMINI.md</code>, project ancestor
+<code>GEMINI.md</code> files, and subdirectory <code>GEMINI.md</code>
+files, concatenating all found context and sending it with every prompt.
+It can be configured to use other filenames such as
+<code>AGENTS.md</code>. Sources: <a
+href="https://google-gemini.github.io/gemini-cli/docs/cli/gemini-md.html">Gemini
+CLI context docs</a>.</td>
+<td><code>always-loaded</code>, <code>project-scoped</code>,
+<code>global-scoped</code></td>
+<td>Keep global Gemini context minimal. Recommend project or
+subdirectory files for repo-specific conventions. When recommending
+AGENTS.md reuse for Gemini, include the required
+<code>context.fileName</code> configuration rather than assuming default
+support.</td>
+<td>Validate import expansion cost for large <code>@file.md</code> trees
+before recommending assembled context files.</td>
+</tr>
+<tr>
+<td>Antigravity skills and rules</td>
+<td>Antigravity skills use progressive disclosure: the agent starts with
+names and descriptions, then reads full <code>SKILL.md</code> when
+relevant. Workspace skills live in <code>.agents/skills</code>; global
+skills live in <code>~/.gemini/antigravity/skills</code>. Antigravity
+rules can be global in <code>~/.gemini/GEMINI.md</code> or
+workspace-scoped in <code>.agents/rules</code>, with activation modes
+including Manual, Always On, Model Decision, and Glob. Sources: <a
+href="https://antigravity.google/docs/skills">Antigravity skills
+docs</a>, <a
+href="https://antigravity.google/docs/ide-rules">Antigravity rules
+docs</a>.</td>
+<td>Skills: <code>requested/on-demand</code>; rules:
+<code>always-loaded</code> or conditional; <code>project-scoped</code>,
+<code>global-scoped</code></td>
+<td>Recommend global Antigravity skills only for general utilities.
+Prefer <code>.agents/skills</code> for project workflows. Prefer
+<code>.agents/rules</code> with conditional activation for repo rules;
+reserve global <code>GEMINI.md</code> for short personal
+preferences.</td>
+<td>Validate the current default between <code>.agents/skills</code> and
+legacy <code>.agent/skills</code> before writing install plans.</td>
+</tr>
+<tr>
+<td>OpenClaw skills</td>
+<td>OpenClaw loads skill roots in a documented precedence order,
+including workspace <code>skills</code>, workspace
+<code>.agents/skills</code>, personal <code>~/.agents/skills</code>,
+managed <code>~/.openclaw/skills</code>, bundled skills, and
+extras/plugins. It builds a compact XML prompt block for eligible skills
+with deterministic per-skill token impact, and loads full behavior
+through the eligible skill catalog and slash-command model. Sources: <a
+href="https://docs.openclaw.ai/tools/skills">OpenClaw skills
+docs</a>.</td>
+<td>Catalog is <code>always-loaded</code>; skill execution is
+<code>requested/on-demand</code>; <code>project-scoped</code>,
+<code>global-scoped</code></td>
+<td>Recommend workspace <code>skills</code> or
+<code>.agents/skills</code> for agent/project-specific workflows.
+Recommend <code>~/.openclaw/skills</code> only for shared local
+utilities that justify catalog overhead. Factor OpenClaw's per-skill
+prompt cost into global recommendations.</td>
+<td>Validate whether manager-installed <code>skills/</code> should
+target OpenClaw only or remain shared with Hermes in mixed
+projects.</td>
+</tr>
+<tr>
+<td>Hermes</td>
+<td>Current public evidence is incomplete. Local inventory shows
+<code>~/.hermes/skills/&lt;name&gt;/SKILL.md</code> and some grouped
+skill folders, but there is no verified local CLI binary or local
+official README in this environment.</td>
+<td><code>unknown</code>, likely <code>requested/on-demand</code>,
+<code>global-scoped</code></td>
+<td>Do not make automatic global Hermes recommendations from discovery
+facts alone. Present Hermes findings as inventory and ask for validation
+before install or migration advice.</td>
+<td>Run a Hermes session in a controlled repo with one global and one
+project <code>skills/</code> entry, then ask it to list visible skills
+and invoke one. Record roots, precedence, and whether full skill content
+is initially loaded.</td>
+</tr>
+<tr>
+<td>AGENTS.md-style shared instructions</td>
+<td>The AGENTS.md standard defines Markdown instructions for coding
+agents and recommends root and nested files for monorepos. It is a
+shared format, not one universal loading implementation. Sources: <a
+href="https://agents.md/">AGENTS.md</a>.</td>
+<td>Usually <code>always-loaded</code>, but tool-specific</td>
+<td>Recommend AGENTS.md when the same short project guidance should
+apply across multiple agents. Do not assemble long skill bodies into
+AGENTS.md by default; use links or tool-specific on-demand skills for
+detailed workflows.</td>
+<td>Recommendation code must branch by target tool because conflict
+resolution, byte caps, and supported filenames differ.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="recommendation-rules">Recommendation rules</h2>
+<p>Global recommendations are appropriate when all of these are
+true:</p>
+<ul>
+<li>The target tool uses progressive disclosure or a compact catalog,
+not full always-loaded text.</li>
+<li>The skill is useful across many repositories.</li>
+<li>The <code>description</code> is short, specific, and safe to expose
+in every session.</li>
+<li>The skill does not encode project credentials, internal deployment
+paths, repo-specific commands, or broad tool permissions.</li>
+<li>The global location is documented for that tool, or the
+recommendation is explicitly marked as a compatibility/legacy
+finding.</li>
+</ul>
+<p>Project-local recommendations are preferred when any of these are
+true:</p>
+<ul>
+<li>The guidance is tied to one repo, service, product, customer,
+deployment flow, test suite, or design system.</li>
+<li>The instruction body is large or references large supporting
+files.</li>
+<li>The target tool treats the content as always-loaded.</li>
+<li>The skill requires trust in a repository before granting tools,
+scripts, or permissions.</li>
+<li>The skill should be versioned and reviewed with the project.</li>
+</ul>
+<p>Always-loaded instructions should be treated as a scarce
+resource:</p>
+<ul>
+<li>Keep global always-loaded files to personal defaults and working
+agreements.</li>
+<li>Put project-specific commands and safety rules in repo or nested
+scope.</li>
+<li>Prefer conditional rule modes when the tool supports them.</li>
+<li>Never recommend copying every discovered skill into AGENTS.md,
+GEMINI.md, or an always-on Cursor/Antigravity rule.</li>
+</ul>
+<p>For unknown tools or unverified roots:</p>
+<ul>
+<li>Preserve the inventory fact.</li>
+<li>Mark recommendation confidence <code>low</code>.</li>
+<li>Prefer <code>review_drift</code>, <code>needs_port</code>, or
+"validate first" over <code>install_global</code>.</li>
+<li>Attach the validation test from the matrix to the recommendation
+reason.</li>
+</ul>
+<h2 id="research-evidence-notes">Research evidence notes</h2>
+<ul>
+<li>Current docs were checked on 2026-06-01.</li>
+<li>Codex and Cursor behavior were verified against current public
+docs.</li>
+<li>Grok behavior is based on the locally installed
+<code>~/.grok/README.md</code> because a public canonical page was not
+found during this pass.</li>
+<li>Hermes remains intentionally unknown until an executable or official
+docs can be tested.</li>
+</ul>
+    <footer class="doc-footer">
+      <span>skills-manager · design doc</span>
+      <span><a href="LOADING_COSTS.md">view source (.md)</a></span>
+    </footer>
+  </main>
+</div>
+</body>
+</html>
