@@ -51,6 +51,7 @@ func newServeServer(home string) *serveServer {
 	s.mux.HandleFunc("/api/v1/notifications", s.handleNotifications)
 	s.mux.HandleFunc("/api/v1/notifications/", s.handleNotificationDelete)
 	s.mux.HandleFunc("/api/v1/scan/auto-ingest", s.handleScanAutoIngest)
+	s.mux.HandleFunc("/api/v1/actions/", s.handleActions)
 	s.mux.HandleFunc("/api/v1/run", s.handleRunCLI)
 	s.mux.Handle("/", s.handleStatic())
 	return s
