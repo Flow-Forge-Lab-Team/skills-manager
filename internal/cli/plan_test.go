@@ -689,6 +689,9 @@ func TestPlanGlobalInstallAllowsDefaultCompatibility(t *testing.T) {
 	if !containsPlanFile(plan.Files.Create, filepath.Join(home, ".skills-manager", "manifests", "global-grok.json")) {
 		t.Fatalf("create files should include global manifest: %#v", plan.Files.Create)
 	}
+	if file := findPlanFile(t, plan.Files.Create, filepath.Join(targetRoot, "review")); file.CompatibilityStatus != "installable" {
+		t.Fatalf("compatibility status = %q, want installable", file.CompatibilityStatus)
+	}
 }
 
 func TestPlanApplyGlobalInstallRecordsManifestAndRemoveRollsBack(t *testing.T) {
@@ -1194,11 +1197,116 @@ func TestPlanGlobalInstallBlocksIncompatibleHarness(t *testing.T) {
 
 	out := runPlanJSON(t, inventory, "rec-incompatible")
 	plan := onlyPlan(t, out)
-	if plan.Status != "blocked" || !containsSubstring(plan.Blockers, "source compatibility does not include target tool") {
+	if plan.Status != "blocked" || !containsSubstring(plan.Blockers, "needs-port") {
 		t.Fatalf("plan status/blockers = %s %#v", plan.Status, plan.Blockers)
 	}
-	if len(plan.Files.Skip) != 1 || plan.Files.Skip[0].Path != sourcePath {
+	targetPath := filepath.Join(home, ".grok", "skills", "claude-only")
+	if len(plan.Files.Skip) != 1 || plan.Files.Skip[0].Path != targetPath {
 		t.Fatalf("skip files = %#v", plan.Files.Skip)
+	}
+	if plan.Files.Skip[0].CompatibilityStatus != "needs-port" || len(plan.Files.Skip[0].FollowUpActions) == 0 {
+		t.Fatalf("skip compatibility = %#v", plan.Files.Skip[0])
+	}
+}
+
+func TestPlanGlobalInstallBlocksDetectorExclusiveMismatch(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("SKILLS_MANAGER_HOME", filepath.Join(home, ".skills-manager"))
+	sourcePath := filepath.Join(home, ".claude", "skills", "claude-detected")
+	targetRoot := filepath.Join(home, ".grok", "skills")
+	writeScanSkill(t, filepath.Dir(sourcePath), "claude-detected", "---\nname: claude-detected\n---\nCall AskUserQuestion before proceeding.\n")
+	if err := os.MkdirAll(targetRoot, 0755); err != nil {
+		t.Fatal(err)
+	}
+	inventory := writePlanInventoryFixture(t, home, `{
+  "tools": [{"tool_id": "grok", "global_roots": [%q], "status": "present"}],
+  "installations": [{
+    "installation_id": "source-1",
+    "skill_name": "claude-detected",
+    "tool_id": "claude",
+    "scope": "global",
+    "source_path": %q,
+    "content_path": %q,
+    "content_sha256": "abc",
+    "managed": false,
+    "ownership": "unmanaged",
+    "format": "skill_md",
+    "present": true
+  }],
+  "report": {"recommendations": [{
+    "recommendation_id": "rec-detected",
+    "kind": "install_global",
+    "title": "Install globally",
+    "reason": "coverage",
+    "confidence": "medium",
+    "skill_name": "claude-detected",
+    "source_installation_ids": ["source-1"],
+    "target_tool_id": "grok",
+    "requires_plan": true
+  }]}
+}`, targetRoot, sourcePath, filepath.Join(sourcePath, "SKILL.md"))
+
+	out := runPlanJSON(t, inventory, "rec-detected")
+	plan := onlyPlan(t, out)
+	if plan.Status != "blocked" || !containsSubstring(plan.Blockers, "incompatible") {
+		t.Fatalf("plan status/blockers = %s %#v", plan.Status, plan.Blockers)
+	}
+	skip := findPlanFile(t, plan.Files.Skip, filepath.Join(targetRoot, "claude-detected"))
+	if skip.CompatibilityStatus != "incompatible" || !containsSubstring(skip.FollowUpActions, "skills-manager port claude-detected --target grok") {
+		t.Fatalf("skip compatibility = %#v", skip)
+	}
+}
+
+func TestPlanGlobalInstallAllowsVariantBackedExclusiveTarget(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("SKILLS_MANAGER_HOME", filepath.Join(home, ".skills-manager"))
+	sourcePath := filepath.Join(home, ".claude", "skills", "ported")
+	targetRoot := filepath.Join(home, ".grok", "skills")
+	writeScanSkill(t, filepath.Dir(sourcePath), "ported", "---\nname: ported\nexclusive: claude\n---\n# Claude\n")
+	writeFile(t, filepath.Join(sourcePath, ".variants.yaml"), "version: 1\noverrides:\n  grok: SKILL.grok.md\n")
+	writeFile(t, filepath.Join(sourcePath, "SKILL.grok.md"), "---\nname: ported\ncompatible: [grok]\n---\n# Grok\n")
+	if err := os.MkdirAll(targetRoot, 0755); err != nil {
+		t.Fatal(err)
+	}
+	inventory := writePlanInventoryFixture(t, home, `{
+  "tools": [{"tool_id": "grok", "global_roots": [%q], "status": "present"}],
+  "installations": [{
+    "installation_id": "source-1",
+    "skill_name": "ported",
+    "tool_id": "claude",
+    "scope": "global",
+    "source_path": %q,
+    "content_path": %q,
+    "content_sha256": "abc",
+    "managed": false,
+    "ownership": "unmanaged",
+    "format": "skill_md",
+    "exclusive_tool_id": "claude",
+    "present": true
+  }],
+  "report": {"recommendations": [{
+    "recommendation_id": "rec-variant",
+    "kind": "install_global",
+    "title": "Install globally",
+    "reason": "coverage",
+    "confidence": "medium",
+    "skill_name": "ported",
+    "source_installation_ids": ["source-1"],
+    "target_tool_id": "grok",
+    "requires_plan": true
+  }]}
+}`, targetRoot, sourcePath, filepath.Join(sourcePath, "SKILL.md"))
+
+	out := runPlanJSON(t, inventory, "rec-variant")
+	plan := onlyPlan(t, out)
+	if plan.Status != "ready" {
+		t.Fatalf("plan status/blockers = %s %#v", plan.Status, plan.Blockers)
+	}
+	create := findPlanFile(t, plan.Files.Create, filepath.Join(targetRoot, "ported"))
+	if create.CompatibilityStatus != "installable" {
+		t.Fatalf("create compatibility = %#v", create)
 	}
 }
 
@@ -1270,4 +1378,15 @@ func containsPlanFileWithSource(files []actionPlanFile, wantPath, wantSource str
 		}
 	}
 	return false
+}
+
+func findPlanFile(t *testing.T, files []actionPlanFile, want string) actionPlanFile {
+	t.Helper()
+	for _, file := range files {
+		if file.Path == want {
+			return file
+		}
+	}
+	t.Fatalf("plan file not found: %s in %#v", want, files)
+	return actionPlanFile{}
 }
