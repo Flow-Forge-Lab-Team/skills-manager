@@ -89,6 +89,23 @@ func TestDiscoverProjectsPrunesGeneratedDirs(t *testing.T) {
 	writeScanSkill(t, filepath.Join(repo, ".codex", "skills"), "project-skill", "---\nname: project-skill\n---\n# Project\n")
 	writeFile(t, filepath.Join(repo, ".cursor", "rules", "react.mdc"), "# Cursor rule\n")
 	writeFile(t, filepath.Join(repo, "AGENTS.md"), "# Agent instructions\n")
+	managerHome := filepath.Join(home, ".skills-manager")
+	if err := writeManifest(manifestPath(managerHome, repo), installManifest{
+		Version:      1,
+		ProjectPath:  repo,
+		ProjectSlug:  projectSlug(repo),
+		ManagedPaths: []string{".codex/skills/project-skill"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeManifest(manifestPath(managerHome, discoverWalkRoot(repo)), installManifest{
+		Version:      1,
+		ProjectPath:  discoverWalkRoot(repo),
+		ProjectSlug:  projectSlug(discoverWalkRoot(repo)),
+		ManagedPaths: []string{".codex/skills/project-skill"},
+	}); err != nil {
+		t.Fatal(err)
+	}
 
 	generatedRepo := filepath.Join(devRoot, "node_modules", "ignored")
 	if err := os.MkdirAll(filepath.Join(generatedRepo, ".git"), 0755); err != nil {
@@ -123,6 +140,12 @@ func TestDiscoverProjectsPrunesGeneratedDirs(t *testing.T) {
 	}
 	if !hasDiscoverToolPattern(got.Tools, "agents_md", "AGENTS.md") {
 		t.Fatalf("missing AGENTS.md project pattern: %+v", got.Tools)
+	}
+	if !hasDiscoverOwnership(got.Installations, "codex", "project-skill", true, "manager") {
+		t.Fatalf("missing managed project install ownership: %+v", got.Installations)
+	}
+	if !hasDiscoverOwnership(got.Installations, "cursor", "react", false, "unmanaged") {
+		t.Fatalf("missing unmanaged project install ownership: %+v", got.Installations)
 	}
 	for _, inst := range got.Installations {
 		if strings.Contains(inst.SourcePath, "node_modules") {
@@ -301,6 +324,15 @@ func hasDiscoverToolPattern(tools []discoverTool, toolID, pattern string) bool {
 			if got == pattern {
 				return true
 			}
+		}
+	}
+	return false
+}
+
+func hasDiscoverOwnership(installs []discoverInstallation, toolID, skillName string, managed bool, ownership string) bool {
+	for _, inst := range installs {
+		if inst.ToolID == toolID && inst.SkillName == skillName && inst.Managed == managed && inst.Ownership == ownership {
+			return true
 		}
 	}
 	return false

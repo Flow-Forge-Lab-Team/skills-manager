@@ -317,8 +317,82 @@ func collectProjectDiscovery(root string, scannedAt string) (discoverProject, []
 	for tool := range toolSeen {
 		project.DetectedTools = append(project.DetectedTools, tool)
 	}
+	installs = applyDiscoverOwnership(root, installs)
 	sort.Strings(project.DetectedTools)
 	return project, installs
+}
+
+func applyDiscoverOwnership(projectRoot string, installs []discoverInstallation) []discoverInstallation {
+	home, err := managerHome()
+	if err != nil {
+		return installs
+	}
+	manifest, err := readDiscoverManifest(home, projectRoot)
+	if err != nil {
+		return installs
+	}
+	managed := map[string]bool{}
+	for _, rel := range manifest.ManagedPaths {
+		managed[filepath.ToSlash(rel)] = true
+	}
+	for i := range installs {
+		rel, err := filepath.Rel(projectRoot, installs[i].SourcePath)
+		if err != nil {
+			continue
+		}
+		if managed[filepath.ToSlash(rel)] {
+			installs[i].Managed = true
+			installs[i].Ownership = "manager"
+		}
+	}
+	return installs
+}
+
+func readDiscoverManifest(home, projectRoot string) (installManifest, error) {
+	manifest, err := readManifest(manifestPath(home, projectRoot))
+	if err != nil || manifest.ProjectPath != "" || len(manifest.ManagedPaths) > 0 {
+		return manifest, err
+	}
+	homeRoots := []string{home}
+	if rawHome := os.Getenv("SKILLS_MANAGER_HOME"); rawHome != "" && rawHome != home {
+		if absRawHome, err := filepath.Abs(rawHome); err == nil {
+			homeRoots = append(homeRoots, absRawHome)
+		}
+	}
+	if resolvedHome := discoverWalkRoot(home); resolvedHome != home {
+		homeRoots = append(homeRoots, resolvedHome)
+	}
+	for _, homeRoot := range homeRoots {
+		entries, err := os.ReadDir(filepath.Join(homeRoot, "manifests"))
+		if err != nil {
+			continue
+		}
+		for _, entry := range entries {
+			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
+				continue
+			}
+			candidate, err := readManifest(filepath.Join(homeRoot, "manifests", entry.Name()))
+			if err != nil {
+				continue
+			}
+			if sameDiscoverPath(candidate.ProjectPath, projectRoot) {
+				return candidate, nil
+			}
+		}
+	}
+	return manifest, nil
+}
+
+func sameDiscoverPath(a, b string) bool {
+	if filepath.Clean(a) == filepath.Clean(b) {
+		return true
+	}
+	if discoverWalkRoot(a) == discoverWalkRoot(b) {
+		return true
+	}
+	aInfo, aErr := os.Stat(a)
+	bInfo, bErr := os.Stat(b)
+	return aErr == nil && bErr == nil && os.SameFile(aInfo, bInfo)
 }
 
 func discoverSkillDir(root discoverRoot, scope, projectID, basePath string) []discoverInstallation {
