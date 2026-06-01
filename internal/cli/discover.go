@@ -326,20 +326,27 @@ func discoverSkillDir(root discoverRoot, scope, projectID, basePath string) []di
 		if err != nil {
 			return nil
 		}
-		if !d.IsDir() {
-			return nil
-		}
 		if path != root.path && shouldPruneDiscoverDir(d.Name(), path) {
 			return filepath.SkipDir
 		}
 		contentPath := filepath.Join(path, "SKILL.md")
 		if !fileExists(contentPath) {
+			if !d.IsDir() {
+				return nil
+			}
 			return nil
 		}
-		if inst, ok := discoverInstallFromFile(root, scope, projectID, basePath, filepath.Base(path), path, contentPath); ok {
+		skillName := filepath.Base(path)
+		if decl, _, err := parseSkillFrontmatterFull(contentPath); err == nil && decl.name != "" {
+			skillName = decl.name
+		}
+		if inst, ok := discoverInstallFromFile(root, scope, projectID, basePath, skillName, path, contentPath); ok {
 			installs = append(installs, inst)
 		}
-		return filepath.SkipDir
+		if d.IsDir() {
+			return filepath.SkipDir
+		}
+		return nil
 	})
 	if err != nil {
 		return nil

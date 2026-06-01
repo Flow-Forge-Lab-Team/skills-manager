@@ -29,6 +29,8 @@ func TestDiscoverGlobalReportsSkillsAndMissingTools(t *testing.T) {
 	writeScanSkill(t, filepath.Join(home, ".codex", "skills"), "review", "---\nname: review\n---\n# Review changed\n")
 	writeScanSkill(t, filepath.Join(home, ".codex", "skills", ".system"), "openai-docs", "---\nname: openai-docs\n---\n# OpenAI Docs\n")
 	writeScanSkill(t, filepath.Join(home, ".grok", "skills"), "review-copy", "---\nname: review\n---\n# Review\n")
+	writeScanSkill(t, filepath.Join(home, ".grok", "skills"), "copy-a", "# Shared\n")
+	writeScanSkill(t, filepath.Join(home, ".grok", "skills"), "copy-b", "# Shared\n")
 
 	var stdout, stderr bytes.Buffer
 	code := Run([]string{"--json", "discover", "--global"}, &stdout, &stderr)
@@ -46,8 +48,8 @@ func TestDiscoverGlobalReportsSkillsAndMissingTools(t *testing.T) {
 	if got.Summary.ToolsMissing == 0 {
 		t.Fatalf("tools missing = 0, want coverage gaps")
 	}
-	if got.Summary.GlobalSkills != 4 {
-		t.Fatalf("global skills = %d, want 4", got.Summary.GlobalSkills)
+	if got.Summary.GlobalSkills != 6 {
+		t.Fatalf("global skills = %d, want 6", got.Summary.GlobalSkills)
 	}
 	if got.Summary.DriftGroups == 0 {
 		t.Fatalf("expected drift group for same-name different hash: %+v", got.DriftGroups)
@@ -68,6 +70,9 @@ func TestDiscoverGlobalReportsSkillsAndMissingTools(t *testing.T) {
 	}
 	if !hasDiscoverInstall(got.Installations, "codex", "openai-docs", filepath.Join(".codex", "skills", ".system", "openai-docs")) {
 		t.Fatalf("missing nested codex skill install: %+v", got.Installations)
+	}
+	if !hasDiscoverInstall(got.Installations, "grok", "review", filepath.Join(".grok", "skills", "review-copy")) {
+		t.Fatalf("missing declared-name skill install: %+v", got.Installations)
 	}
 }
 
@@ -163,6 +168,39 @@ func TestDiscoverProjectsAcceptsGitFileWorktree(t *testing.T) {
 	}
 	if got.Projects[0].RepoRemote != "https://example.com/repo.git" {
 		t.Fatalf("repo remote = %q, want worktree origin", got.Projects[0].RepoRemote)
+	}
+}
+
+func TestDiscoverGlobalIncludesSymlinkedSkillDirs(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("SKILLS_MANAGER_HOME", filepath.Join(home, ".skills-manager"))
+
+	librarySkill := filepath.Join(home, ".skills-manager", "library", "linked-skill")
+	writeFile(t, filepath.Join(librarySkill, "SKILL.md"), "---\nname: linked-skill\n---\n# Linked\n")
+	linkPath := filepath.Join(home, ".claude", "skills", "linked-skill")
+	if err := os.MkdirAll(filepath.Dir(linkPath), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(librarySkill, linkPath); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{"--json", "discover", "--global"}, &stdout, &stderr)
+	if code != ExitSuccess {
+		t.Fatalf("code = %d, want %d\nstderr:\n%s", code, ExitSuccess, stderr.String())
+	}
+
+	var got discoverOutput
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal discover output: %v\n%s", err, stdout.String())
+	}
+	if got.Summary.GlobalSkills != 1 {
+		t.Fatalf("global skills = %d, want 1: %+v", got.Summary.GlobalSkills, got.Installations)
+	}
+	if !hasDiscoverInstall(got.Installations, "claude", "linked-skill", filepath.Join(".claude", "skills", "linked-skill")) {
+		t.Fatalf("missing symlinked skill install: %+v", got.Installations)
 	}
 }
 
