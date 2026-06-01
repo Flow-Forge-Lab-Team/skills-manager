@@ -127,8 +127,10 @@ function renderNav() {
   const nav = document.getElementById("nav");
   nav.replaceChildren();
   views.forEach((v) => {
-    nav.appendChild(el("div", {
+    nav.appendChild(el("button", {
+      type: "button",
       className: "nav-item" + (navActive(v.id) ? " active" : ""),
+      "aria-current": navActive(v.id) ? "page" : "false",
       onClick: () => { currentView = v.id; render(); },
     }, [v.label]));
   });
@@ -143,6 +145,19 @@ function statCard(label, value) {
     el("div", { className: "label", text: label }),
     el("div", { className: "value", text: String(value) }),
   ]);
+}
+
+function emptyState(title, text, actions) {
+  const state = el("div", { className: "empty-state" }, [
+    el("div", { className: "panel-title", text: title }),
+    el("p", { className: "muted", text }),
+  ]);
+  if (actions && actions.length) state.appendChild(el("div", { className: "empty-actions" }, actions));
+  return state;
+}
+
+function tableWrap(table) {
+  return el("div", { className: "table-wrap" }, [table]);
 }
 
 function badge(text, tone) {
@@ -317,7 +332,7 @@ async function renderOverview(content) {
     el("div", { className: "panel-title", text: "Recent activity" }),
   ]);
   if ((o.activity || []).length === 0) {
-    activity.appendChild(el("p", { className: "empty", text: "No recent activity." }));
+    activity.appendChild(el("p", { className: "empty", text: "No recent activity yet. Run check, scan, or discover to create events." }));
   } else {
     const list = el("div", { className: "activity-list" });
     (o.activity || []).forEach((item) => {
@@ -335,7 +350,7 @@ async function renderOverview(content) {
     el("div", { className: "panel-title", text: "Most used" }),
   ]);
   if ((o.most_used || []).length === 0) {
-    usage.appendChild(el("p", { className: "empty", text: "No invocation data yet." }));
+    usage.appendChild(el("p", { className: "empty", text: "No invocation data yet. Usage appears after tools report skill runs." }));
   } else {
     const max = Math.max(...o.most_used.map((u) => u.count || 0), 1);
     (o.most_used || []).forEach((u) => {
@@ -415,10 +430,10 @@ async function renderLibrary(content) {
   content.appendChild(filters);
 
   if ((list.skills || []).length === 0) {
-    content.appendChild(el("div", { className: "empty-state" }, [
-      el("div", { className: "panel-title", text: "No skills match" }),
-      el("p", { className: "muted", text: "Try clearing filters or run scan/check from the CLI." }),
-    ]));
+    content.appendChild(emptyState(
+      "No skills match",
+      "Clear filters, add a skill with `skills-manager add`, or run `skills-manager scan` to find local candidates."
+    ));
     return;
   }
 
@@ -453,7 +468,7 @@ async function renderLibrary(content) {
     ]));
   });
   table.appendChild(tbody);
-  content.appendChild(table);
+  content.appendChild(tableWrap(table));
 
   const maxPage = Math.max(1, Math.ceil((list.total || 0) / list.page_size));
   const pager = el("div", { className: "pager" });
@@ -566,7 +581,10 @@ async function renderUpdates(content) {
   const updates = await api("/api/v1/updates");
   document.getElementById("page-subtitle").textContent = updates.length + " pending";
   if (!updates.length) {
-    content.appendChild(el("p", { className: "muted", text: "No pending updates." }));
+    content.appendChild(emptyState(
+      "No pending updates",
+      "Run `skills-manager check` to refresh sources. Accepted, rejected, and pinned updates will reappear here only when a new candidate exists."
+    ));
     return;
   }
   updates.forEach((u) => content.appendChild(renderUpdateCard(u)));
@@ -664,6 +682,13 @@ async function confirmUpdateAction(skill, action, message) {
 async function renderProjects(content) {
   const projects = await api("/api/v1/projects");
   document.getElementById("page-subtitle").textContent = projects.length + " registered projects";
+  if (!projects.length) {
+    content.appendChild(emptyState(
+      "No registered projects",
+      "Run `skills-manager init` inside a repository or `skills-manager discover --projects <root>` to connect project-local skills."
+    ));
+    return;
+  }
   const table = el("table");
   const thead = el("thead");
   thead.appendChild(el("tr", null, [
@@ -681,7 +706,7 @@ async function renderProjects(content) {
     ]));
   });
   table.appendChild(tbody);
-  content.appendChild(table);
+  content.appendChild(tableWrap(table));
 }
 
 async function renderProjectDetail(content, slug) {
@@ -739,7 +764,7 @@ function renderCandidatePanel(content, title, candidates) {
       el("td", { text: (c.warnings || []).join("; ") }),
     ])));
     table.appendChild(tbody);
-    panel.appendChild(table);
+    panel.appendChild(tableWrap(table));
   }
   content.appendChild(panel);
 }
@@ -1113,7 +1138,7 @@ async function renderDiscover(content) {
     statCard("Missing coverage", s.missing_tool_coverage || 0),
   ]));
 
-  const tabs = el("div", { className: "assessment-tabs" });
+  const tabs = el("div", { className: "assessment-tabs", role: "tablist", "aria-label": "Discovery assessment sections" });
   const sections = [
     ["inventory", "Inventory"],
     ["drift", "Drift"],
@@ -1122,10 +1147,15 @@ async function renderDiscover(content) {
     ["recommendations", "Recommendations"],
     ["actions", "Actions"],
   ];
-  const body = el("div", { className: "assessment-body" });
+  const body = el("div", { className: "assessment-body", role: "tabpanel", id: "assessment-panel", tabindex: "0" });
   const renderSection = (id) => {
     body.replaceChildren();
-    tabs.querySelectorAll("button").forEach((b) => b.classList.toggle("active", b.dataset.section === id));
+    tabs.querySelectorAll("button").forEach((b) => {
+      const selected = b.dataset.section === id;
+      b.classList.toggle("active", selected);
+      b.setAttribute("aria-selected", selected ? "true" : "false");
+      b.tabIndex = selected ? 0 : -1;
+    });
     if (id === "inventory") renderAssessmentInventory(body, a);
     else if (id === "drift") renderAssessmentDrift(body, a);
     else if (id === "scope") renderAssessmentScope(body, a);
@@ -1134,7 +1164,29 @@ async function renderDiscover(content) {
     else renderAssessmentActions(body, a);
   };
   sections.forEach(([id, label]) => {
-    tabs.appendChild(el("button", { className: "btn", "data-section": id, text: label, onClick: () => renderSection(id) }));
+    tabs.appendChild(el("button", {
+      className: "btn",
+      type: "button",
+      role: "tab",
+      "aria-controls": "assessment-panel",
+      "aria-selected": "false",
+      "data-section": id,
+      text: label,
+      onClick: () => renderSection(id),
+      onKeydown: (event) => {
+        if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+        event.preventDefault();
+        const buttons = Array.from(tabs.querySelectorAll("button"));
+        const index = buttons.indexOf(event.currentTarget);
+        let next = index;
+        if (event.key === "ArrowRight") next = (index + 1) % buttons.length;
+        if (event.key === "ArrowLeft") next = (index - 1 + buttons.length) % buttons.length;
+        if (event.key === "Home") next = 0;
+        if (event.key === "End") next = buttons.length - 1;
+        buttons[next].focus();
+        renderSection(buttons[next].dataset.section);
+      },
+    }));
   });
   content.appendChild(tabs);
   content.appendChild(body);
@@ -1145,7 +1197,7 @@ function renderAssessmentInventory(content, a) {
   const installs = a.installations || [];
   const panel = el("section", { className: "panel" }, [el("div", { className: "panel-title", text: "Inventory" })]);
   if (!installs.length) {
-    panel.appendChild(el("p", { className: "empty", text: "No discovery inventory yet. Run `skills-manager discover --global` or scan project roots." }));
+    panel.appendChild(el("p", { className: "empty", text: "No discovery inventory yet. Run `skills-manager discover --global`, then add `--projects <root>` when you are ready to scan repositories." }));
     content.appendChild(panel);
     return;
   }
@@ -1168,7 +1220,7 @@ function renderAssessmentInventory(content, a) {
     ]));
   });
   table.appendChild(tbody);
-  panel.appendChild(table);
+  panel.appendChild(tableWrap(table));
   content.appendChild(panel);
 }
 
@@ -1176,7 +1228,7 @@ function renderAssessmentDrift(content, a) {
   const groups = a.drift_groups || [];
   const panel = el("section", { className: "panel" }, [el("div", { className: "panel-title", text: "Drift" })]);
   if (!groups.length) {
-    panel.appendChild(el("p", { className: "empty", text: "No drift groups in the latest inventory." }));
+    panel.appendChild(el("p", { className: "empty", text: "No drift groups in the latest inventory. Re-run discover after changing global or project-local skill files." }));
   } else {
     const list = el("div", { className: "activity-list" });
     groups.forEach((g) => {
@@ -1211,14 +1263,14 @@ function renderAssessmentScope(content, a) {
     el("td", { text: Array.from(r.tools).sort().join(", ") }),
   ])));
   table.appendChild(tbody);
-  panel.appendChild(table);
+  panel.appendChild(tableWrap(table));
   content.appendChild(panel);
 }
 
 function renderAssessmentCoverage(content, a) {
   const panel = el("section", { className: "panel" }, [el("div", { className: "panel-title", text: "Tool Coverage" })]);
   const tools = a.tools || [];
-  if (!tools.length) panel.appendChild(el("p", { className: "empty", text: "No tool scan data has been persisted yet." }));
+  if (!tools.length) panel.appendChild(el("p", { className: "empty", text: "No tool scan data has been persisted yet. Run `skills-manager discover --global` to detect supported tool roots." }));
   else tools.forEach((t) => panel.appendChild(el("div", { className: "activity-row" }, [
     badge(t.detected ? "detected" : "missing", t.detected ? "ok" : "danger"),
     el("div", null, [
@@ -1243,7 +1295,7 @@ function renderAssessmentRecommendations(content, a) {
   panel.appendChild(el("p", { className: "muted", text: "No AI advisory output is generated for this local assessment." }));
   const recs = a.recommendations || [];
   panel.appendChild(el("div", { className: "subhead", text: "Recommended actions" }));
-  if (!recs.length) panel.appendChild(el("p", { className: "empty", text: "No recommendations in the latest inventory." }));
+  if (!recs.length) panel.appendChild(el("p", { className: "empty", text: "No recommendations in the latest inventory. Discover must run before deterministic install, ingest, ignore, or drift-review actions appear." }));
   recs.slice(0, 20).forEach((r) => panel.appendChild(el("div", { className: "activity-row assessment-row" }, [
     badge(r.kind || "action", r.kind === "needs_port" ? "warn" : ""),
     el("div", null, [
@@ -1267,7 +1319,7 @@ function renderAssessmentActions(content, a) {
   (a.installations || []).forEach((i) => { installsByPath[i.source_path] = i; });
   const recs = (a.recommendations || []).slice(0, 20);
   if (!recs.length) {
-    panel.appendChild(el("p", { className: "empty", text: "No actionable recommendations in the latest inventory." }));
+    panel.appendChild(el("p", { className: "empty", text: "No actionable recommendations in the latest inventory. Run discover first; write actions remain unavailable until a dry-run plan exists." }));
   }
   recs.forEach((r) => {
     const id = r.recommendation_id;
@@ -1358,7 +1410,7 @@ function renderActionPlanPreview(plan, installsByPath) {
     ]));
   });
   table.appendChild(tbody);
-  wrap.appendChild(table);
+  wrap.appendChild(tableWrap(table));
   return wrap;
 }
 
