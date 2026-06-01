@@ -584,8 +584,14 @@ func discoverInstallFromFile(root discoverRoot, scope, projectID, basePath, skil
 
 func hashDiscoverContent(sourcePath, contentPath string) (string, int64, string, error) {
 	if info, err := os.Stat(sourcePath); err == nil && info.IsDir() {
-		hash, size, err := hashDirContent(sourcePath)
-		return hash, size, sourcePath, err
+		hashPath := sourcePath
+		if resolved, err := filepath.EvalSymlinks(sourcePath); err == nil {
+			if resolvedInfo, err := os.Stat(resolved); err == nil && resolvedInfo.IsDir() {
+				hashPath = resolved
+			}
+		}
+		hash, size, err := hashDirContent(hashPath)
+		return hash, size, hashPath, err
 	}
 	hash, size, err := hashFile(contentPath)
 	return hash, size, contentPath, err

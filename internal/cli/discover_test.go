@@ -252,8 +252,19 @@ func TestDiscoverGlobalIncludesSymlinkedSkillDirs(t *testing.T) {
 	if got.Summary.GlobalSkills != 1 {
 		t.Fatalf("global skills = %d, want 1: %+v", got.Summary.GlobalSkills, got.Installations)
 	}
-	if !hasDiscoverInstall(got.Installations, "claude", "linked-skill", filepath.Join(".claude", "skills", "linked-skill")) {
+	inst, ok := findDiscoverInstall(got.Installations, "claude", "linked-skill", filepath.Join(".claude", "skills", "linked-skill"))
+	if !ok {
 		t.Fatalf("missing symlinked skill install: %+v", got.Installations)
+	}
+	if inst.ContentSizeBytes == 0 {
+		t.Fatalf("content size = 0, want hashed symlink target content: %+v", inst)
+	}
+	resolvedLibrarySkill, err := filepath.EvalSymlinks(librarySkill)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inst.ContentPath != resolvedLibrarySkill {
+		t.Fatalf("content path = %q, want resolved target %q", inst.ContentPath, resolvedLibrarySkill)
 	}
 }
 
@@ -336,13 +347,18 @@ func TestDiscoverProjectsErrorsForMissingRoot(t *testing.T) {
 }
 
 func hasDiscoverInstall(installs []discoverInstallation, toolID, skillName, pathFragment string) bool {
+	_, ok := findDiscoverInstall(installs, toolID, skillName, pathFragment)
+	return ok
+}
+
+func findDiscoverInstall(installs []discoverInstallation, toolID, skillName, pathFragment string) (discoverInstallation, bool) {
 	pathFragment = filepath.ToSlash(pathFragment)
 	for _, inst := range installs {
 		if inst.ToolID == toolID && inst.SkillName == skillName && strings.Contains(filepath.ToSlash(inst.SourcePath), pathFragment) {
-			return true
+			return inst, true
 		}
 	}
-	return false
+	return discoverInstallation{}, false
 }
 
 func hasDiscoverToolPattern(tools []discoverTool, toolID, pattern string) bool {
