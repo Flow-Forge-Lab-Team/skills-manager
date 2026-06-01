@@ -6,7 +6,7 @@ directories you choose.
 
 > Markdown under [`docs/`](docs/) is canonical. Committed HTML is generated with
 > [`docs/_build.sh`](docs/_build.sh) for local/repository browsing; no public
-> docs site is published yet. New here? Start with the
+> docs site is published yet. New here? Start with the discover-first
 > [5-minute tutorial](docs/TUTORIAL.md).
 
 ## Install
@@ -41,12 +41,20 @@ npm install -g @flowforgelab/skills-manager
 brew install Flow-Forge-Lab-Team/tap/skills-manager
 ```
 
-Then run the [5-minute tutorial](docs/TUTORIAL.md), or `skills-manager --help`.
-
-To inspect existing local skill installs without changing them, run:
+Then inspect your existing skills before installing anything:
 
 ```sh
 skills-manager discover --global
+skills-manager serve
+```
+
+`discover` is the first-run path. It is read-only for tool and project
+directories, separates exact inventory facts from deterministic recommendations,
+and persists local state under `~/.skills-manager` for dashboard review.
+
+To include project-local skills, approve explicit roots:
+
+```sh
 skills-manager discover --projects ~/dev --save-project-roots
 skills-manager discover --saved-project-roots
 ```
@@ -61,6 +69,11 @@ project roots are manager-local consent state and can be listed or removed
 later. Discovery never performs a full-home scan: it only reads known global
 tool roots when `--global` is set and explicit project roots when `--projects`
 or `--saved-project-roots` is set.
+
+AI assessment is opt-in. Inventory, hashes, drift groups, coverage gaps, and
+deterministic recommendations run without a provider. Use `assess --handoff` for
+a local prompt or `assess --auto` only when you want configured provider
+credentials used for advisory output.
 
 ## Real CLI Demo
 

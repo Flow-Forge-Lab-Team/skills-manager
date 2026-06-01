@@ -1,196 +1,144 @@
-# 5-minute tutorial: from zero to a working setup
+# 5-minute tutorial: discover first, then act
 
-This walks you from a fresh install to skills installed in a real project, in
-about five minutes. It uses **copy mode** (the default) and needs no LLM
-provider or network beyond the install step. The path below starts from an empty
-manager home and uses the committed `examples/hello-skill` fixture, so it works
-even if you have never used an AI coding-tool skill before.
+This tutorial starts with the intended first-run path: install the CLI, run a
+read-only inventory of skills you already have, review the dashboard assessment,
+then choose whether to ingest or install anything. No LLM provider is required.
 
-## 1. Install (30s)
+## 1. Install
 
-The verified install path today is the public Go module:
+The verified install path is the public Go module:
 
 ```sh
 go install github.com/Flow-Forge-Lab-Team/skills-manager/cmd/skills-manager@v0.1.0
 skills-manager --version
 ```
 
-Expected output:
+Expected output for the v0.1.0 release:
 
 ```text
 skills-manager 0.1.0
 ```
 
-The `curl | sh`, npm, and Homebrew commands are also release channels after
-v0.1.0 is published. The shell installer and npm wrapper verify release archive
-checksums, which proves download integrity but not publisher authenticity unless
-you separately verify the signed checksum artifact from the GitHub release.
+This requires Go 1.26 or newer and installs the binary into
+`$(go env GOPATH)/bin`. Add that directory to `PATH` if your shell cannot find
+`skills-manager`.
 
-## 2. Add your first skill (1 min)
+## 2. Discover global skills
 
-From a checkout of this repository, ingest the sample skill:
+Discovery is read-only for tool directories. It writes only manager-local state
+under `~/.skills-manager`, including `state.db`, audit logs, and inventory
+snapshots.
+
+```sh
+skills-manager discover --global
+```
+
+A small fixture with one Claude Code skill and an empty OpenClaw root currently
+prints this shape:
+
+```text
+Discover assessment
+Facts: 2 tools present, 5 tools missing, 1 global skills, 0 project-local skills, 0 projects
+Review facts: 0 drift/overlap, 0 duplicate-content
+Coverage gaps: 6
+
+Exact review facts: none
+
+Coverage gaps:
+  - Global skill coverage gap: review - review is visible in claude but absent from openclaw.
+  - Missing tool coverage: Antigravity - Antigravity was not detected in this scan scope.
+  - Missing tool coverage: Codex - Codex was not detected in this scan scope.
+  - Missing tool coverage: Gemini CLI - Gemini CLI was not detected in this scan scope.
+  - Missing tool coverage: Grok - Grok was not detected in this scan scope.
+  - Missing tool coverage: Hermes - Hermes was not detected in this scan scope.
+
+Recommendations:
+  - Ingest unmanaged skill: review (confidence: medium) - claude/global is unmanaged inventory; ingest would first create a dry-run plan and preserve the source path.
+  - Install globally: review -> openclaw (confidence: medium) - review is visible in claude and absent from openclaw; openclaw has requested/on-demand loading cost, so a global install can be planned safely.
+```
+
+The exact tool counts depend on which supported tools have directories on your
+machine. The important split is stable: facts and coverage gaps are exact
+inventory signals; recommendations are deterministic proposals that still
+require a dry-run plan.
+
+## 3. Discover project-local skills with consent
+
+Project scans read only roots you pass or roots you previously saved. They prune
+generated directories such as `.git`, `node_modules`, `.next`, `dist`, `build`,
+`.venv`, `.cache`, and Codex scratch workspaces by default.
+
+```sh
+skills-manager discover --projects ~/dev --save-project-roots
+skills-manager discover --saved-project-roots
+skills-manager discover --list-project-roots
+skills-manager discover --remove-project-root ~/dev
+```
+
+Use `--saved-project-roots` only when you want to reuse that saved consent. The
+manager never upgrades a missing scope into a full-home scan.
+
+## 4. Review the dashboard
+
+```sh
+skills-manager serve
+```
+
+Open the local URL printed by the command. The Discover view summarizes:
+
+- Inventory
+- Drift
+- Global vs Project
+- Tool Coverage
+- Recommendations
+- Actions
+
+The Actions tab previews source path, destination path, target tool, ownership,
+and hash impact before any write. Apply buttons require an already computed
+dry-run plan plus explicit confirmation, and successful or failed actions write
+an audit entry.
+
+## 5. Optional AI assessment
+
+AI advisory output is opt-in. Inventory, drift groups, hashes, coverage gaps,
+and deterministic recommendations do not require a provider.
+
+Use one of these only when you want advisory help:
+
+```sh
+skills-manager assess review --project /path/to/project --target codex --handoff
+skills-manager assess review --project /path/to/project --target codex --auto
+```
+
+`--handoff` writes a local prompt for manual review. `--auto` uses the configured
+provider credentials. Secret-looking values are redacted before handoff or
+provider calls, and cached advisory output stays under the manager home.
+
+## 6. Legacy zero-state demo
+
+If you are starting with no existing skills and want to see install mechanics,
+ingest the committed examples and install into a throwaway project:
 
 ```sh
 skills-manager add ./examples/hello-skill --yes
 skills-manager add ./examples/python-skill --yes
-```
-
-Expected output:
-
-```text
-Ingested hello-skill to ~/.skills-manager/library/hello-skill
-Ingested python-skill to ~/.skills-manager/library/python-skill
-```
-
-Check the library:
-
-```sh
-skills-manager list
-```
-
-Expected output:
-
-```text
-hello-skill  Use when you want a small sample build skill for v
-```
-
-## 3. Create a zero-state project and preview matches (1 min)
-
-Create a small project with one stack signal and one active target directory:
-
-```sh
 mkdir -p /tmp/sm-demo/.codex
 printf '{"dependencies":{"next":"15.0.0","react":"19.0.0"}}\n' > /tmp/sm-demo/package.json
 printf '{}\n' > /tmp/sm-demo/.codex/config.json
 skills-manager init /tmp/sm-demo --non-interactive
-```
-
-Expected output:
-
-```text
-Initialized /tmp/sm-demo
-Categories: Engineering, Design
-Tags: nextjs, nodejs, react
-Harnesses: claude, codex, grok, antigravity, gemini, hermes, openclaw
-```
-
-The project now has:
-
-```text
-/tmp/sm-demo/.skills/project.yaml
-/tmp/sm-demo/.skills/installed.lock
-```
-
-Preview why the sample skill matches:
-
-```sh
 skills-manager match --project /tmp/sm-demo --explain
-```
-
-Expected output:
-
-```text
-hello-skill (score: 1) - category overlap: 1
-  harnesses: antigravity, claude, codex, gemini, grok, hermes, openclaw
-python-skill (rejected) - no category or tag overlap
-```
-
-## 4. Install into the project (1 min)
-
-```sh
 skills-manager install --project /tmp/sm-demo
 ```
 
-Expected output:
-
-```text
-Installing skills:
-- hello-skill: category match; harnesses: antigravity, claude, codex, gemini, grok, hermes, openclaw
-  copied .agents/skills/hello-skill
-  copied .claude/skills/hello-skill
-  copied .codex/skills/hello-skill
-  copied .grok/skills/hello-skill
-  copied skills/hello-skill
-```
-
-This copies matching skills into the active target directory and records the
-manager-owned files. The unrelated Python sample is intentionally not installed.
-Inspect the result:
-
-```sh
-find /tmp/sm-demo -maxdepth 4 -type f | sort
-```
-
-Expected files include:
-
-```text
-/tmp/sm-demo/.agents/skills/hello-skill/.skill-meta.yaml
-/tmp/sm-demo/.agents/skills/hello-skill/SKILL.md
-/tmp/sm-demo/.claude/skills/hello-skill/.skill-meta.yaml
-/tmp/sm-demo/.claude/skills/hello-skill/SKILL.md
-/tmp/sm-demo/.codex/config.json
-/tmp/sm-demo/.codex/skills/hello-skill/.skill-meta.yaml
-/tmp/sm-demo/.codex/skills/hello-skill/SKILL.md
-/tmp/sm-demo/.grok/skills/hello-skill/.skill-meta.yaml
-/tmp/sm-demo/.grok/skills/hello-skill/SKILL.md
-/tmp/sm-demo/.skills/installed.lock
-/tmp/sm-demo/.skills/project.yaml
-/tmp/sm-demo/skills/hello-skill/.skill-meta.yaml
-/tmp/sm-demo/skills/hello-skill/SKILL.md
-/tmp/sm-demo/package.json
-```
-
-The lock file records the desired skill set:
-
-```text
-version: 1
-generated_by: skills-manager 0.1.0
-skills:
-  - name: hello-skill
-    harnesses:
-      - antigravity
-      - claude
-      - codex
-      - gemini
-      - grok
-      - hermes
-      - openclaw
-```
-
-Everything is reversible:
+Everything installed by the manager is reversible:
 
 ```sh
 skills-manager uninstall --project /tmp/sm-demo --confirm
 ```
 
-## 5. Keep it healthy (1 min)
-
-```sh
-skills-manager check                # poll GitHub-sourced skills for updates
-skills-manager update               # review pending updates (raw diff + safety flags)
-skills-manager doctor               # verify manifests, fingerprints, requirements
-skills-manager serve                # open the local triage web UI
-```
-
-## Existing-user scan path
-
-If you already use Claude Code, Codex, or another supported SKILL.md-style tool,
-you may have skills scattered in `~/.claude/skills/`, `~/.codex/skills/`, and
-other tool directories. Discover them after the zero-state flow:
-
-```sh
-skills-manager scan
-skills-manager scan --ingest        # interactive review
-skills-manager scan --auto-ingest   # non-interactive high-confidence ingest
-```
-
 ## Where to go next
 
+- [Discovery](DISCOVERY.md) — inventory schema, consent scopes, and recommendations
 - [CLI reference](CLI_REFERENCE.md) — every command and flag
-- [Architecture](ARCHITECTURE.md) — how install/compile/assemble fit together
-- [Update flow](UPDATE_FLOW.md) — safety review of upstream changes
-- [Cross-machine](CROSS_MACHINE.md) — sync your library across machines
-- The [`examples/sample-project`](https://github.com/Flow-Forge-Lab-Team/skills-manager/tree/main/examples/sample-project)
-  reference application shows a typical project setup end to end.
-- The README demo transcript is CI-checked against `docs/demo_transcript.txt`;
-  update that golden fixture and run `go test ./...` when changing demo output.
+- [Security model](SECURITY_MODEL.md) — install, scan, and AI assessment boundaries
+- [Cross-machine](CROSS_MACHINE.md) — sync library and inventory snapshots across machines

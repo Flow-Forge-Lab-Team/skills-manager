@@ -85,6 +85,11 @@ before any write operation.</p></li>
 <p><code>discover</code> is read-only for tool and project directories.
 It may write only to <code>~/.skills-manager</code> for local state,
 logs, saved approved roots, and inventory snapshots.</p>
+<p>The dashboard starts from the same persisted inventory. Its Actions
+view can preview dry-run plans and record review state, but
+write-capable actions require an already computed plan plus explicit
+confirmation. Failed applies retain structured error detail for retry or
+manual repair.</p>
 <h2 id="consent-boundaries">Consent boundaries</h2>
 <p>Discovery has three consent scopes.</p>
 <table>
@@ -152,6 +157,12 @@ rest of the scan.</p>
 <p>The inventory model is fact-first. Recommendations and AI assessment
 are separate layers that read inventory facts; they do not replace
 them.</p>
+<p>AI assessment is opt-in. <code>discover</code>, <code>serve</code>,
+dashboard review states, hashes, coverage gaps, and deterministic
+recommendations do not call a provider. Use
+<code>skills-manager assess ... --handoff</code> for a local prompt or
+<code>skills-manager assess ... --auto</code> only when advisory output
+should use the configured provider credentials.</p>
 <h3 id="tool">Tool</h3>
 <p>A supported tool or instruction harness that can own skill or rule
 locations.</p>
