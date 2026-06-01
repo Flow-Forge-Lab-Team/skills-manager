@@ -136,6 +136,11 @@ OpenClaw. `--projects` searches approved roots for git repositories, pruning
 generated directories such as `node_modules`, `.next`, `dist`, `build`, `.git`,
 vendored caches, and Codex scratch workspaces.
 
+Each scan persists a manager-local inventory snapshot in
+`~/.skills-manager/state.db`. Repeated scans update existing rows, keep scan
+timestamps, and mark previously seen installations or projects no longer found
+inside the current consent scope.
+
 Use `--save-project-roots` with `--projects` to persist approved roots under
 `~/.skills-manager`, `--saved-project-roots` to scan them later,
 `--list-project-roots` to inspect them, and `--remove-project-root <root>` to

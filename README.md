@@ -53,9 +53,10 @@ skills-manager discover --saved-project-roots
 
 Discovery is read-only for tool and project directories. It reports detected
 tools, global and project-local skills, content hashes, drift groups, duplicate
-content, and missing tool coverage before any install or cleanup action. Saved
-project roots are manager-local consent state and can be listed or removed
-later.
+content, and missing tool coverage before any install or cleanup action. It
+persists manager-local inventory snapshots in `~/.skills-manager/state.db` so
+later commands can compare scans. Saved project roots are manager-local consent
+state and can be listed or removed later.
 
 ## Real CLI Demo
 

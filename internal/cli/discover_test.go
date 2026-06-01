@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/Flow-Forge-Lab-Team/skills-manager/internal/state"
 )
 
 func TestDiscoverRequiresExplicitScope(t *testing.T) {
@@ -103,6 +105,161 @@ func TestDiscoverGlobalHashesFullSkillDirectories(t *testing.T) {
 	}
 	if !hasDiscoverDriftGroup(got.DriftGroups, "same_name_different_hash", "multi") {
 		t.Fatalf("missing helper-file drift group: %+v", got.DriftGroups)
+	}
+}
+
+func TestDiscoverPersistsInventoryAndMarksMissing(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	managerHome := filepath.Join(home, ".skills-manager")
+	t.Setenv("SKILLS_MANAGER_HOME", managerHome)
+
+	skillPath := writeScanSkill(t, filepath.Join(home, ".claude", "skills"), "persisted", "---\nname: persisted\n---\n# Persisted\n")
+
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{"--json", "discover", "--global"}, &stdout, &stderr)
+	if code != ExitSuccess {
+		t.Fatalf("first discover code = %d, want %d\nstderr:\n%s", code, ExitSuccess, stderr.String())
+	}
+
+	db, err := state.Open(managerHome)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	if got := countDiscoverTable(t, db, "discovery_scans"); got != 1 {
+		t.Fatalf("discovery scans = %d, want 1", got)
+	}
+	var present int
+	if err := db.QueryRow(`SELECT present FROM discovery_installations WHERE skill_name=?`, "persisted").Scan(&present); err != nil {
+		t.Fatalf("query persisted install: %v", err)
+	}
+	if present != 1 {
+		t.Fatalf("present = %d, want 1", present)
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	code = Run([]string{"--json", "discover", "--global"}, &stdout, &stderr)
+	if code != ExitSuccess {
+		t.Fatalf("repeat discover code = %d, want %d\nstderr:\n%s", code, ExitSuccess, stderr.String())
+	}
+	if got := countDiscoverTable(t, db, "discovery_scans"); got != 2 {
+		t.Fatalf("discovery scans after repeat = %d, want 2", got)
+	}
+	if got := countDiscoverTable(t, db, "discovery_installations"); got != 1 {
+		t.Fatalf("discovery installations after repeat = %d, want 1", got)
+	}
+
+	if err := os.RemoveAll(skillPath); err != nil {
+		t.Fatal(err)
+	}
+	stdout.Reset()
+	stderr.Reset()
+	code = Run([]string{"--json", "discover", "--global"}, &stdout, &stderr)
+	if code != ExitSuccess {
+		t.Fatalf("second discover code = %d, want %d\nstderr:\n%s", code, ExitSuccess, stderr.String())
+	}
+	if got := countDiscoverTable(t, db, "discovery_scans"); got != 3 {
+		t.Fatalf("discovery scans after removal = %d, want 3", got)
+	}
+	var missingSince string
+	if err := db.QueryRow(`SELECT present, COALESCE(missing_since, '') FROM discovery_installations WHERE skill_name=?`, "persisted").Scan(&present, &missingSince); err != nil {
+		t.Fatalf("query missing install: %v", err)
+	}
+	if present != 0 || missingSince == "" {
+		t.Fatalf("present=%d missing_since=%q, want no-longer-present timestamp", present, missingSince)
+	}
+}
+
+func TestDiscoverPersistsDriftGroupsAndOverlap(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	managerHome := filepath.Join(home, ".skills-manager")
+	t.Setenv("SKILLS_MANAGER_HOME", managerHome)
+
+	writeScanSkill(t, filepath.Join(home, ".claude", "skills"), "review", "---\nname: review\n---\n# Review\n")
+	writeScanSkill(t, filepath.Join(home, ".codex", "skills"), "review", "---\nname: review\n---\n# Review changed\n")
+	writeScanSkill(t, filepath.Join(home, ".grok", "skills"), "copy-a", "# Shared\n")
+	writeScanSkill(t, filepath.Join(home, ".grok", "skills"), "copy-b", "# Shared\n")
+
+	devRoot := filepath.Join(home, "dev")
+	repo := filepath.Join(devRoot, "app")
+	if err := os.MkdirAll(filepath.Join(repo, ".git"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	writeScanSkill(t, filepath.Join(home, ".claude", "skills"), "shared", "---\nname: shared\n---\n# Shared\n")
+	writeScanSkill(t, filepath.Join(repo, ".codex", "skills"), "shared", "---\nname: shared\n---\n# Shared\n")
+
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{"--json", "discover", "--global", "--projects", devRoot}, &stdout, &stderr)
+	if code != ExitSuccess {
+		t.Fatalf("discover code = %d, want %d\nstderr:\n%s", code, ExitSuccess, stderr.String())
+	}
+
+	db, err := state.Open(managerHome)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	assertPersistedDriftGroup(t, db, "same_name_different_hash", "review", "", 2)
+	assertPersistedDriftGroup(t, db, "same_hash_different_name", "", "", 2)
+	assertPersistedDriftGroup(t, db, "global_project_overlap", "shared", "", 2)
+
+	stdout.Reset()
+	stderr.Reset()
+	code = Run([]string{"--json", "discover", "--global"}, &stdout, &stderr)
+	if code != ExitSuccess {
+		t.Fatalf("global-only discover code = %d, want %d\nstderr:\n%s", code, ExitSuccess, stderr.String())
+	}
+	assertPersistedDriftGroup(t, db, "global_project_overlap", "shared", "", 2)
+}
+
+func TestDiscoverPersistsProjectMissingForRelativeRoot(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	managerHome := filepath.Join(home, ".skills-manager")
+	t.Setenv("SKILLS_MANAGER_HOME", managerHome)
+
+	devRoot := filepath.Join(home, "dev")
+	repo := filepath.Join(devRoot, "app")
+	if err := os.MkdirAll(filepath.Join(repo, ".git"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	skillPath := writeScanSkill(t, filepath.Join(repo, ".codex", "skills"), "project-skill", "---\nname: project-skill\n---\n# Project\n")
+	t.Chdir(devRoot)
+
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{"--json", "discover", "--projects", "."}, &stdout, &stderr)
+	if code != ExitSuccess {
+		t.Fatalf("first discover code = %d, want %d\nstderr:\n%s", code, ExitSuccess, stderr.String())
+	}
+
+	if err := os.RemoveAll(skillPath); err != nil {
+		t.Fatal(err)
+	}
+	stdout.Reset()
+	stderr.Reset()
+	code = Run([]string{"--json", "discover", "--projects", "."}, &stdout, &stderr)
+	if code != ExitSuccess {
+		t.Fatalf("second discover code = %d, want %d\nstderr:\n%s", code, ExitSuccess, stderr.String())
+	}
+
+	db, err := state.Open(managerHome)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	var present int
+	var missingSince string
+	if err := db.QueryRow(`SELECT present, COALESCE(missing_since, '') FROM discovery_installations WHERE skill_name=?`, "project-skill").Scan(&present, &missingSince); err != nil {
+		t.Fatalf("query project install: %v", err)
+	}
+	if present != 0 || missingSince == "" {
+		t.Fatalf("present=%d missing_since=%q, want relative-root scan to mark missing", present, missingSince)
 	}
 }
 
@@ -457,6 +614,46 @@ func TestDiscoverProjectsErrorsForMissingRoot(t *testing.T) {
 func hasDiscoverInstall(installs []discoverInstallation, toolID, skillName, pathFragment string) bool {
 	_, ok := findDiscoverInstall(installs, toolID, skillName, pathFragment)
 	return ok
+}
+
+func countDiscoverTable(t *testing.T, db *state.DB, name string) int {
+	t.Helper()
+	var n int
+	if err := db.QueryRow("SELECT COUNT(*) FROM " + name).Scan(&n); err != nil {
+		t.Fatalf("count %s: %v", name, err)
+	}
+	return n
+}
+
+func assertPersistedDriftGroup(t *testing.T, db *state.DB, groupType, skillName, contentSHA string, minInstalls int) {
+	t.Helper()
+	rows, err := db.Query(`
+SELECT g.group_id, COUNT(gi.installation_id)
+FROM discovery_drift_groups g
+JOIN discovery_drift_group_installations gi ON gi.group_id = g.group_id
+WHERE g.group_type = ?
+  AND (? = '' OR g.skill_name = ?)
+  AND (? = '' OR g.content_sha256 = ?)
+  AND g.present = 1
+GROUP BY g.group_id`, groupType, skillName, skillName, contentSHA, contentSHA)
+	if err != nil {
+		t.Fatalf("query persisted %s group: %v", groupType, err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var groupID string
+		var installs int
+		if err := rows.Scan(&groupID, &installs); err != nil {
+			t.Fatalf("scan persisted %s group: %v", groupType, err)
+		}
+		if installs >= minInstalls {
+			return
+		}
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate persisted %s group: %v", groupType, err)
+	}
+	t.Fatalf("missing persisted %s group for skill=%q hash=%q with at least %d installs", groupType, skillName, contentSHA, minInstalls)
 }
 
 func findDiscoverInstall(installs []discoverInstallation, toolID, skillName, pathFragment string) (discoverInstallation, bool) {
