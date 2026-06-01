@@ -55,7 +55,7 @@
 <pre><code>┌──────────────────────────────────────────────────────────────┐
 │  skills-manager (CLI — canonical surface)                    │
 │                                                               │
-│  • init / install / sync / update / scan / status / port     │
+│  • init / install / sync / update / scan / discover / status │
 │  • Reads &amp; writes: state, library, manifests                 │
 │  • Headless-capable (no TTY required)                        │
 │  • Pure file ops + git + HTTP polling                        │
@@ -127,6 +127,8 @@ paths; manifest tracking</li>
 project</li>
 <li><strong>Scan operations</strong>: walk harness directories, detect
 unregistered skills</li>
+<li><strong>Discover operations</strong>: build read-only global/project
+inventory snapshots with explicit consent scopes</li>
 <li><strong>Update operations</strong>: poll sources, store diffs,
 propagate updates</li>
 <li><strong>Sync operations</strong>: git push/pull against library
@@ -157,6 +159,11 @@ integrity, execution requirements</li>
 ├── backups/                  # backups of replaced skills
 └── config.yaml               # user config: mode, sync source, etc.</code></pre>
 <p>Details in <code>DATA_MODEL.md</code>.</p>
+<p>The discover-first inventory contract is defined in
+<code>DISCOVERY.md</code>. It maps the current <code>scan</code>,
+<code>status</code>, <code>serve</code>, and state surfaces to the
+inventory model used by later recommendation, action-plan, and dashboard
+work.</p>
 <h3 id="web-ui-deferred">Web UI (deferred)</h3>
 <p>Pure read+invoke. Frontend is a static SPA bundled with the manager.
 Started via <code>skills-manager serve</code>.</p>

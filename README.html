@@ -85,6 +85,14 @@ artifact from the release.</p>
 <span id="cb3-10"><a href="#cb3-10" aria-hidden="true" tabindex="-1"></a><span class="ex">brew</span> install Flow-Forge-Lab-Team/tap/skills-manager</span></code></pre></div>
 <p>Then run the <a href="docs/TUTORIAL.html">5-minute tutorial</a>, or
 <code>skills-manager --help</code>.</p>
+<p>To inspect existing local skill installs without changing them,
+run:</p>
+<div class="sourceCode" id="cb4"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a><span class="ex">skills-manager</span> discover <span class="at">--global</span></span>
+<span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a><span class="ex">skills-manager</span> discover <span class="at">--projects</span> ~/dev</span></code></pre></div>
+<p>Discovery is read-only for tool and project directories. It reports
+detected tools, global and project-local skills, content hashes, drift
+groups, duplicate content, and missing tool coverage before any install
+or cleanup action.</p>
 <h2 id="real-cli-demo">Real CLI Demo</h2>
 <p>This transcript was generated from the current CLI with a temporary
 manager home and the committed <a
@@ -179,6 +187,8 @@ why</li>
 ships when</li>
 <li><a href="docs/DATA_MODEL.html"><code>docs/DATA_MODEL.md</code></a> —
 schemas</li>
+<li><a href="docs/DISCOVERY.html"><code>docs/DISCOVERY.md</code></a> —
+discover-first inventory</li>
 <li><a
 href="docs/CLI_REFERENCE.html"><code>docs/CLI_REFERENCE.md</code></a> —
 command surface</li>

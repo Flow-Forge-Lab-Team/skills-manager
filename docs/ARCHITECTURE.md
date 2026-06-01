@@ -6,7 +6,7 @@
 ┌──────────────────────────────────────────────────────────────┐
 │  skills-manager (CLI — canonical surface)                    │
 │                                                               │
-│  • init / install / sync / update / scan / status / port     │
+│  • init / install / sync / update / scan / discover / status │
 │  • Reads & writes: state, library, manifests                 │
 │  • Headless-capable (no TTY required)                        │
 │  • Pure file ops + git + HTTP polling                        │
@@ -73,6 +73,8 @@ This means:
 - **Install operations**: copy or symlink into harness paths; manifest tracking
 - **Match operations**: compute which skills belong in a project
 - **Scan operations**: walk harness directories, detect unregistered skills
+- **Discover operations**: build read-only global/project inventory snapshots
+  with explicit consent scopes
 - **Update operations**: poll sources, store diffs, propagate updates
 - **Sync operations**: git push/pull against library remote
 - **Prompt generation**: produce prompts for bundled skills the user runs in their agent
@@ -104,6 +106,10 @@ Local-only by default. Structure:
 ```
 
 Details in `DATA_MODEL.md`.
+
+The discover-first inventory contract is defined in `DISCOVERY.md`. It maps the
+current `scan`, `status`, `serve`, and state surfaces to the inventory model
+used by later recommendation, action-plan, and dashboard work.
 
 ### Web UI (deferred)
 

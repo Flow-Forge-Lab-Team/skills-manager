@@ -115,6 +115,28 @@ Output:
 }
 ```
 
+### `skills-manager discover`
+
+Build a read-only inventory of installed skills and rules. This is the
+assessment-first path: it reports what exists before recommending or applying
+changes.
+
+```
+skills-manager discover --global
+skills-manager discover --projects ~/dev
+skills-manager discover --global --projects ~/dev --json
+```
+
+Discovery requires an explicit consent scope. `--global` checks known global
+tool roots such as Claude, Codex, Grok, Gemini/Antigravity, Hermes, and
+OpenClaw. `--projects` searches approved roots for git repositories, pruning
+generated directories such as `node_modules`, `.next`, `dist`, `build`, `.git`,
+vendored caches, and Codex scratch workspaces.
+
+JSON output includes detected tools, projects, concrete installations, content
+hashes, ownership, scope, and drift groups. Missing tools are coverage gaps, not
+errors.
+
 ### `skills-manager list [--filter ...]`
 
 List skills in the library.
@@ -474,7 +496,7 @@ skills-manager help install
 
 ## v1 command checklist
 
-Commands in v0.1: `init`, `add`, `install`, `sync`, `uninstall`, `scan`, `list`, `show`, `match`, `check`, `update`, `status`, `doctor`, `config`, `help`, `--version`
+Commands in v0.1: `init`, `add`, `install`, `sync`, `uninstall`, `scan`, `discover`, `list`, `show`, `match`, `check`, `update`, `status`, `doctor`, `config`, `help`, `--version`
 
 Added in v0.2: `summarize`, `ingest`, `setup-schedule`, `unschedule`, `sync-library`, `join`, `machines`, `set`, `remove`, `purge`
 

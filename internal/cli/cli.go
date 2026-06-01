@@ -89,6 +89,8 @@ func Run(args []string, stdout io.Writer, stderr io.Writer) int {
 		code = runAdd(cmdArgs, stdout, stderr, gf)
 	case "scan":
 		code = runScan(cmdArgs, stdout, stderr, gf)
+	case "discover":
+		code = runDiscover(cmdArgs, stdout, stderr, gf)
 	case "new":
 		code = runNew(cmdArgs, stdout, stderr, gf)
 	case "init":

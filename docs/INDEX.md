@@ -25,6 +25,7 @@ configured.
 - ★ [ARCHITECTURE.md](ARCHITECTURE.md) — CLI-first system shape, components, principles
 - ★ [ROADMAP.md](ROADMAP.md) — v0.1 / v0.2 / v0.3 / v1.0 staging
 - ★ [DATA_MODEL.md](DATA_MODEL.md) — file formats, schemas, on-disk layout
+- ★ [DISCOVERY.md](DISCOVERY.md) — discover-first UX, consent scopes, and inventory schema
 
 ## Surface
 
