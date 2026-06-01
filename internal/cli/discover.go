@@ -71,6 +71,32 @@ type discoverSummary struct {
 	MissingToolCoverage int `json:"missing_tool_coverage"`
 }
 
+type discoverReport struct {
+	Facts           discoverSummary       `json:"facts"`
+	ReviewFacts     []discoverReportItem  `json:"review_facts"`
+	CoverageGaps    []discoverCoverageGap `json:"coverage_gaps"`
+	Recommendations []discoverReportItem  `json:"recommendations"`
+}
+
+type discoverReportItem struct {
+	Kind            string   `json:"kind"`
+	Title           string   `json:"title"`
+	Detail          string   `json:"detail"`
+	SkillName       string   `json:"skill_name,omitempty"`
+	ContentSHA256   string   `json:"content_sha256,omitempty"`
+	InstallationIDs []string `json:"installation_ids,omitempty"`
+}
+
+type discoverCoverageGap struct {
+	Kind           string   `json:"kind"`
+	Title          string   `json:"title"`
+	Detail         string   `json:"detail"`
+	SkillName      string   `json:"skill_name,omitempty"`
+	ToolID         string   `json:"tool_id,omitempty"`
+	PresentToolIDs []string `json:"present_tool_ids,omitempty"`
+	MissingToolIDs []string `json:"missing_tool_ids,omitempty"`
+}
+
 type discoverOutput struct {
 	ScannedAt            string                 `json:"scanned_at"`
 	ApprovedProjectRoots []string               `json:"approved_project_roots,omitempty"`
@@ -80,6 +106,7 @@ type discoverOutput struct {
 	Installations        []discoverInstallation `json:"installations"`
 	DriftGroups          []discoverDriftGroup   `json:"drift_groups,omitempty"`
 	Summary              discoverSummary        `json:"summary"`
+	Report               discoverReport         `json:"report"`
 }
 
 type discoverProjectRootsOutput struct {
@@ -279,6 +306,7 @@ func collectDiscovery(opts discoverOptions) (discoverOutput, error) {
 	})
 	out.DriftGroups = buildDiscoverDriftGroups(out.Installations)
 	out.Summary = summarizeDiscovery(out)
+	out.Report = buildDiscoverReport(out)
 	return out, nil
 }
 
@@ -1226,23 +1254,265 @@ func summarizeDiscovery(out discoverOutput) discoverSummary {
 	return summary
 }
 
+func buildDiscoverReport(out discoverOutput) discoverReport {
+	report := discoverReport{
+		Facts:           out.Summary,
+		ReviewFacts:     []discoverReportItem{},
+		CoverageGaps:    []discoverCoverageGap{},
+		Recommendations: []discoverReportItem{},
+	}
+	installsByID := map[string]discoverInstallation{}
+	for _, inst := range out.Installations {
+		installsByID[inst.InstallationID] = inst
+	}
+	for _, group := range out.DriftGroups {
+		report.ReviewFacts = append(report.ReviewFacts, discoverReportItem{
+			Kind:            group.GroupType,
+			Title:           discoverGroupTitle(group),
+			Detail:          discoverGroupDetail(group, installsByID),
+			SkillName:       group.SkillName,
+			ContentSHA256:   group.ContentSHA256,
+			InstallationIDs: append([]string{}, group.InstallationIDs...),
+		})
+	}
+	for _, tool := range out.Tools {
+		if tool.Detected {
+			continue
+		}
+		report.CoverageGaps = append(report.CoverageGaps, discoverCoverageGap{
+			Kind:   "missing_tool",
+			Title:  "Missing tool coverage: " + tool.DisplayName,
+			Detail: fmt.Sprintf("%s was not detected in this scan scope.", tool.DisplayName),
+			ToolID: tool.ToolID,
+		})
+	}
+	report.CoverageGaps = append(report.CoverageGaps, discoverGlobalSkillCoverageGaps(out)...)
+	sort.Slice(report.ReviewFacts, func(i, j int) bool {
+		if report.ReviewFacts[i].Kind != report.ReviewFacts[j].Kind {
+			return report.ReviewFacts[i].Kind < report.ReviewFacts[j].Kind
+		}
+		if report.ReviewFacts[i].SkillName != report.ReviewFacts[j].SkillName {
+			return report.ReviewFacts[i].SkillName < report.ReviewFacts[j].SkillName
+		}
+		return report.ReviewFacts[i].ContentSHA256 < report.ReviewFacts[j].ContentSHA256
+	})
+	sort.Slice(report.CoverageGaps, func(i, j int) bool {
+		if report.CoverageGaps[i].Kind != report.CoverageGaps[j].Kind {
+			return report.CoverageGaps[i].Kind < report.CoverageGaps[j].Kind
+		}
+		if report.CoverageGaps[i].SkillName != report.CoverageGaps[j].SkillName {
+			return report.CoverageGaps[i].SkillName < report.CoverageGaps[j].SkillName
+		}
+		return report.CoverageGaps[i].ToolID < report.CoverageGaps[j].ToolID
+	})
+	return report
+}
+
+func discoverGroupTitle(group discoverDriftGroup) string {
+	switch group.GroupType {
+	case "same_name_different_hash":
+		return "Same-name drift: " + group.SkillName
+	case "same_hash_different_name":
+		return "Duplicate content: " + shortDisplayHash(group.ContentSHA256)
+	case "global_project_overlap":
+		return "Project override: " + group.SkillName
+	default:
+		return group.GroupType
+	}
+}
+
+func discoverGroupDetail(group discoverDriftGroup, installsByID map[string]discoverInstallation) string {
+	locations := make([]string, 0, len(group.InstallationIDs))
+	for _, id := range group.InstallationIDs {
+		inst, ok := installsByID[id]
+		if !ok {
+			continue
+		}
+		locations = append(locations, inst.ToolID+"/"+inst.Scope)
+	}
+	locationText := compactLocationSummary(locations, 6)
+	switch group.GroupType {
+	case "same_name_different_hash":
+		return fmt.Sprintf("%s has different content across %s.", group.SkillName, locationText)
+	case "same_hash_different_name":
+		return fmt.Sprintf("Identical content appears under different names across %s.", locationText)
+	case "global_project_overlap":
+		return fmt.Sprintf("%s exists both globally and in a project scope.", group.SkillName)
+	default:
+		return locationText
+	}
+}
+
+func discoverGlobalSkillCoverageGaps(out discoverOutput) []discoverCoverageGap {
+	detectedGlobalTools := map[string]bool{}
+	for _, tool := range out.Tools {
+		if tool.Detected && len(tool.GlobalRoots) > 0 {
+			detectedGlobalTools[tool.ToolID] = true
+		}
+	}
+	if len(detectedGlobalTools) <= 1 {
+		return nil
+	}
+	bySkill := map[string]map[string]bool{}
+	for _, inst := range out.Installations {
+		if inst.Scope != "global" || !detectedGlobalTools[inst.ToolID] {
+			continue
+		}
+		if bySkill[inst.SkillName] == nil {
+			bySkill[inst.SkillName] = map[string]bool{}
+		}
+		bySkill[inst.SkillName][inst.ToolID] = true
+	}
+	var gaps []discoverCoverageGap
+	for skillName, present := range bySkill {
+		presentIDs := sortedBoolKeys(present)
+		var missingIDs []string
+		for toolID := range detectedGlobalTools {
+			if !present[toolID] {
+				missingIDs = append(missingIDs, toolID)
+			}
+		}
+		if len(missingIDs) == 0 {
+			continue
+		}
+		sort.Strings(missingIDs)
+		gaps = append(gaps, discoverCoverageGap{
+			Kind:           "global_skill_absent_from_detected_tool",
+			Title:          "Global skill coverage gap: " + skillName,
+			Detail:         fmt.Sprintf("%s is present in %s but absent from %s.", skillName, strings.Join(presentIDs, ", "), strings.Join(missingIDs, ", ")),
+			SkillName:      skillName,
+			PresentToolIDs: presentIDs,
+			MissingToolIDs: missingIDs,
+		})
+	}
+	return gaps
+}
+
+func sortedBoolKeys(values map[string]bool) []string {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func compactStringList(values []string, limit int) string {
+	if len(values) <= limit {
+		return strings.Join(values, ", ")
+	}
+	return fmt.Sprintf("%s, ... %d more", strings.Join(values[:limit], ", "), len(values)-limit)
+}
+
+func compactLocationSummary(locations []string, limit int) string {
+	counts := map[string]int{}
+	for _, location := range locations {
+		counts[location]++
+	}
+	keys := make([]string, 0, len(counts))
+	for key := range counts {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	parts := make([]string, 0, len(keys))
+	for _, key := range keys {
+		if counts[key] == 1 {
+			parts = append(parts, key)
+			continue
+		}
+		parts = append(parts, fmt.Sprintf("%s x%d", key, counts[key]))
+	}
+	return compactStringList(parts, limit)
+}
+
+func shortDisplayHash(hash string) string {
+	if len(hash) <= 12 {
+		return hash
+	}
+	return hash[:12]
+}
+
 func printDiscoverSummary(out io.Writer, result discoverOutput) {
 	if out == io.Discard {
 		return
 	}
-	fmt.Fprintf(out, "Discovered tools: %d present, %d missing\n", result.Summary.ToolsFound, result.Summary.ToolsMissing)
-	fmt.Fprintf(out, "Skills: %d global, %d project-local\n", result.Summary.GlobalSkills, result.Summary.ProjectLocalSkills)
-	fmt.Fprintf(out, "Projects: %d\n", result.Summary.ProjectsFound)
+	fmt.Fprintln(out, "Discover assessment")
+	fmt.Fprintf(out, "Facts: %d tools present, %d tools missing, %d global skills, %d project-local skills, %d projects\n",
+		result.Summary.ToolsFound, result.Summary.ToolsMissing, result.Summary.GlobalSkills, result.Summary.ProjectLocalSkills, result.Summary.ProjectsFound)
+	fmt.Fprintf(out, "Review facts: %d drift/overlap, %d duplicate-content\n", result.Summary.DriftGroups, result.Summary.DuplicateContent)
+	fmt.Fprintf(out, "Coverage gaps: %d\n", len(result.Report.CoverageGaps))
 	if len(result.SkippedProjectRoots) > 0 {
 		fmt.Fprintf(out, "Skipped saved project roots: %d\n", len(result.SkippedProjectRoots))
 	}
-	fmt.Fprintf(out, "Review groups: %d drift, %d duplicate-content\n", result.Summary.DriftGroups, result.Summary.DuplicateContent)
+	printDiscoverReportSection(out, "Exact review facts", reportItemLines(result.Report.ReviewFacts))
+	printDiscoverReportSection(out, "Coverage gaps", coverageGapLines(result.Report.CoverageGaps))
+	if len(result.Report.Recommendations) == 0 {
+		fmt.Fprintln(out, "\nRecommendations: none generated by discover; review facts are exact inventory signals.")
+	} else {
+		printDiscoverReportSection(out, "Recommendations", reportItemLines(result.Report.Recommendations))
+	}
 	if len(result.Installations) > 0 {
 		fmt.Fprintln(out, "\nInstallations:")
-		for _, inst := range result.Installations {
+		installs := append([]discoverInstallation{}, result.Installations...)
+		sort.Slice(installs, func(i, j int) bool {
+			if installs[i].SkillName != installs[j].SkillName {
+				return installs[i].SkillName < installs[j].SkillName
+			}
+			if installs[i].ToolID != installs[j].ToolID {
+				return installs[i].ToolID < installs[j].ToolID
+			}
+			if installs[i].Scope != installs[j].Scope {
+				return installs[i].Scope < installs[j].Scope
+			}
+			return installs[i].SourcePath < installs[j].SourcePath
+		})
+		const maxHumanInstallLines = 20
+		displayed := installs
+		if len(displayed) > maxHumanInstallLines {
+			displayed = displayed[:maxHumanInstallLines]
+		}
+		for _, inst := range displayed {
 			fmt.Fprintf(out, "  - %-24s %-12s %-8s %s\n", inst.SkillName, inst.ToolID, inst.Scope, inst.SourcePath)
 		}
+		if remaining := len(installs) - len(displayed); remaining > 0 {
+			fmt.Fprintf(out, "  - ... %d more\n", remaining)
+		}
 	}
+}
+
+func printDiscoverReportSection(out io.Writer, title string, lines []string) {
+	if len(lines) == 0 {
+		fmt.Fprintf(out, "\n%s: none\n", title)
+		return
+	}
+	fmt.Fprintf(out, "\n%s:\n", title)
+	const maxHumanReportLines = 12
+	displayed := lines
+	if len(displayed) > maxHumanReportLines {
+		displayed = displayed[:maxHumanReportLines]
+	}
+	for _, line := range displayed {
+		fmt.Fprintf(out, "  - %s\n", line)
+	}
+	if remaining := len(lines) - len(displayed); remaining > 0 {
+		fmt.Fprintf(out, "  - ... %d more\n", remaining)
+	}
+}
+
+func reportItemLines(items []discoverReportItem) []string {
+	lines := make([]string, 0, len(items))
+	for _, item := range items {
+		lines = append(lines, item.Title+" - "+item.Detail)
+	}
+	return lines
+}
+
+func coverageGapLines(gaps []discoverCoverageGap) []string {
+	lines := make([]string, 0, len(gaps))
+	for _, gap := range gaps {
+		lines = append(lines, gap.Title+" - "+gap.Detail)
+	}
+	return lines
 }
 
 func discoverGitRemote(root string) string {

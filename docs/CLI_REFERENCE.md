@@ -147,9 +147,14 @@ Use `--save-project-roots` with `--projects` to persist approved roots under
 revoke one. Stale saved roots are skipped during `--saved-project-roots` scans
 and reported as `skipped_project_roots` in JSON output.
 
+Human output is a deterministic assessment with exact facts first, then review
+facts, coverage gaps, and an explicit recommendations section. `discover` does
+not generate AI recommendations or mutate tool/project directories.
+
 JSON output includes detected tools, projects, concrete installations, content
-hashes, ownership, scope, and drift groups. Missing tools are coverage gaps, not
-errors.
+hashes, ownership, scope, drift groups, and a stable `report` object with
+`facts`, `review_facts`, `coverage_gaps`, and `recommendations`. Missing tools
+are coverage gaps, not errors.
 
 ### `skills-manager list [--filter ...]`
 

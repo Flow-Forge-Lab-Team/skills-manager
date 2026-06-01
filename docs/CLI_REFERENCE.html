@@ -183,9 +183,16 @@ persist approved roots under <code>~/.skills-manager</code>,
 <code>--remove-project-root &lt;root&gt;</code> to revoke one. Stale
 saved roots are skipped during <code>--saved-project-roots</code> scans
 and reported as <code>skipped_project_roots</code> in JSON output.</p>
+<p>Human output is a deterministic assessment with exact facts first,
+then review facts, coverage gaps, and an explicit recommendations
+section. <code>discover</code> does not generate AI recommendations or
+mutate tool/project directories.</p>
 <p>JSON output includes detected tools, projects, concrete
-installations, content hashes, ownership, scope, and drift groups.
-Missing tools are coverage gaps, not errors.</p>
+installations, content hashes, ownership, scope, drift groups, and a
+stable <code>report</code> object with <code>facts</code>,
+<code>review_facts</code>, <code>coverage_gaps</code>, and
+<code>recommendations</code>. Missing tools are coverage gaps, not
+errors.</p>
 <h3
 id="skills-manager-list---filter-"><code>skills-manager list [--filter ...]</code></h3>
 <p>List skills in the library.</p>
