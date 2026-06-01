@@ -156,6 +156,26 @@ hashes, ownership, scope, drift groups, and a stable `report` object with
 `facts`, `review_facts`, `coverage_gaps`, and `recommendations`. Missing tools
 are coverage gaps, not errors.
 
+### `skills-manager plan`
+
+Build dry-run action plans from saved discovery recommendations. This command
+does not write to tool, project, or library paths.
+
+```
+skills-manager discover --global --projects ~/dev --json > discover.json
+skills-manager plan --inventory discover.json
+skills-manager plan --inventory discover.json --recommendation rec-abc123 --json
+```
+
+Plans support ingest, global install, project install, manager-owned removal,
+ignore, and drift review recommendations. JSON output is dashboard-oriented:
+each plan includes status, blockers, recommendation metadata, and file buckets
+for `create`, `update`, `preserve`, `skip`, and `remove`.
+
+The planner fails closed when it cannot prove target compatibility, cannot find
+a target path, or would collide with an unmanaged user file. Unmanaged files are
+preserved; only manager-owned installs appear in `remove`.
+
 ### `skills-manager assess`
 
 Run an optional cached AI advisory assessment for one library skill, one project,
@@ -549,4 +569,4 @@ Added in v0.2: `summarize`, `ingest`, `setup-schedule`, `unschedule`, `sync-libr
 
 Added in v0.3: `serve`, `watch` (plus UI integration commands)
 
-Added in v1.0: `port`, `cleanup`
+Added in v1.0: `port`, `cleanup`, `plan`

@@ -294,6 +294,19 @@ Flags:
   --deep                explicitly include bounded repo file signals
 
 ` + globalFlagHelp()
+	case "plan":
+		return `skills-manager plan --inventory <discover.json> [--recommendation <id>]
+
+Build read-only dry-run action plans from discovery recommendations. Plans list
+files to create, update, preserve, skip, or remove and block when ownership,
+compatibility, or target paths are uncertain.
+
+Flags:
+  --inventory <file>          saved JSON output from skills-manager discover
+  --recommendation <id>       plan only one recommendation (default: all)
+  --all                       plan every recommendation
+
+` + globalFlagHelp()
 	case "show":
 		return `skills-manager show <skill> [flags]
 
@@ -612,6 +625,7 @@ Commands:
   scan        discover skills in harness directories
   discover    read-only global/project skill inventory
   assess      optional cached AI skill assessment
+  plan        dry-run action plans for discovery recommendations
   new         create a new skill
   check       poll GitHub for new commits on skills
   compat-check  deeper LLM compatibility + requirements analysis
