@@ -98,7 +98,10 @@ or cleanup action. It persists manager-local inventory snapshots in
 scans. Human output separates exact review facts from recommendations,
 and JSON includes the same assessment under <code>report</code>. Saved
 project roots are manager-local consent state and can be listed or
-removed later.</p>
+removed later. Discovery never performs a full-home scan: it only reads
+known global tool roots when <code>--global</code> is set and explicit
+project roots when <code>--projects</code> or
+<code>--saved-project-roots</code> is set.</p>
 <h2 id="real-cli-demo">Real CLI Demo</h2>
 <p>This transcript was generated from the current CLI with a temporary
 manager home and the committed <a
@@ -162,10 +165,17 @@ boundary. Copy mode is the default: installs create manager-owned
 copies, preserve unmanaged local edits, record manifests, and uninstall
 only removes files that the manager owns.</p>
 <p>Updates and scans are review-first unless you choose an explicit
-automated path. Checksum verification in <code>install.sh</code> and the
-npm wrapper confirms that the downloaded archive matches the published
-release checksum. It does not prove who published that checksum unless
-you independently verify the release's signature artifact. See <a
+automated path. AI assessment is opt-in, uses configured provider
+credentials only after <code>--auto</code> or writes a local handoff
+prompt after <code>--handoff</code>, and stores cached advisory results
+under the manager home. Secret-bearing files such as <code>.env</code>,
+credential files, and private keys are skipped by default; obvious
+secret values in skill and instruction excerpts are redacted before
+provider calls or handoff prompts. Checksum verification in
+<code>install.sh</code> and the npm wrapper confirms that the downloaded
+archive matches the published release checksum. It does not prove who
+published that checksum unless you independently verify the release's
+signature artifact. See <a
 href="docs/SECURITY_MODEL.html"><code>docs/SECURITY_MODEL.md</code></a>
 for the full install, update, copy-mode, uninstall, and
 release-integrity boundaries.</p>

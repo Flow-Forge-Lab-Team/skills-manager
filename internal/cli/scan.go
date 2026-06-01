@@ -75,6 +75,13 @@ func runScan(args []string, stdout io.Writer, stderr io.Writer, gf globalFlags) 
 		fmt.Fprintf(stderr, "%v\n", err)
 		return ExitOpError
 	}
+	writePrivacyAudit("scan.audit", map[string]string{
+		"paths":   fmt.Sprint(len(searchPaths)),
+		"results": fmt.Sprint(len(results)),
+		"ignored": fmt.Sprint(ignoredCount),
+		"ingest":  fmt.Sprint(ingest || autoIngest),
+		"auto":    fmt.Sprint(autoIngest),
+	})
 
 	// Output results
 	if gf.JSON {
@@ -217,6 +224,9 @@ func collectScanResults(managerHomeDir string, searchPaths []string) ([]scanResu
 	var results []scanResult
 	var ignoredCount int
 	for _, searchPath := range searchPaths {
+		if isSensitivePath(searchPath) {
+			continue
+		}
 		entries, err := os.ReadDir(searchPath)
 		if err != nil {
 			continue
@@ -228,6 +238,9 @@ func collectScanResults(managerHomeDir string, searchPaths []string) ([]scanResu
 			}
 
 			skillPath := filepath.Join(searchPath, entry.Name())
+			if isSensitiveName(entry.Name()) || isSensitivePath(skillPath) {
+				continue
+			}
 			skillMdPath := filepath.Join(skillPath, "SKILL.md")
 
 			if _, err := os.Stat(skillMdPath); err != nil {

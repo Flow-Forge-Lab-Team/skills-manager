@@ -82,6 +82,26 @@ high-confidence scan ingest, must be requested explicitly. Dependency
 preflight checks can block install or ingest when required local tools,
 credentials, runtimes, MCP servers, or model capabilities are
 missing.</p>
+<p>Discovery and scan commands require explicit scope.
+<code>discover --global</code> reads known global tool roots;
+<code>discover --projects</code> and <code>--saved-project-roots</code>
+read only approved project roots. The manager does not default to a
+full-home or arbitrary filesystem scan. Generated directories, Codex
+scratch workspaces, and secret-bearing paths such as <code>.env</code>,
+credential files, private keys, and secret directories are skipped by
+default.</p>
+<p>AI assessment is opt-in. <code>assess --auto</code> uses the
+configured local provider and <code>assess --handoff</code> writes a
+local prompt for the user's agent; neither mode runs during discovery.
+Assessment results are cached under the manager home by subject, project
+fingerprint, target harness, prompt version, and provider. Before
+provider calls or handoff prompt writes, obvious secret values in skill
+and instruction excerpts are replaced with
+<code>[REDACTED_SECRET]</code>, secret-bearing files are omitted, and
+repository remote paths are summarized instead of sent verbatim.</p>
+<p>Privacy audit records are best-effort local log entries under
+<code>~/.skills-manager/logs/</code>. They record command mode and
+counts, not provider prompts, secret values, or file contents.</p>
 <h2 id="uninstall-boundary">Uninstall boundary</h2>
 <p><code>skills-manager uninstall</code> removes manager-owned installed
 copies and manifests. It does not remove unmanaged files and does not

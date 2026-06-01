@@ -171,7 +171,10 @@ Gemini/Antigravity, Hermes, and OpenClaw. <code>--projects</code>
 searches approved roots for git repositories, pruning generated
 directories such as <code>node_modules</code>, <code>.next</code>,
 <code>dist</code>, <code>build</code>, <code>.git</code>, vendored
-caches, and Codex scratch workspaces.</p>
+caches, Codex scratch workspaces, and secret-bearing paths such as
+<code>.env</code>, credential files, private keys, and secret
+directories. It does not scan the whole home directory unless you
+explicitly pass a home-level project root.</p>
 <p>Each scan persists a manager-local inventory snapshot in
 <code>~/.skills-manager/state.db</code>. Repeated scans update existing
 rows, keep scan timestamps, and mark previously seen installations or
@@ -225,8 +228,10 @@ agent/provider output and caches it. Default assessment input is
 privacy-bounded: skill content, skill metadata, discovery inventory
 entries, project signals, and local instruction files such as
 <code>AGENTS.md</code>, Cursor rules, and GitHub instructions.
-<code>--deep</code> is required before bounded repository file signals
-are included.</p>
+Secret-bearing files are skipped, obvious secret values are redacted
+before provider calls or handoff prompt writes, and repository remote
+paths are summarized instead of sent verbatim. <code>--deep</code> is
+required before bounded repository file signals are included.</p>
 <p>Cached results are keyed by skill/content hash or selected inventory
 subject, project fingerprint, target harness, assessment prompt version,
 and provider identity. JSON output separates <code>input</code>,

@@ -635,6 +635,54 @@ func TestDiscoverProjectsPrunesGeneratedDirs(t *testing.T) {
 	}
 }
 
+func TestDiscoverProjectsSkipsSecretBearingFilesAndDirs(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("SKILLS_MANAGER_HOME", filepath.Join(home, ".skills-manager"))
+
+	devRoot := filepath.Join(home, "dev")
+	repo := filepath.Join(devRoot, "app")
+	if err := os.MkdirAll(filepath.Join(repo, ".git"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(repo, ".cursor", "rules", "react.mdc"), "# Cursor rule\n")
+	writeFile(t, filepath.Join(repo, ".cursor", "rules", "secrets.mdc"), "OPENAI_API_KEY=sk-discoversecret123456789\n")
+	safeSkillBody := "---\nname: safe-skill\n---\n# Safe\n"
+	writeScanSkill(t, filepath.Join(repo, ".codex", "skills"), "safe-skill", safeSkillBody)
+	writeFile(t, filepath.Join(repo, ".codex", "skills", "safe-skill", ".env"), "PASSWORD=discover-nested-secret\n")
+	writeScanSkill(t, filepath.Join(repo, ".codex", "skills", ".env", "leaked"), "leaked", "---\nname: leaked\n---\n# Leaked\n")
+
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{"--json", "discover", "--projects", devRoot}, &stdout, &stderr)
+	if code != ExitSuccess {
+		t.Fatalf("discover returned %d\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+	}
+
+	var got discoverOutput
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal discover output: %v\n%s", err, stdout.String())
+	}
+	if !hasDiscoverInstall(got.Installations, "cursor", "react", filepath.Join(".cursor", "rules", "react.mdc")) {
+		t.Fatalf("missing normal cursor rule: %+v", got.Installations)
+	}
+	safeSkill, ok := findDiscoverInstall(got.Installations, "codex", "safe-skill", filepath.Join(".codex", "skills", "safe-skill"))
+	if !ok {
+		t.Fatalf("missing safe skill: %+v", got.Installations)
+	}
+	if safeSkill.ContentSizeBytes != int64(len(safeSkillBody)) {
+		t.Fatalf("safe skill content size = %d, want SKILL.md-only size %d", safeSkill.ContentSizeBytes, len(safeSkillBody))
+	}
+	for _, inst := range got.Installations {
+		if strings.Contains(inst.SourcePath, "secrets.mdc") || strings.Contains(inst.SourcePath, ".env") || inst.SkillName == "leaked" {
+			t.Fatalf("secret-bearing path was discovered: %+v", inst)
+		}
+	}
+	logText := readFile(t, filepath.Join(home, ".skills-manager", "logs", "skills-manager.log"))
+	if !strings.Contains(logText, "discover.audit") || strings.Contains(logText, "sk-discoversecret") {
+		t.Fatalf("privacy audit log missing safe discover record:\n%s", logText)
+	}
+}
+
 func TestDiscoverProjectsSavesReusesAndRemovesApprovedRoots(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)

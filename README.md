@@ -58,7 +58,9 @@ persists manager-local inventory snapshots in `~/.skills-manager/state.db` so
 later commands can compare scans. Human output separates exact review facts from
 recommendations, and JSON includes the same assessment under `report`. Saved
 project roots are manager-local consent state and can be listed or removed
-later.
+later. Discovery never performs a full-home scan: it only reads known global
+tool roots when `--global` is set and explicit project roots when `--projects`
+or `--saved-project-roots` is set.
 
 ## Real CLI Demo
 
@@ -118,6 +120,12 @@ default: installs create manager-owned copies, preserve unmanaged local edits,
 record manifests, and uninstall only removes files that the manager owns.
 
 Updates and scans are review-first unless you choose an explicit automated path.
+AI assessment is opt-in, uses configured provider credentials only after
+`--auto` or writes a local handoff prompt after `--handoff`, and stores cached
+advisory results under the manager home. Secret-bearing files such as `.env`,
+credential files, and private keys are skipped by default; obvious secret values
+in skill and instruction excerpts are redacted before provider calls or handoff
+prompts.
 Checksum verification in `install.sh` and the npm wrapper confirms that the
 downloaded archive matches the published release checksum. It does not prove who
 published that checksum unless you independently verify the release's signature

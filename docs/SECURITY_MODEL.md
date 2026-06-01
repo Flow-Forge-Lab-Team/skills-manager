@@ -36,6 +36,26 @@ must be requested explicitly. Dependency preflight checks can block install or
 ingest when required local tools, credentials, runtimes, MCP servers, or model
 capabilities are missing.
 
+Discovery and scan commands require explicit scope. `discover --global` reads
+known global tool roots; `discover --projects` and `--saved-project-roots` read
+only approved project roots. The manager does not default to a full-home or
+arbitrary filesystem scan. Generated directories, Codex scratch workspaces, and
+secret-bearing paths such as `.env`, credential files, private keys, and secret
+directories are skipped by default.
+
+AI assessment is opt-in. `assess --auto` uses the configured local provider and
+`assess --handoff` writes a local prompt for the user's agent; neither mode runs
+during discovery. Assessment results are cached under the manager home by
+subject, project fingerprint, target harness, prompt version, and provider.
+Before provider calls or handoff prompt writes, obvious secret values in skill
+and instruction excerpts are replaced with `[REDACTED_SECRET]`, secret-bearing
+files are omitted, and repository remote paths are summarized instead of sent
+verbatim.
+
+Privacy audit records are best-effort local log entries under
+`~/.skills-manager/logs/`. They record command mode and counts, not provider
+prompts, secret values, or file contents.
+
 ## Uninstall boundary
 
 `skills-manager uninstall` removes manager-owned installed copies and manifests.
