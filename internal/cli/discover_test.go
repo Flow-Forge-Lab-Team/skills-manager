@@ -204,6 +204,69 @@ func TestDiscoverGlobalIncludesSymlinkedSkillDirs(t *testing.T) {
 	}
 }
 
+func TestDiscoverGlobalFollowsSymlinkedSkillRoot(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("SKILLS_MANAGER_HOME", filepath.Join(home, ".skills-manager"))
+
+	realRoot := filepath.Join(home, "dotfiles", "claude-skills")
+	writeScanSkill(t, realRoot, "root-linked-skill", "---\nname: root-linked-skill\n---\n# Linked root\n")
+	linkRoot := filepath.Join(home, ".claude", "skills")
+	if err := os.MkdirAll(filepath.Dir(linkRoot), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(realRoot, linkRoot); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{"--json", "discover", "--global"}, &stdout, &stderr)
+	if code != ExitSuccess {
+		t.Fatalf("code = %d, want %d\nstderr:\n%s", code, ExitSuccess, stderr.String())
+	}
+
+	var got discoverOutput
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal discover output: %v\n%s", err, stdout.String())
+	}
+	if got.Summary.GlobalSkills != 1 {
+		t.Fatalf("global skills = %d, want 1: %+v", got.Summary.GlobalSkills, got.Installations)
+	}
+	if !hasDiscoverInstall(got.Installations, "claude", "root-linked-skill", filepath.Join(".claude", "skills", "root-linked-skill")) {
+		t.Fatalf("missing symlink-root skill install: %+v", got.Installations)
+	}
+}
+
+func TestDiscoverProjectsFollowsSymlinkedApprovedRoot(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("SKILLS_MANAGER_HOME", filepath.Join(home, ".skills-manager"))
+
+	repo := filepath.Join(home, "real", "app")
+	if err := os.MkdirAll(filepath.Join(repo, ".git"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	writeScanSkill(t, filepath.Join(repo, ".codex", "skills"), "project-skill", "---\nname: project-skill\n---\n# Project\n")
+	linkRoot := filepath.Join(home, "linked-dev")
+	if err := os.Symlink(filepath.Join(home, "real"), linkRoot); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{"--json", "discover", "--projects", linkRoot}, &stdout, &stderr)
+	if code != ExitSuccess {
+		t.Fatalf("code = %d, want %d\nstderr:\n%s", code, ExitSuccess, stderr.String())
+	}
+
+	var got discoverOutput
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal discover output: %v\n%s", err, stdout.String())
+	}
+	if got.Summary.ProjectsFound != 1 || got.Summary.ProjectLocalSkills != 1 {
+		t.Fatalf("summary = %+v, want one project and one project-local skill", got.Summary)
+	}
+}
+
 func TestDiscoverProjectsErrorsForMissingRoot(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)

@@ -234,6 +234,7 @@ func discoverProjectRoots(paths []string) ([]string, error) {
 		if err != nil {
 			return nil, err
 		}
+		root = discoverWalkRoot(root)
 		err = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 			if err != nil {
 				if path == root {
@@ -321,15 +322,17 @@ func collectProjectDiscovery(root string, scannedAt string) (discoverProject, []
 }
 
 func discoverSkillDir(root discoverRoot, scope, projectID, basePath string) []discoverInstallation {
+	walkRoot := discoverWalkRoot(root.path)
 	var installs []discoverInstallation
-	err := filepath.WalkDir(root.path, func(path string, d fs.DirEntry, err error) error {
+	err := filepath.WalkDir(walkRoot, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return nil
 		}
-		if path != root.path && shouldPruneDiscoverDir(d.Name(), path) {
+		sourcePath := discoverSourcePath(root.path, walkRoot, path)
+		if path != walkRoot && shouldPruneDiscoverDir(d.Name(), sourcePath) {
 			return filepath.SkipDir
 		}
-		contentPath := filepath.Join(path, "SKILL.md")
+		contentPath := filepath.Join(sourcePath, "SKILL.md")
 		if !fileExists(contentPath) {
 			if !d.IsDir() {
 				return nil
@@ -340,7 +343,7 @@ func discoverSkillDir(root discoverRoot, scope, projectID, basePath string) []di
 		if decl, _, err := parseSkillFrontmatterFull(contentPath); err == nil && decl.name != "" {
 			skillName = decl.name
 		}
-		if inst, ok := discoverInstallFromFile(root, scope, projectID, basePath, skillName, path, contentPath); ok {
+		if inst, ok := discoverInstallFromFile(root, scope, projectID, basePath, skillName, sourcePath, contentPath); ok {
 			installs = append(installs, inst)
 		}
 		if d.IsDir() {
@@ -353,6 +356,28 @@ func discoverSkillDir(root discoverRoot, scope, projectID, basePath string) []di
 	}
 	sort.Slice(installs, func(i, j int) bool { return installs[i].SourcePath < installs[j].SourcePath })
 	return installs
+}
+
+func discoverWalkRoot(path string) string {
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return path
+	}
+	if dirExists(resolved) {
+		return resolved
+	}
+	return path
+}
+
+func discoverSourcePath(sourceRoot, walkRoot, path string) string {
+	if sourceRoot == walkRoot {
+		return path
+	}
+	rel, err := filepath.Rel(walkRoot, path)
+	if err != nil || rel == "." {
+		return sourceRoot
+	}
+	return filepath.Join(sourceRoot, rel)
 }
 
 func projectDiscoverRoots(projectRoot string) []discoverRoot {
