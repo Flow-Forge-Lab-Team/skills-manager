@@ -207,6 +207,14 @@ func TestDiscoverPersistsDriftGroupsAndOverlap(t *testing.T) {
 	assertPersistedDriftGroup(t, db, "same_name_different_hash", "review", "", 2)
 	assertPersistedDriftGroup(t, db, "same_hash_different_name", "", "", 2)
 	assertPersistedDriftGroup(t, db, "global_project_overlap", "shared", "", 2)
+
+	stdout.Reset()
+	stderr.Reset()
+	code = Run([]string{"--json", "discover", "--global"}, &stdout, &stderr)
+	if code != ExitSuccess {
+		t.Fatalf("global-only discover code = %d, want %d\nstderr:\n%s", code, ExitSuccess, stderr.String())
+	}
+	assertPersistedDriftGroup(t, db, "global_project_overlap", "shared", "", 2)
 }
 
 func TestDiscoverPersistsProjectMissingForRelativeRoot(t *testing.T) {

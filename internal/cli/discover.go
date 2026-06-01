@@ -441,7 +441,7 @@ ON CONFLICT(group_id) DO UPDATE SET
 			}
 		}
 	}
-	if err := markMissingDriftGroups(tx, seenGroups); err != nil {
+	if err := markMissingDriftGroups(tx, seenGroups, opts.global, persistedProjectRoots); err != nil {
 		return err
 	}
 
@@ -515,7 +515,7 @@ WHERE installation_id=?`, missingSince, installID); err != nil {
 	return rows.Err()
 }
 
-func markMissingDriftGroups(tx *sql.Tx, seen map[string]bool) error {
+func markMissingDriftGroups(tx *sql.Tx, seen map[string]bool, includeGlobal bool, projectRoots []string) error {
 	rows, err := tx.Query(`SELECT group_id FROM discovery_drift_groups WHERE present=1`)
 	if err != nil {
 		return err
@@ -529,11 +529,48 @@ func markMissingDriftGroups(tx *sql.Tx, seen map[string]bool) error {
 		if seen[groupID] {
 			continue
 		}
+		inScope, err := driftGroupWithinScanScope(tx, groupID, includeGlobal, projectRoots)
+		if err != nil {
+			return err
+		}
+		if !inScope {
+			continue
+		}
 		if _, err := tx.Exec(`UPDATE discovery_drift_groups SET present=0 WHERE group_id=?`, groupID); err != nil {
 			return err
 		}
 	}
 	return rows.Err()
+}
+
+func driftGroupWithinScanScope(tx *sql.Tx, groupID string, includeGlobal bool, projectRoots []string) (bool, error) {
+	rows, err := tx.Query(`
+SELECT i.scope, i.source_path
+FROM discovery_drift_group_installations gi
+JOIN discovery_installations i ON i.installation_id = gi.installation_id
+WHERE gi.group_id = ?`, groupID)
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+	checked := false
+	for rows.Next() {
+		checked = true
+		var scope, sourcePath string
+		if err := rows.Scan(&scope, &sourcePath); err != nil {
+			return false, err
+		}
+		switch {
+		case scope == "global" && includeGlobal:
+		case scope == "project" && len(projectRoots) > 0 && pathUnderAny(sourcePath, projectRoots):
+		default:
+			return false, nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return false, err
+	}
+	return checked, nil
 }
 
 func pathUnderAny(path string, roots []string) bool {
