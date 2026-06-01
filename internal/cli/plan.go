@@ -53,10 +53,18 @@ type actionPlanFiles struct {
 }
 
 type actionPlanFile struct {
-	Path      string `json:"path"`
-	Source    string `json:"source,omitempty"`
-	Ownership string `json:"ownership"`
-	Reason    string `json:"reason"`
+	Path                string   `json:"path"`
+	Source              string   `json:"source,omitempty"`
+	Ownership           string   `json:"ownership"`
+	Reason              string   `json:"reason"`
+	CompatibilityStatus string   `json:"compatibility_status,omitempty"`
+	FollowUpActions     []string `json:"follow_up_actions,omitempty"`
+}
+
+type planCompatibilityResult struct {
+	Status          string
+	Reason          string
+	FollowUpActions []string
 }
 
 func runPlan(args []string, realStdout io.Writer, stderr io.Writer, gf globalFlags) int {
@@ -317,11 +325,6 @@ func planInstallGlobal(plan *actionPlan, inventory discoverOutput, installsByID 
 		plan.addBlocker("missing global target path for tool: " + rec.TargetToolID)
 	}
 	source := sources[0]
-	if ok, reason := planSourceCompatibleWithTool(source, rec.TargetToolID); !ok {
-		plan.addBlocker(reason + ": " + rec.TargetToolID)
-		plan.addSkip(source.SourcePath, source.SourcePath, ownershipLabel(source), "incompatible with target harness")
-		return
-	}
 	if source.Format != "skill_md" {
 		plan.addBlocker("global install only supports skill_md sources")
 		plan.addPreserve(source.SourcePath, source.SourcePath, ownershipLabel(source), "source format is not installable")
@@ -334,7 +337,15 @@ func planInstallGlobal(plan *actionPlan, inventory discoverOutput, installsByID 
 		return
 	}
 	target := filepath.Join(root, rec.SkillName)
+	compat := planSourceCompatibility(source, rec.TargetToolID)
+	if compat.Status != "installable" {
+		plan.addBlocker(compat.Status + ": " + compat.Reason)
+		plan.addSkip(target, source.SourcePath, ownershipLabel(source), compat.Reason)
+		plan.annotatePathCompatibility(target, compat)
+		return
+	}
 	plan.addTargetCreateOrUpdate(target, source.SourcePath, installsByID, rec.SkillName, rec.TargetToolID, "", "global install target")
+	plan.annotatePathCompatibility(target, compat)
 	if len(plan.Blockers) == 0 {
 		plan.addMetadataCreateOrUpdate(globalManifestPath(planManagerHome(), rec.TargetToolID), "global install manifest")
 	}
@@ -380,20 +391,21 @@ func planInstallProject(plan *actionPlan, projectsByID map[string]discoverProjec
 			plan.addBlocker("no source installation for project target: " + toolID)
 			continue
 		}
-		if ok, reason := planSourceCompatibleWithTool(source, toolID); !ok {
-			plan.addBlocker(reason + ": " + toolID)
-			plan.addSkip(source.SourcePath, source.SourcePath, ownershipLabel(source), "incompatible with target harness")
-			continue
-		}
-		if !ok {
-			continue
-		}
 		target := filepath.Join(project.RootPath, base, rec.SkillName)
+		compat := planSourceCompatibility(source, toolID)
+		if compat.Status != "installable" {
+			plan.addBlocker(compat.Status + ": " + compat.Reason)
+			plan.addSkip(target, source.SourcePath, ownershipLabel(source), compat.Reason)
+			plan.annotatePathCompatibility(target, compat)
+			continue
+		}
 		if samePlanPath(source.SourcePath, target) {
 			plan.addSkip(target, source.SourcePath, ownershipLabel(source), "source already present in project target")
+			plan.annotatePathCompatibility(target, compat)
 			continue
 		}
 		plan.addTargetCreateOrUpdate(target, source.SourcePath, installsByID, rec.SkillName, toolID, rec.TargetProjectID, "project install target")
+		plan.annotatePathCompatibility(target, compat)
 		if len(plan.Blockers) == 0 {
 			plan.addProjectMetadata(project.RootPath)
 		}
@@ -506,26 +518,110 @@ func bestPlanSourceForTool(sources []discoverInstallation, toolID string) discov
 	return discoverInstallation{}
 }
 
-func planSourceCompatibleWithTool(inst discoverInstallation, targetTool string) (bool, string) {
+func planSourceCompatibility(inst discoverInstallation, targetTool string) planCompatibilityResult {
 	if targetTool == "" {
-		return false, "missing target tool"
+		return planCompatibilityResult{Status: "unknown", Reason: "missing target tool"}
 	}
 	if inst.ToolID == targetTool {
-		return true, ""
+		return planCompatibilityResult{Status: "installable", Reason: "source already targets " + targetTool}
+	}
+	if hasPlanVariantForTool(inst, targetTool) {
+		return planCompatibilityResult{Status: "installable", Reason: "target-specific variant is available for " + targetTool}
 	}
 	if inst.ExclusiveToolID != "" {
 		if inst.ExclusiveToolID == targetTool {
-			return true, ""
+			return planCompatibilityResult{Status: "installable", Reason: "exclusive compatibility includes " + targetTool}
 		}
-		return false, "source compatibility does not include target tool"
+		return planCompatibilityResult{
+			Status:          "incompatible",
+			Reason:          fmt.Sprintf("source is exclusive to %s and has no %s variant", inst.ExclusiveToolID, targetTool),
+			FollowUpActions: planPortFollowUps(inst.SkillName, targetTool),
+		}
 	}
-	if len(inst.CompatibleToolIDs) == 0 {
+	if len(inst.CompatibleToolIDs) > 0 {
+		if stringSliceContains(inst.CompatibleToolIDs, targetTool) {
+			return planCompatibilityResult{Status: "installable", Reason: "declared compatibility includes " + targetTool}
+		}
+		return planCompatibilityResult{
+			Status:          "needs-port",
+			Reason:          fmt.Sprintf("declared compatibility does not include %s and no variant is available", targetTool),
+			FollowUpActions: planPortFollowUps(inst.SkillName, targetTool),
+		}
+	}
+	detected, ok := detectedPlanCompatibility(inst)
+	if !ok {
+		return planCompatibilityResult{Status: "installable", Reason: "no compatibility declaration; portable by default"}
+	}
+	switch detected.Mode {
+	case "exclusive":
+		if detected.Harness == targetTool {
+			return planCompatibilityResult{Status: "installable", Reason: "detector output is exclusive to " + targetTool}
+		}
+		return planCompatibilityResult{
+			Status:          "incompatible",
+			Reason:          fmt.Sprintf("detector output is exclusive to %s and no %s variant is available", detected.Harness, targetTool),
+			FollowUpActions: planPortFollowUps(inst.SkillName, targetTool),
+		}
+	case "compatible":
+		if stringSliceContains(detected.Harnesses, targetTool) {
+			return planCompatibilityResult{Status: "installable", Reason: "detector output includes " + targetTool}
+		}
+		return planCompatibilityResult{
+			Status:          "needs-port",
+			Reason:          fmt.Sprintf("detector output does not include %s and no variant is available", targetTool),
+			FollowUpActions: planPortFollowUps(inst.SkillName, targetTool),
+		}
+	case "portable", "":
+		return planCompatibilityResult{Status: "installable", Reason: "detector output is portable"}
+	default:
+		return planCompatibilityResult{Status: "unknown", Reason: "detector output has unknown compatibility mode: " + detected.Mode}
+	}
+}
+
+func hasPlanVariantForTool(inst discoverInstallation, targetTool string) bool {
+	if inst.SourcePath == "" || targetTool == "" {
+		return false
+	}
+	vf, ok, err := readVariants(inst.SourcePath)
+	if err != nil || !ok {
+		return false
+	}
+	chosen := selectVariantFile(vf, []string{targetTool})
+	if chosen == "" || chosen == "SKILL.md" {
+		return false
+	}
+	return fileExists(filepath.Join(inst.SourcePath, chosen))
+}
+
+func detectedPlanCompatibility(inst discoverInstallation) (compatibilityDeclaration, bool) {
+	contentPath := planSkillMarkdownPath(inst)
+	if !fileExists(contentPath) {
+		return compatibilityDeclaration{}, false
+	}
+	body, err := readSkillBody(contentPath)
+	if err != nil {
+		return compatibilityDeclaration{Mode: "unknown"}, true
+	}
+	detectors, err := loadDetectors()
+	if err != nil {
+		return compatibilityDeclaration{Mode: "unknown"}, true
+	}
+	return applyAutoClassification(detectCompatibility(detectors, body)), true
+}
+
+func planPortFollowUps(skillName, targetTool string) []string {
+	return []string{
+		fmt.Sprintf("skills-manager port %s --target %s", skillName, targetTool),
+		fmt.Sprintf("skills-manager variants %s", skillName),
+	}
+}
+
+func planSourceCompatibleWithTool(inst discoverInstallation, targetTool string) (bool, string) {
+	compat := planSourceCompatibility(inst, targetTool)
+	if compat.Status == "installable" {
 		return true, ""
 	}
-	if stringSliceContains(inst.CompatibleToolIDs, targetTool) {
-		return true, ""
-	}
-	return false, "source compatibility does not include target tool"
+	return false, compat.Reason
 }
 
 func (plan *actionPlan) addTargetCreateOrUpdate(target, source string, installsByID map[string]discoverInstallation, skillName, toolID, projectID, reason string) {
@@ -604,6 +700,22 @@ func (plan *actionPlan) addBlocker(reason string) {
 	}
 	plan.Blockers = append(plan.Blockers, reason)
 	sort.Strings(plan.Blockers)
+}
+
+func (plan *actionPlan) annotatePathCompatibility(path string, compat planCompatibilityResult) {
+	annotate := func(files []actionPlanFile) {
+		for i := range files {
+			if samePlanPath(files[i].Path, path) {
+				files[i].CompatibilityStatus = compat.Status
+				files[i].FollowUpActions = append([]string{}, compat.FollowUpActions...)
+			}
+		}
+	}
+	annotate(plan.Files.Create)
+	annotate(plan.Files.Update)
+	annotate(plan.Files.Preserve)
+	annotate(plan.Files.Skip)
+	annotate(plan.Files.Remove)
 }
 
 func (plan *actionPlan) sortFiles() {
