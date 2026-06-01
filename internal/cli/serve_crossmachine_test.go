@@ -28,10 +28,48 @@ machines:
   alpha:
     last_synced: 2026-05-24T10:00:00Z
     last_commit: abc123
+    inventory:
+      last_scan: 2026-05-24T10:00:00Z
+      snapshot_path: inventory-snapshots/alpha.json
+      inventory_digest: digest-alpha
+      tools_found: 2
+      global_skills: 2
+      project_local_skills: 1
   beta:
     last_synced: 2026-05-24T09:00:00Z
     last_commit: def456
+    inventory:
+      last_scan: 2026-05-24T09:00:00Z
+      snapshot_path: inventory-snapshots/beta.json
+      inventory_digest: digest-beta
+      tools_found: 2
+      global_skills: 2
+      project_local_skills: 0
 `)
+	writeFile(t, filepath.Join(libraryPath, "inventory-snapshots", "alpha.json"), `{
+  "schema_version": 1,
+  "machine": "alpha",
+  "generated_at": "2026-05-24T10:00:00Z",
+  "summary": {"inventory_digest": "digest-alpha", "tools_found": 2, "global_skills": 2, "project_local_skills": 1},
+  "installations": [
+    {"skill_name": "same", "tool_id": "claude", "scope": "global", "source_path": "$HOME/.claude/skills/same", "content_sha256": "aaa", "managed": true, "ownership": "manager"},
+    {"skill_name": "variant", "tool_id": "claude", "scope": "global", "source_path": "$HOME/.claude/skills/variant", "content_sha256": "111", "managed": true, "ownership": "manager"},
+    {"skill_name": "project-only", "tool_id": "codex", "scope": "project", "project_id": "proj-a", "source_path": "$HOME/projects/proj-a/.codex/skills/project-only", "content_sha256": "222", "managed": false, "ownership": "unmanaged"}
+  ],
+  "tools": [{"tool_id": "claude", "detected": true}, {"tool_id": "codex", "detected": true}],
+  "projects": [{"project_id": "proj-a", "root_path": "$HOME/projects/proj-a"}]
+}`)
+	writeFile(t, filepath.Join(libraryPath, "inventory-snapshots", "beta.json"), `{
+  "schema_version": 1,
+  "machine": "beta",
+  "generated_at": "2026-05-24T09:00:00Z",
+  "summary": {"inventory_digest": "digest-beta", "tools_found": 2, "global_skills": 2},
+  "installations": [
+    {"skill_name": "same", "tool_id": "claude", "scope": "global", "source_path": "$HOME/.claude/skills/same", "content_sha256": "aaa", "managed": true, "ownership": "manager"},
+    {"skill_name": "variant", "tool_id": "claude", "scope": "global", "source_path": "$HOME/.claude/skills/variant", "content_sha256": "999", "managed": true, "ownership": "manager"}
+  ],
+  "tools": [{"tool_id": "claude", "detected": true}, {"tool_id": "codex", "detected": true}]
+}`)
 	// Catalog has "present" but not "absent".
 	writeFile(t, filepath.Join(libraryPath, "present", "SKILL.md"), "---\nname: present\n---\n")
 	cat := catalog{Version: 1, Skills: []catalogSkill{{Name: "present"}}}
@@ -84,6 +122,21 @@ machines:
 	if names["beta"].Drift != "diverged" {
 		t.Fatalf("beta drift = %q, want diverged", names["beta"].Drift)
 	}
+	if names["alpha"].InventoryDrift != "in-sync" || names["beta"].InventoryDrift != "drifted" {
+		t.Fatalf("inventory drift = alpha:%q beta:%q", names["alpha"].InventoryDrift, names["beta"].InventoryDrift)
+	}
+	if names["alpha"].ToolsFound != 2 || names["alpha"].ProjectLocalSkills != 1 {
+		t.Fatalf("alpha inventory summary = %+v", names["alpha"])
+	}
+	if !hasInventoryFinding(cm.InventoryFindings, "same", "same") {
+		t.Fatalf("missing same finding: %+v", cm.InventoryFindings)
+	}
+	if !hasInventoryFinding(cm.InventoryFindings, "variant", "drifted") {
+		t.Fatalf("missing variant finding: %+v", cm.InventoryFindings)
+	}
+	if !hasInventoryFinding(cm.InventoryFindings, "project-only", "missing") {
+		t.Fatalf("missing project-only missing finding: %+v", cm.InventoryFindings)
+	}
 	// "absent" is locked by proj-a but not in the catalog → flagged missing.
 	var foundMissing bool
 	for _, m := range cm.MissingLockedSkills {
@@ -97,6 +150,15 @@ machines:
 	if !foundMissing {
 		t.Fatalf("expected proj-a to flag missing locked skill 'absent': %+v", cm.MissingLockedSkills)
 	}
+}
+
+func hasInventoryFinding(findings []triageInventoryFinding, skill, status string) bool {
+	for _, finding := range findings {
+		if finding.SkillName == skill && finding.Status == status {
+			return true
+		}
+	}
+	return false
 }
 
 func TestServeSyncRejectsMalformedBody(t *testing.T) {

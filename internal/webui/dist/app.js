@@ -939,22 +939,42 @@ async function renderCrossMachine(content) {
   } else {
     const table = el("table");
     table.appendChild(el("thead", null, [el("tr", null, [
-      el("th", { text: "Machine" }), el("th", { text: "Last synced" }), el("th", { text: "Commit" }), el("th", { text: "Drift" }),
+      el("th", { text: "Machine" }), el("th", { text: "Last scan" }), el("th", { text: "Tools" }),
+      el("th", { text: "Skills" }), el("th", { text: "Commit" }), el("th", { text: "Git drift" }), el("th", { text: "Inventory" }),
     ])]));
     const tbody = el("tbody");
     cm.machines.forEach((mm) => {
       const driftTone = mm.drift === "in-sync" ? "ok" : (mm.drift === "diverged" ? "warn" : "");
+      const invTone = mm.inventory_drift === "in-sync" ? "ok" : (mm.inventory_drift === "drifted" ? "warn" : "");
       tbody.appendChild(el("tr", null, [
         el("td", null, [el("span", { text: mm.name + (mm.current ? " (this)" : "") })]),
-        el("td", { text: mm.last_synced || "—" }),
+        el("td", { text: mm.last_scan || mm.last_synced || "—" }),
+        el("td", { text: String(mm.tools_found || 0) }),
+        el("td", { text: String((mm.global_skills || 0) + (mm.project_local_skills || 0)) }),
         el("td", { text: mm.last_commit || "—" }),
         el("td", null, [badge(mm.drift, driftTone)]),
+        el("td", null, [badge(mm.inventory_drift || "unknown", invTone)]),
       ]));
     });
     table.appendChild(tbody);
     machinePanel.appendChild(table);
   }
   content.appendChild(machinePanel);
+
+  const inventoryFindings = cm.inventory_findings || [];
+  const invPanel = el("section", { className: "panel" }, [el("div", { className: "panel-title", text: "Inventory drift by machine" })]);
+  if (!inventoryFindings.length) {
+    invPanel.appendChild(el("p", { className: "muted", text: "No cross-machine inventory snapshots to compare yet." }));
+  } else {
+    inventoryFindings.slice(0, 80).forEach((f) => invPanel.appendChild(el("div", { className: "activity-row" }, [
+      badge(f.status, f.status === "same" ? "ok" : "warn"),
+      el("div", null, [
+        el("div", { className: "row-title", text: f.skill_name }),
+        el("div", { className: "muted", text: (f.machines || []).join(", ") + " · " + (f.detail || "") }),
+      ]),
+    ])));
+  }
+  content.appendChild(invPanel);
 
   const missing = cm.missing_locked_skills || [];
   const mlPanel = el("section", { className: "panel" }, [el("div", { className: "panel-title", text: "Missing locked skills" })]);

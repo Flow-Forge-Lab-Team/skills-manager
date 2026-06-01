@@ -226,6 +226,43 @@ machines:
 	}
 }
 
+func TestSyncLibraryWritesSanitizedInventorySnapshot(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+	t.Setenv("SKILLS_MANAGER_MACHINE", "alpha")
+
+	var stdout, stderr bytes.Buffer
+	if code := Run([]string{"init-library", "--local-only"}, &stdout, &stderr); code != ExitSuccess {
+		t.Fatalf("init-library returned %d\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+	}
+	writeScanSkill(t, filepath.Join(home, ".claude", "skills"), "secret-safe", "---\nname: secret-safe\n---\n# Secret Safe\nOPENAI_API_KEY=sk-fixture-secret\n")
+	stdout.Reset()
+	stderr.Reset()
+	if code := Run([]string{"--json", "discover", "--global"}, &stdout, &stderr); code != ExitSuccess {
+		t.Fatalf("discover returned %d\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+	}
+	stdout.Reset()
+	stderr.Reset()
+	if code := Run([]string{"sync-library"}, &stdout, &stderr); code != ExitSuccess {
+		t.Fatalf("sync-library returned %d\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+	}
+
+	snapshot := readFile(t, filepath.Join(home, "library", "inventory-snapshots", "alpha.json"))
+	if strings.Contains(snapshot, home) {
+		t.Fatalf("snapshot leaked absolute home path:\n%s", snapshot)
+	}
+	if strings.Contains(snapshot, "sk-fixture-secret") {
+		t.Fatalf("snapshot leaked skill file contents:\n%s", snapshot)
+	}
+	assertStringContains(t, snapshot, "$HOME/.claude/skills/secret-safe")
+	assertStringContains(t, snapshot, `"inventory_digest"`)
+
+	machines := readFile(t, filepath.Join(home, "library", ".machines.yaml"))
+	assertStringContains(t, machines, "inventory_digest:")
+	assertStringContains(t, machines, "tools_found:")
+}
+
 func initBareRemote(t *testing.T) string {
 	t.Helper()
 	configureTestGitEnv(t)

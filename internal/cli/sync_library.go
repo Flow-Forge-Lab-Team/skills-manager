@@ -1,6 +1,9 @@
 package cli
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -20,8 +23,50 @@ type machinesFile struct {
 }
 
 type machineEntry struct {
-	LastSynced string `json:"last_synced,omitempty" yaml:"last_synced,omitempty"`
-	LastCommit string `json:"last_commit,omitempty" yaml:"last_commit,omitempty"`
+	LastSynced string                  `json:"last_synced,omitempty" yaml:"last_synced,omitempty"`
+	LastCommit string                  `json:"last_commit,omitempty" yaml:"last_commit,omitempty"`
+	Inventory  machineInventorySummary `json:"inventory,omitempty" yaml:"inventory,omitempty"`
+}
+
+type machineInventorySummary struct {
+	LastScan           string `json:"last_scan,omitempty" yaml:"last_scan,omitempty"`
+	SnapshotPath       string `json:"snapshot_path,omitempty" yaml:"snapshot_path,omitempty"`
+	InventoryDigest    string `json:"inventory_digest,omitempty" yaml:"inventory_digest,omitempty"`
+	ToolsFound         int    `json:"tools_found,omitempty" yaml:"tools_found,omitempty"`
+	GlobalSkills       int    `json:"global_skills,omitempty" yaml:"global_skills,omitempty"`
+	ProjectLocalSkills int    `json:"project_local_skills,omitempty" yaml:"project_local_skills,omitempty"`
+	DriftGroups        int    `json:"drift_groups,omitempty" yaml:"drift_groups,omitempty"`
+}
+
+type machineInventorySnapshot struct {
+	SchemaVersion int                       `json:"schema_version"`
+	Machine       string                    `json:"machine"`
+	GeneratedAt   string                    `json:"generated_at"`
+	Summary       machineInventorySummary   `json:"summary"`
+	Installations []machineInventoryInstall `json:"installations"`
+	Tools         []machineInventoryTool    `json:"tools"`
+	Projects      []machineInventoryProject `json:"projects,omitempty"`
+}
+
+type machineInventoryInstall struct {
+	SkillName     string `json:"skill_name"`
+	ToolID        string `json:"tool_id"`
+	Scope         string `json:"scope"`
+	ProjectID     string `json:"project_id,omitempty"`
+	SourcePath    string `json:"source_path"`
+	ContentSHA256 string `json:"content_sha256"`
+	Managed       bool   `json:"managed"`
+	Ownership     string `json:"ownership"`
+}
+
+type machineInventoryTool struct {
+	ToolID   string `json:"tool_id"`
+	Detected bool   `json:"detected"`
+}
+
+type machineInventoryProject struct {
+	ProjectID string `json:"project_id"`
+	RootPath  string `json:"root_path"`
 }
 
 func runInitLibrary(args []string, realStdout io.Writer, stderr io.Writer, gf globalFlags) int {
@@ -341,7 +386,11 @@ func runMachines(args []string, realStdout io.Writer, stderr io.Writer, gf globa
 		if name == current {
 			label += " (this)"
 		}
-		fmt.Fprintf(stdout, "%s  %s  %s\n", label, entry.LastCommit, entry.LastSynced)
+		inventory := ""
+		if entry.Inventory.InventoryDigest != "" {
+			inventory = fmt.Sprintf("  tools:%d global:%d project:%d drift:%d", entry.Inventory.ToolsFound, entry.Inventory.GlobalSkills, entry.Inventory.ProjectLocalSkills, entry.Inventory.DriftGroups)
+		}
+		fmt.Fprintf(stdout, "%s  %s  %s%s\n", label, entry.LastCommit, entry.LastSynced, inventory)
 	}
 	return ExitSuccess
 }
@@ -494,11 +543,110 @@ func updateMachine(library string) error {
 	if out, err := runGit(library, "rev-parse", "--short", "HEAD"); err == nil {
 		commit = strings.TrimSpace(out)
 	}
+	inventory, err := writeMachineInventorySnapshot(library)
+	if err != nil {
+		return err
+	}
 	machines.Machines[currentMachineName()] = machineEntry{
 		LastSynced: time.Now().UTC().Format(time.RFC3339),
 		LastCommit: commit,
+		Inventory:  inventory,
 	}
 	return writeMachines(path, machines)
+}
+
+func writeMachineInventorySnapshot(library string) (machineInventorySummary, error) {
+	home := filepath.Dir(library)
+	inventory, err := loadDiscoverOutputFromState(home)
+	if err != nil {
+		return machineInventorySummary{}, err
+	}
+	machine := currentMachineName()
+	snapshot := machineInventorySnapshot{
+		SchemaVersion: 1,
+		Machine:       machine,
+		GeneratedAt:   time.Now().UTC().Format(time.RFC3339),
+		Installations: []machineInventoryInstall{},
+		Tools:         []machineInventoryTool{},
+		Projects:      []machineInventoryProject{},
+	}
+	for _, inst := range inventory.Installations {
+		snapshot.Installations = append(snapshot.Installations, machineInventoryInstall{
+			SkillName:     inst.SkillName,
+			ToolID:        inst.ToolID,
+			Scope:         inst.Scope,
+			ProjectID:     inst.ProjectID,
+			SourcePath:    normalizeSnapshotPath(home, inst.SourcePath),
+			ContentSHA256: inst.ContentSHA256,
+			Managed:       inst.Managed,
+			Ownership:     inst.Ownership,
+		})
+	}
+	for _, tool := range inventory.Tools {
+		snapshot.Tools = append(snapshot.Tools, machineInventoryTool{ToolID: tool.ToolID, Detected: tool.Detected})
+	}
+	for _, project := range inventory.Projects {
+		snapshot.Projects = append(snapshot.Projects, machineInventoryProject{
+			ProjectID: project.ProjectID,
+			RootPath:  normalizeSnapshotPath(home, project.RootPath),
+		})
+	}
+	sort.Slice(snapshot.Installations, func(i, j int) bool {
+		if snapshot.Installations[i].SkillName != snapshot.Installations[j].SkillName {
+			return snapshot.Installations[i].SkillName < snapshot.Installations[j].SkillName
+		}
+		if snapshot.Installations[i].ToolID != snapshot.Installations[j].ToolID {
+			return snapshot.Installations[i].ToolID < snapshot.Installations[j].ToolID
+		}
+		return snapshot.Installations[i].SourcePath < snapshot.Installations[j].SourcePath
+	})
+	sort.Slice(snapshot.Tools, func(i, j int) bool { return snapshot.Tools[i].ToolID < snapshot.Tools[j].ToolID })
+	sort.Slice(snapshot.Projects, func(i, j int) bool { return snapshot.Projects[i].ProjectID < snapshot.Projects[j].ProjectID })
+	summary := machineInventorySummary{
+		LastScan:           inventory.ScannedAt,
+		SnapshotPath:       filepath.ToSlash(filepath.Join("inventory-snapshots", machine+".json")),
+		ToolsFound:         inventory.Summary.ToolsFound,
+		GlobalSkills:       inventory.Summary.GlobalSkills,
+		ProjectLocalSkills: inventory.Summary.ProjectLocalSkills,
+		DriftGroups:        inventory.Summary.DriftGroups,
+	}
+	raw, err := json.Marshal(snapshot.Installations)
+	if err != nil {
+		return machineInventorySummary{}, err
+	}
+	sum := sha256.Sum256(raw)
+	summary.InventoryDigest = hex.EncodeToString(sum[:])
+	snapshot.Summary = summary
+	target := filepath.Join(library, summary.SnapshotPath)
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		return machineInventorySummary{}, err
+	}
+	data, err := json.MarshalIndent(snapshot, "", "  ")
+	if err != nil {
+		return machineInventorySummary{}, err
+	}
+	data = append(data, '\n')
+	if err := os.WriteFile(target, data, 0o644); err != nil {
+		return machineInventorySummary{}, err
+	}
+	return summary, nil
+}
+
+func normalizeSnapshotPath(home, raw string) string {
+	if raw == "" {
+		return ""
+	}
+	absHome, homeErr := filepath.Abs(home)
+	absRaw, rawErr := filepath.Abs(raw)
+	if homeErr == nil && rawErr == nil {
+		if rel, err := filepath.Rel(absHome, absRaw); err == nil && rel != "." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && rel != ".." {
+			return filepath.ToSlash(filepath.Join("$HOME", rel))
+		}
+		if absRaw == absHome {
+			return "$HOME"
+		}
+	}
+	return filepath.ToSlash(filepath.Join("$PATH", filepath.Base(raw)))
 }
 
 func readMachines(path string) (machinesFile, error) {
