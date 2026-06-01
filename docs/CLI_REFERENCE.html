@@ -193,6 +193,21 @@ stable <code>report</code> object with <code>facts</code>,
 <code>review_facts</code>, <code>coverage_gaps</code>, and
 <code>recommendations</code>. Missing tools are coverage gaps, not
 errors.</p>
+<h3 id="skills-manager-plan"><code>skills-manager plan</code></h3>
+<p>Build dry-run action plans from saved discovery recommendations. This
+command does not write to tool, project, or library paths.</p>
+<pre><code>skills-manager discover --global --projects ~/dev --json &gt; discover.json
+skills-manager plan --inventory discover.json
+skills-manager plan --inventory discover.json --recommendation rec-abc123 --json</code></pre>
+<p>Plans support ingest, global install, project install, manager-owned
+removal, ignore, and drift review recommendations. JSON output is
+dashboard-oriented: each plan includes status, blockers, recommendation
+metadata, and file buckets for <code>create</code>, <code>update</code>,
+<code>preserve</code>, <code>skip</code>, and <code>remove</code>.</p>
+<p>The planner fails closed when it cannot prove target compatibility,
+cannot find a target path, or would collide with an unmanaged user file.
+Unmanaged files are preserved; only manager-owned installs appear in
+<code>remove</code>.</p>
 <h3 id="skills-manager-assess"><code>skills-manager assess</code></h3>
 <p>Run an optional cached AI advisory assessment for one library skill,
 one project, or a saved discovery inventory subset. Deterministic
@@ -282,16 +297,16 @@ skills-manager check --source github      # only check GitHub-sourced skills
 skills-manager check --since 7d           # only check skills last polled more than 7d ago
 skills-manager check --non-interactive --json   # for cron / scheduled use</code></pre>
 <p>Output (JSON mode):</p>
-<div class="sourceCode" id="cb18"><pre
-class="sourceCode json"><code class="sourceCode json"><span id="cb18-1"><a href="#cb18-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span></span>
-<span id="cb18-2"><a href="#cb18-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;checked_at&quot;</span><span class="fu">:</span> <span class="st">&quot;2026-05-22T14:30:00Z&quot;</span><span class="fu">,</span></span>
-<span id="cb18-3"><a href="#cb18-3" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;skills_checked&quot;</span><span class="fu">:</span> <span class="dv">251</span><span class="fu">,</span></span>
-<span id="cb18-4"><a href="#cb18-4" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;updates_available&quot;</span><span class="fu">:</span> <span class="dv">4</span><span class="fu">,</span></span>
-<span id="cb18-5"><a href="#cb18-5" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;errors&quot;</span><span class="fu">:</span> <span class="ot">[]</span><span class="fu">,</span></span>
-<span id="cb18-6"><a href="#cb18-6" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;updates&quot;</span><span class="fu">:</span> <span class="ot">[</span></span>
-<span id="cb18-7"><a href="#cb18-7" aria-hidden="true" tabindex="-1"></a>    <span class="fu">{</span><span class="dt">&quot;name&quot;</span><span class="fu">:</span> <span class="st">&quot;pdf&quot;</span><span class="fu">,</span> <span class="dt">&quot;from&quot;</span><span class="fu">:</span> <span class="st">&quot;1.4.2&quot;</span><span class="fu">,</span> <span class="dt">&quot;to&quot;</span><span class="fu">:</span> <span class="st">&quot;1.5.0&quot;</span><span class="fu">,</span> <span class="dt">&quot;source&quot;</span><span class="fu">:</span> <span class="st">&quot;marketplace&quot;</span><span class="fu">}</span></span>
-<span id="cb18-8"><a href="#cb18-8" aria-hidden="true" tabindex="-1"></a>  <span class="ot">]</span></span>
-<span id="cb18-9"><a href="#cb18-9" aria-hidden="true" tabindex="-1"></a><span class="fu">}</span></span></code></pre></div>
+<div class="sourceCode" id="cb19"><pre
+class="sourceCode json"><code class="sourceCode json"><span id="cb19-1"><a href="#cb19-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span></span>
+<span id="cb19-2"><a href="#cb19-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;checked_at&quot;</span><span class="fu">:</span> <span class="st">&quot;2026-05-22T14:30:00Z&quot;</span><span class="fu">,</span></span>
+<span id="cb19-3"><a href="#cb19-3" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;skills_checked&quot;</span><span class="fu">:</span> <span class="dv">251</span><span class="fu">,</span></span>
+<span id="cb19-4"><a href="#cb19-4" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;updates_available&quot;</span><span class="fu">:</span> <span class="dv">4</span><span class="fu">,</span></span>
+<span id="cb19-5"><a href="#cb19-5" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;errors&quot;</span><span class="fu">:</span> <span class="ot">[]</span><span class="fu">,</span></span>
+<span id="cb19-6"><a href="#cb19-6" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;updates&quot;</span><span class="fu">:</span> <span class="ot">[</span></span>
+<span id="cb19-7"><a href="#cb19-7" aria-hidden="true" tabindex="-1"></a>    <span class="fu">{</span><span class="dt">&quot;name&quot;</span><span class="fu">:</span> <span class="st">&quot;pdf&quot;</span><span class="fu">,</span> <span class="dt">&quot;from&quot;</span><span class="fu">:</span> <span class="st">&quot;1.4.2&quot;</span><span class="fu">,</span> <span class="dt">&quot;to&quot;</span><span class="fu">:</span> <span class="st">&quot;1.5.0&quot;</span><span class="fu">,</span> <span class="dt">&quot;source&quot;</span><span class="fu">:</span> <span class="st">&quot;marketplace&quot;</span><span class="fu">}</span></span>
+<span id="cb19-8"><a href="#cb19-8" aria-hidden="true" tabindex="-1"></a>  <span class="ot">]</span></span>
+<span id="cb19-9"><a href="#cb19-9" aria-hidden="true" tabindex="-1"></a><span class="fu">}</span></span></code></pre></div>
 <h3
 id="skills-manager-update-skill"><code>skills-manager update [&lt;skill&gt;]</code></h3>
 <p>Show pending updates (interactive review). Or accept/reject specific
@@ -479,7 +494,8 @@ id="skills-manager---version"><code>skills-manager --version</code></h3>
 <code>set</code>, <code>remove</code>, <code>purge</code></p>
 <p>Added in v0.3: <code>serve</code>, <code>watch</code> (plus UI
 integration commands)</p>
-<p>Added in v1.0: <code>port</code>, <code>cleanup</code></p>
+<p>Added in v1.0: <code>port</code>, <code>cleanup</code>,
+<code>plan</code></p>
     <footer class="doc-footer">
       <span>skills-manager · design doc</span>
       <span><a href="CLI_REFERENCE.md">view source (.md)</a></span>
