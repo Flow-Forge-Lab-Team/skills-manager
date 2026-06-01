@@ -76,6 +76,32 @@ func TestDiscoverGlobalReportsSkillsAndMissingTools(t *testing.T) {
 	}
 }
 
+func TestDiscoverGlobalHashesFullSkillDirectories(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("SKILLS_MANAGER_HOME", filepath.Join(home, ".skills-manager"))
+
+	skillMd := "---\nname: multi\n---\n# Multi\n"
+	writeScanSkill(t, filepath.Join(home, ".claude", "skills"), "multi", skillMd)
+	writeScanSkill(t, filepath.Join(home, ".codex", "skills"), "multi", skillMd)
+	writeFile(t, filepath.Join(home, ".claude", "skills", "multi", "scripts", "run.sh"), "echo claude\n")
+	writeFile(t, filepath.Join(home, ".codex", "skills", "multi", "scripts", "run.sh"), "echo codex\n")
+
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{"--json", "discover", "--global"}, &stdout, &stderr)
+	if code != ExitSuccess {
+		t.Fatalf("code = %d, want %d\nstderr:\n%s", code, ExitSuccess, stderr.String())
+	}
+
+	var got discoverOutput
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal discover output: %v\n%s", err, stdout.String())
+	}
+	if !hasDiscoverDriftGroup(got.DriftGroups, "same_name_different_hash", "multi") {
+		t.Fatalf("missing helper-file drift group: %+v", got.DriftGroups)
+	}
+}
+
 func TestDiscoverProjectsPrunesGeneratedDirs(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -332,6 +358,15 @@ func hasDiscoverToolPattern(tools []discoverTool, toolID, pattern string) bool {
 func hasDiscoverOwnership(installs []discoverInstallation, toolID, skillName string, managed bool, ownership string) bool {
 	for _, inst := range installs {
 		if inst.ToolID == toolID && inst.SkillName == skillName && inst.Managed == managed && inst.Ownership == ownership {
+			return true
+		}
+	}
+	return false
+}
+
+func hasDiscoverDriftGroup(groups []discoverDriftGroup, groupType, skillName string) bool {
+	for _, group := range groups {
+		if group.GroupType == groupType && group.SkillName == skillName {
 			return true
 		}
 	}

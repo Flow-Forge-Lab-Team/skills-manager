@@ -119,8 +119,9 @@ Fields:
 - `scope`: `global` or `project`.
 - `project_id`: present only for project-local findings.
 - `source_path`: file or directory that contains the instruction content.
-- `content_path`: exact file hashed when the source is a directory.
-- `content_sha256`: exact content identity for the instruction file.
+- `content_path`: exact file or directory hashed for content identity.
+- `content_sha256`: exact content identity for the instruction file or skill
+  directory.
 - `content_size_bytes`: size of hashed content.
 - `modified_at`: filesystem modification time when available.
 - `managed`: whether the manager has manifest evidence that it created this

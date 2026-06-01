@@ -555,7 +555,7 @@ func discoverOneFile(root discoverRoot, scope, projectID, basePath, skillName st
 }
 
 func discoverInstallFromFile(root discoverRoot, scope, projectID, basePath, skillName, sourcePath, contentPath string) (discoverInstallation, bool) {
-	hash, size, err := hashFile(contentPath)
+	hash, size, hashedPath, err := hashDiscoverContent(sourcePath, contentPath)
 	if err != nil {
 		return discoverInstallation{}, false
 	}
@@ -571,7 +571,7 @@ func discoverInstallFromFile(root discoverRoot, scope, projectID, basePath, skil
 		Scope:            scope,
 		ProjectID:        projectID,
 		SourcePath:       sourcePath,
-		ContentPath:      contentPath,
+		ContentPath:      hashedPath,
 		ContentSHA256:    hash,
 		ContentSizeBytes: size,
 		ModifiedAt:       modified,
@@ -580,6 +580,15 @@ func discoverInstallFromFile(root discoverRoot, scope, projectID, basePath, skil
 		Format:           root.format,
 		Present:          true,
 	}, true
+}
+
+func hashDiscoverContent(sourcePath, contentPath string) (string, int64, string, error) {
+	if info, err := os.Stat(sourcePath); err == nil && info.IsDir() {
+		hash, size, err := hashDirContent(sourcePath)
+		return hash, size, sourcePath, err
+	}
+	hash, size, err := hashFile(contentPath)
+	return hash, size, contentPath, err
 }
 
 func buildDiscoverDriftGroups(installs []discoverInstallation) []discoverDriftGroup {
@@ -766,6 +775,40 @@ func hashFile(path string) (string, int64, error) {
 		return "", 0, err
 	}
 	return hex.EncodeToString(hash.Sum(nil)), size, nil
+}
+
+func hashDirContent(path string) (string, int64, error) {
+	hash := sha256.New()
+	var total int64
+	err := filepath.WalkDir(path, func(current string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		if entry.Type()&os.ModeSymlink != 0 {
+			return nil
+		}
+		rel, err := filepath.Rel(path, current)
+		if err != nil {
+			return err
+		}
+		data, err := os.ReadFile(current)
+		if err != nil {
+			return err
+		}
+		hash.Write([]byte(filepath.ToSlash(rel)))
+		hash.Write([]byte{0})
+		hash.Write(data)
+		hash.Write([]byte{0})
+		total += int64(len(data))
+		return nil
+	})
+	if err != nil {
+		return "", 0, err
+	}
+	return hex.EncodeToString(hash.Sum(nil)), total, nil
 }
 
 func shortHash(value string) string {
