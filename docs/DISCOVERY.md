@@ -144,6 +144,10 @@ Fields:
 - `ownership`: `manager`, `unmanaged`, or `unknown`.
 - `format`: `skill_md`, `cursor_rule`, `github_instruction`, `agents_md`, or
   `unknown`.
+- `compatible_tool_ids`: optional normalized compatibility declarations parsed
+  from `SKILL.md` frontmatter.
+- `exclusive_tool_id`: optional exclusive harness declaration parsed from
+  `SKILL.md` frontmatter.
 - `present`: false when a previously persisted installation is no longer found.
 
 ### Content hash
@@ -183,6 +187,7 @@ Fields:
 - `recommendation_id`
 - `kind`: `install_global`, `install_project`, `ingest`, `remove`,
   `ignore`, `review_drift`, or `needs_port`
+- `title`: short human-readable label for summary views
 - `confidence`: `high`, `medium`, or `low`
 - `reason`: human-readable explanation tied to inventory facts
 - `source_installation_ids`
@@ -191,6 +196,29 @@ Fields:
 - `requires_plan`: always true for write-capable recommendations
 
 Recommendations do not write files. They feed dry-run action plans.
+
+The deterministic engine emits conservative candidates only from exact
+inventory facts:
+
+- `review_drift` for same-name drift, duplicate content, and global/project
+  overlap groups.
+- `ingest` for unmanaged installations discovered on disk.
+- `install_global` when a globally installed skill is absent from another
+  detected global skill tool, compatibility allows the target, and the target
+  has requested/on-demand loading behavior.
+- Global coverage uses effective tool visibility, not only duplicate physical
+  installs. For example, Grok can load global Claude skills, so a skill in
+  `~/.claude/skills` is not treated as absent from Grok when compatibility
+  allows Grok.
+- `needs_port` when compatibility declarations block a target tool.
+- `ignore` when the only target has unknown or always-loaded context cost and
+  should not receive an automatic global-install recommendation.
+- `ignore` for Codex global gaps while discovery only models the legacy
+  `~/.codex/skills` root instead of the documented `.agents/skills` root.
+- `install_project` when the same project-local skill already appears in
+  multiple project harnesses and future plans should preserve project scope.
+- `remove` only as a low-confidence duplicate-content candidate; it still
+  requires a dry-run plan before any file is changed.
 
 Recommendation confidence must account for tool-specific loading cost. Use
 [LOADING_COSTS.md](LOADING_COSTS.md) to decide whether a finding is safe to

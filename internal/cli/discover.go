@@ -35,20 +35,22 @@ type discoverProject struct {
 }
 
 type discoverInstallation struct {
-	InstallationID   string `json:"installation_id"`
-	SkillName        string `json:"skill_name"`
-	ToolID           string `json:"tool_id"`
-	Scope            string `json:"scope"`
-	ProjectID        string `json:"project_id,omitempty"`
-	SourcePath       string `json:"source_path"`
-	ContentPath      string `json:"content_path"`
-	ContentSHA256    string `json:"content_sha256"`
-	ContentSizeBytes int64  `json:"content_size_bytes"`
-	ModifiedAt       string `json:"modified_at,omitempty"`
-	Managed          bool   `json:"managed"`
-	Ownership        string `json:"ownership"`
-	Format           string `json:"format"`
-	Present          bool   `json:"present"`
+	InstallationID    string   `json:"installation_id"`
+	SkillName         string   `json:"skill_name"`
+	ToolID            string   `json:"tool_id"`
+	Scope             string   `json:"scope"`
+	ProjectID         string   `json:"project_id,omitempty"`
+	SourcePath        string   `json:"source_path"`
+	ContentPath       string   `json:"content_path"`
+	ContentSHA256     string   `json:"content_sha256"`
+	ContentSizeBytes  int64    `json:"content_size_bytes"`
+	ModifiedAt        string   `json:"modified_at,omitempty"`
+	Managed           bool     `json:"managed"`
+	Ownership         string   `json:"ownership"`
+	Format            string   `json:"format"`
+	CompatibleToolIDs []string `json:"compatible_tool_ids,omitempty"`
+	ExclusiveToolID   string   `json:"exclusive_tool_id,omitempty"`
+	Present           bool     `json:"present"`
 }
 
 type discoverDriftGroup struct {
@@ -72,10 +74,10 @@ type discoverSummary struct {
 }
 
 type discoverReport struct {
-	Facts           discoverSummary       `json:"facts"`
-	ReviewFacts     []discoverReportItem  `json:"review_facts"`
-	CoverageGaps    []discoverCoverageGap `json:"coverage_gaps"`
-	Recommendations []discoverReportItem  `json:"recommendations"`
+	Facts           discoverSummary          `json:"facts"`
+	ReviewFacts     []discoverReportItem     `json:"review_facts"`
+	CoverageGaps    []discoverCoverageGap    `json:"coverage_gaps"`
+	Recommendations []discoverRecommendation `json:"recommendations"`
 }
 
 type discoverReportItem struct {
@@ -95,6 +97,19 @@ type discoverCoverageGap struct {
 	ToolID         string   `json:"tool_id,omitempty"`
 	PresentToolIDs []string `json:"present_tool_ids,omitempty"`
 	MissingToolIDs []string `json:"missing_tool_ids,omitempty"`
+}
+
+type discoverRecommendation struct {
+	RecommendationID      string   `json:"recommendation_id"`
+	Kind                  string   `json:"kind"`
+	Title                 string   `json:"title"`
+	Reason                string   `json:"reason"`
+	Confidence            string   `json:"confidence"`
+	SkillName             string   `json:"skill_name,omitempty"`
+	SourceInstallationIDs []string `json:"source_installation_ids,omitempty"`
+	TargetToolID          string   `json:"target_tool_id,omitempty"`
+	TargetProjectID       string   `json:"target_project_id,omitempty"`
+	RequiresPlan          bool     `json:"requires_plan"`
 }
 
 type discoverOutput struct {
@@ -975,10 +990,18 @@ func discoverSkillDir(root discoverRoot, scope, projectID, basePath string) []di
 			return nil
 		}
 		skillName := filepath.Base(path)
-		if decl, _, err := parseSkillFrontmatterFull(contentPath); err == nil && decl.name != "" {
-			skillName = decl.name
+		var compatible []string
+		exclusive := ""
+		if decl, _, err := parseSkillFrontmatterFull(contentPath); err == nil {
+			if decl.name != "" {
+				skillName = decl.name
+			}
+			compatible = normalizedDiscoverToolIDs(decl.compatible)
+			exclusive = normalizedDiscoverToolID(decl.exclusive)
 		}
 		if inst, ok := discoverInstallFromFile(root, scope, projectID, basePath, skillName, sourcePath, contentPath); ok {
+			inst.CompatibleToolIDs = compatible
+			inst.ExclusiveToolID = exclusive
 			installs = append(installs, inst)
 		}
 		if d.IsDir() {
@@ -1259,7 +1282,7 @@ func buildDiscoverReport(out discoverOutput) discoverReport {
 		Facts:           out.Summary,
 		ReviewFacts:     []discoverReportItem{},
 		CoverageGaps:    []discoverCoverageGap{},
-		Recommendations: []discoverReportItem{},
+		Recommendations: []discoverRecommendation{},
 	}
 	installsByID := map[string]discoverInstallation{}
 	for _, inst := range out.Installations {
@@ -1287,6 +1310,7 @@ func buildDiscoverReport(out discoverOutput) discoverReport {
 		})
 	}
 	report.CoverageGaps = append(report.CoverageGaps, discoverGlobalSkillCoverageGaps(out)...)
+	report.Recommendations = buildDiscoverRecommendations(out, installsByID, report.CoverageGaps)
 	sort.Slice(report.ReviewFacts, func(i, j int) bool {
 		if report.ReviewFacts[i].Kind != report.ReviewFacts[j].Kind {
 			return report.ReviewFacts[i].Kind < report.ReviewFacts[j].Kind
@@ -1305,7 +1329,269 @@ func buildDiscoverReport(out discoverOutput) discoverReport {
 		}
 		return report.CoverageGaps[i].ToolID < report.CoverageGaps[j].ToolID
 	})
+	sortDiscoverRecommendations(report.Recommendations)
 	return report
+}
+
+func buildDiscoverRecommendations(out discoverOutput, installsByID map[string]discoverInstallation, gaps []discoverCoverageGap) []discoverRecommendation {
+	var recs []discoverRecommendation
+	globalInstallBlocked := map[string]bool{}
+	for _, group := range out.DriftGroups {
+		if group.SkillName != "" && (group.GroupType == "same_name_different_hash" || group.GroupType == "global_project_overlap") {
+			globalInstallBlocked[group.SkillName] = true
+		}
+		recs = append(recs, newDiscoverRecommendation("review_drift", group.SkillName, "", "", group.InstallationIDs, "high", discoverRecommendationTitle("review_drift", group.SkillName, ""), discoverGroupDetail(group, installsByID)))
+		if group.GroupType == "same_hash_different_name" {
+			recs = append(recs, newDiscoverRecommendation("remove", group.SkillName, "", "", group.InstallationIDs, "low", "Review duplicate removal: "+shortDisplayHash(group.ContentSHA256), "Exact bytes are installed under different names; generate a dry-run plan before removing any copy."))
+		}
+	}
+
+	for _, inst := range out.Installations {
+		if !inst.Managed {
+			confidence := discoverContextConfidence(inst.ToolID, inst.Format)
+			reason := fmt.Sprintf("%s/%s is unmanaged inventory; ingest would first create a dry-run plan and preserve the source path.", inst.ToolID, inst.Scope)
+			recs = append(recs, newDiscoverRecommendation("ingest", inst.SkillName, "", inst.ProjectID, []string{inst.InstallationID}, confidence, "Ingest unmanaged skill: "+inst.SkillName, reason))
+		}
+	}
+
+	for _, gap := range gaps {
+		if gap.Kind != "global_skill_absent_from_detected_tool" {
+			continue
+		}
+		if globalInstallBlocked[gap.SkillName] {
+			continue
+		}
+		sources := sourceInstallationsForSkill(out.Installations, gap.SkillName, gap.PresentToolIDs, "global")
+		sourceIDs := installationIDs(sources)
+		if len(sourceIDs) == 0 {
+			continue
+		}
+		for _, targetTool := range gap.MissingToolIDs {
+			source := bestSourceForTarget(sources, targetTool)
+			if source.InstallationID == "" {
+				continue
+			}
+			if !installationCompatibleWithTool(source, targetTool) {
+				reason := fmt.Sprintf("%s declares compatibility that does not include %s; port and validate before install.", gap.SkillName, targetTool)
+				recs = append(recs, newDiscoverRecommendation("needs_port", gap.SkillName, targetTool, "", []string{source.InstallationID}, "high", discoverRecommendationTitle("needs_port", gap.SkillName, targetTool), reason))
+				continue
+			}
+			if targetTool == "codex" {
+				reason := fmt.Sprintf("%s is absent from codex, but the discovered Codex global root is legacy ~/.codex/skills; ignore until the documented .agents/skills target is modeled.", gap.SkillName)
+				recs = append(recs, newDiscoverRecommendation("ignore", gap.SkillName, targetTool, "", []string{source.InstallationID}, "low", discoverRecommendationTitle("ignore", gap.SkillName, targetTool), reason))
+				continue
+			}
+			if discoverToolContextCost(targetTool, source.Format) != "low" {
+				reason := fmt.Sprintf("%s is absent from %s, but %s has unknown or always-loaded context cost; ignore until manually validated.", gap.SkillName, targetTool, targetTool)
+				recs = append(recs, newDiscoverRecommendation("ignore", gap.SkillName, targetTool, "", []string{source.InstallationID}, "low", discoverRecommendationTitle("ignore", gap.SkillName, targetTool), reason))
+				continue
+			}
+			confidence := discoverContextConfidence(targetTool, source.Format)
+			reason := fmt.Sprintf("%s is visible in %s and absent from %s; %s has requested/on-demand loading cost, so a global install can be planned safely.", gap.SkillName, strings.Join(gap.PresentToolIDs, ", "), targetTool, targetTool)
+			recs = append(recs, newDiscoverRecommendation("install_global", gap.SkillName, targetTool, "", []string{source.InstallationID}, confidence, discoverRecommendationTitle("install_global", gap.SkillName, targetTool), reason))
+		}
+	}
+
+	recs = append(recs, discoverProjectInstallRecommendations(out.Installations)...)
+	return dedupeDiscoverRecommendations(recs)
+}
+
+func discoverProjectInstallRecommendations(installs []discoverInstallation) []discoverRecommendation {
+	byProjectSkill := map[string][]discoverInstallation{}
+	for _, inst := range installs {
+		if inst.Scope != "project" {
+			continue
+		}
+		key := inst.ProjectID + "|" + inst.SkillName
+		byProjectSkill[key] = append(byProjectSkill[key], inst)
+	}
+	var recs []discoverRecommendation
+	for _, group := range byProjectSkill {
+		toolIDs := map[string]bool{}
+		for _, inst := range group {
+			toolIDs[inst.ToolID] = true
+		}
+		if len(toolIDs) < 2 {
+			continue
+		}
+		sort.Slice(group, func(i, j int) bool { return group[i].InstallationID < group[j].InstallationID })
+		sourceIDs := installationIDs(group)
+		targets := sortedBoolKeys(toolIDs)
+		reason := fmt.Sprintf("%s appears in multiple project-local harnesses (%s); keep future installs project-local unless a dry-run plan proves global utility.", group[0].SkillName, strings.Join(targets, ", "))
+		recs = append(recs, newDiscoverRecommendation("install_project", group[0].SkillName, "", group[0].ProjectID, sourceIDs, "medium", "Keep project-local coverage: "+group[0].SkillName, reason))
+	}
+	return recs
+}
+
+func newDiscoverRecommendation(kind, skillName, targetToolID, targetProjectID string, sourceIDs []string, confidence, title, reason string) discoverRecommendation {
+	sourceIDs = append([]string{}, sourceIDs...)
+	sort.Strings(sourceIDs)
+	seed := strings.Join([]string{kind, skillName, targetToolID, targetProjectID, strings.Join(sourceIDs, ","), reason}, "|")
+	return discoverRecommendation{
+		RecommendationID:      "rec-" + shortHash(seed),
+		Kind:                  kind,
+		Title:                 title,
+		Reason:                reason,
+		Confidence:            confidence,
+		SkillName:             skillName,
+		SourceInstallationIDs: sourceIDs,
+		TargetToolID:          targetToolID,
+		TargetProjectID:       targetProjectID,
+		RequiresPlan:          true,
+	}
+}
+
+func discoverRecommendationTitle(kind, skillName, targetToolID string) string {
+	switch kind {
+	case "install_global":
+		return fmt.Sprintf("Install globally: %s -> %s", skillName, targetToolID)
+	case "needs_port":
+		return fmt.Sprintf("Port before install: %s -> %s", skillName, targetToolID)
+	case "ignore":
+		return fmt.Sprintf("Ignore global gap: %s -> %s", skillName, targetToolID)
+	case "review_drift":
+		if skillName == "" {
+			return "Review duplicate content"
+		}
+		return "Review drift: " + skillName
+	default:
+		return kind + ": " + skillName
+	}
+}
+
+func sourceInstallationsForSkill(installs []discoverInstallation, skillName string, toolIDs []string, scope string) []discoverInstallation {
+	tools := map[string]bool{}
+	for _, toolID := range toolIDs {
+		tools[toolID] = true
+	}
+	var sources []discoverInstallation
+	for _, inst := range installs {
+		if inst.SkillName == skillName && inst.Scope == scope && tools[inst.ToolID] {
+			sources = append(sources, inst)
+		}
+	}
+	sort.Slice(sources, func(i, j int) bool { return sources[i].InstallationID < sources[j].InstallationID })
+	return sources
+}
+
+func bestSourceForTarget(sources []discoverInstallation, targetTool string) discoverInstallation {
+	for _, source := range sources {
+		if installationCompatibleWithTool(source, targetTool) {
+			return source
+		}
+	}
+	if len(sources) > 0 {
+		return sources[0]
+	}
+	return discoverInstallation{}
+}
+
+func installationCompatibleWithTool(inst discoverInstallation, targetTool string) bool {
+	if inst.ExclusiveToolID != "" {
+		return inst.ExclusiveToolID == targetTool
+	}
+	if len(inst.CompatibleToolIDs) == 0 {
+		return true
+	}
+	for _, toolID := range inst.CompatibleToolIDs {
+		if toolID == targetTool {
+			return true
+		}
+	}
+	return false
+}
+
+func installationIDs(installs []discoverInstallation) []string {
+	ids := make([]string, 0, len(installs))
+	for _, inst := range installs {
+		ids = append(ids, inst.InstallationID)
+	}
+	sort.Strings(ids)
+	return ids
+}
+
+func discoverContextConfidence(toolID, format string) string {
+	switch discoverToolContextCost(toolID, format) {
+	case "low":
+		return "medium"
+	case "high":
+		return "low"
+	default:
+		return "low"
+	}
+}
+
+func discoverToolContextCost(toolID, format string) string {
+	if format == "agents_md" || format == "cursor_rule" || format == "github_instruction" {
+		return "high"
+	}
+	if format != "skill_md" {
+		return "unknown"
+	}
+	switch toolID {
+	case "antigravity", "claude", "codex", "grok", "openclaw", "agents":
+		return "low"
+	case "gemini", "hermes":
+		return "unknown"
+	default:
+		return "unknown"
+	}
+}
+
+func normalizedDiscoverToolIDs(values []string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, value := range values {
+		value = normalizedDiscoverToolID(value)
+		if value == "" || seen[value] {
+			continue
+		}
+		seen[value] = true
+		out = append(out, value)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func normalizedDiscoverToolID(value string) string {
+	return strings.TrimSpace(strings.ToLower(value))
+}
+
+func dedupeDiscoverRecommendations(recs []discoverRecommendation) []discoverRecommendation {
+	seen := map[string]bool{}
+	var out []discoverRecommendation
+	sortDiscoverRecommendations(recs)
+	for _, rec := range recs {
+		if seen[rec.RecommendationID] {
+			continue
+		}
+		seen[rec.RecommendationID] = true
+		out = append(out, rec)
+	}
+	return out
+}
+
+func sortDiscoverRecommendations(recs []discoverRecommendation) {
+	sort.Slice(recs, func(i, j int) bool {
+		if recs[i].Kind != recs[j].Kind {
+			return recs[i].Kind < recs[j].Kind
+		}
+		if recs[i].SkillName != recs[j].SkillName {
+			return recs[i].SkillName < recs[j].SkillName
+		}
+		if recs[i].TargetToolID != recs[j].TargetToolID {
+			return recs[i].TargetToolID < recs[j].TargetToolID
+		}
+		if recs[i].Reason != recs[j].Reason {
+			return recs[i].Reason < recs[j].Reason
+		}
+		leftSources := strings.Join(recs[i].SourceInstallationIDs, ",")
+		rightSources := strings.Join(recs[j].SourceInstallationIDs, ",")
+		if leftSources != rightSources {
+			return leftSources < rightSources
+		}
+		return recs[i].RecommendationID < recs[j].RecommendationID
+	})
 }
 
 func discoverGroupTitle(group discoverDriftGroup) string {
@@ -1354,6 +1640,7 @@ func discoverGlobalSkillCoverageGaps(out discoverOutput) []discoverCoverageGap {
 		return nil
 	}
 	bySkill := map[string]map[string]bool{}
+	installsBySkill := map[string][]discoverInstallation{}
 	for _, inst := range out.Installations {
 		if inst.Scope != "global" || !detectedGlobalTools[inst.ToolID] {
 			continue
@@ -1362,9 +1649,11 @@ func discoverGlobalSkillCoverageGaps(out discoverOutput) []discoverCoverageGap {
 			bySkill[inst.SkillName] = map[string]bool{}
 		}
 		bySkill[inst.SkillName][inst.ToolID] = true
+		installsBySkill[inst.SkillName] = append(installsBySkill[inst.SkillName], inst)
 	}
 	var gaps []discoverCoverageGap
-	for skillName, present := range bySkill {
+	for skillName, physicalPresent := range bySkill {
+		present := effectiveGlobalSkillPresence(physicalPresent, detectedGlobalTools, installsBySkill[skillName])
 		presentIDs := sortedBoolKeys(present)
 		var missingIDs []string
 		for toolID := range detectedGlobalTools {
@@ -1379,13 +1668,33 @@ func discoverGlobalSkillCoverageGaps(out discoverOutput) []discoverCoverageGap {
 		gaps = append(gaps, discoverCoverageGap{
 			Kind:           "global_skill_absent_from_detected_tool",
 			Title:          "Global skill coverage gap: " + skillName,
-			Detail:         fmt.Sprintf("%s is present in %s but absent from %s.", skillName, strings.Join(presentIDs, ", "), strings.Join(missingIDs, ", ")),
+			Detail:         fmt.Sprintf("%s is visible in %s but absent from %s.", skillName, strings.Join(presentIDs, ", "), strings.Join(missingIDs, ", ")),
 			SkillName:      skillName,
 			PresentToolIDs: presentIDs,
 			MissingToolIDs: missingIDs,
 		})
 	}
 	return gaps
+}
+
+func effectiveGlobalSkillPresence(physicalPresent, detectedGlobalTools map[string]bool, installs []discoverInstallation) map[string]bool {
+	present := map[string]bool{}
+	for toolID, ok := range physicalPresent {
+		if ok {
+			present[toolID] = true
+		}
+	}
+	if detectedGlobalTools["grok"] {
+		for _, inst := range installs {
+			if inst.ToolID == "claude" && installationCompatibleWithTool(inst, "grok") {
+				// Grok global roots include compatible Claude skills, so those
+				// do not need a duplicate ~/.grok install.
+				present["grok"] = true
+				break
+			}
+		}
+	}
+	return present
 }
 
 func sortedBoolKeys(values map[string]bool) []string {
@@ -1449,7 +1758,7 @@ func printDiscoverSummary(out io.Writer, result discoverOutput) {
 	if len(result.Report.Recommendations) == 0 {
 		fmt.Fprintln(out, "\nRecommendations: none generated by discover; review facts are exact inventory signals.")
 	} else {
-		printDiscoverReportSection(out, "Recommendations", reportItemLines(result.Report.Recommendations))
+		printDiscoverReportSection(out, "Recommendations", recommendationLines(result.Report.Recommendations))
 	}
 	if len(result.Installations) > 0 {
 		fmt.Fprintln(out, "\nInstallations:")
@@ -1511,6 +1820,14 @@ func coverageGapLines(gaps []discoverCoverageGap) []string {
 	lines := make([]string, 0, len(gaps))
 	for _, gap := range gaps {
 		lines = append(lines, gap.Title+" - "+gap.Detail)
+	}
+	return lines
+}
+
+func recommendationLines(recs []discoverRecommendation) []string {
+	lines := make([]string, 0, len(recs))
+	for _, rec := range recs {
+		lines = append(lines, fmt.Sprintf("%s (confidence: %s) - %s", rec.Title, rec.Confidence, rec.Reason))
 	}
 	return lines
 }

@@ -28,7 +28,7 @@ func TestDiscoverGlobalReportsSkillsAndMissingTools(t *testing.T) {
 	t.Setenv("SKILLS_MANAGER_HOME", filepath.Join(home, ".skills-manager"))
 
 	writeScanSkill(t, filepath.Join(home, ".claude", "skills"), "review", "---\nname: review\n---\n# Review\n")
-	writeScanSkill(t, filepath.Join(home, ".claude", "skills"), "build", "---\nname: build\n---\n# Build\n")
+	writeScanSkill(t, filepath.Join(home, ".claude", "skills"), "build", "---\nname: build\ncompatible: [claude, codex, grok]\n---\n# Build\n")
 	writeScanSkill(t, filepath.Join(home, ".codex", "skills"), "review", "---\nname: review\n---\n# Review changed\n")
 	writeScanSkill(t, filepath.Join(home, ".codex", "skills", ".system"), "openai-docs", "---\nname: openai-docs\n---\n# OpenAI Docs\n")
 	writeScanSkill(t, filepath.Join(home, ".grok", "skills"), "review-copy", "---\nname: review\n---\n# Review\n")
@@ -72,8 +72,25 @@ func TestDiscoverGlobalReportsSkillsAndMissingTools(t *testing.T) {
 	if !hasDiscoverCoverageGap(got.Report.CoverageGaps, "global_skill_absent_from_detected_tool", "", "build") {
 		t.Fatalf("missing global skill coverage gap: %+v", got.Report.CoverageGaps)
 	}
-	if len(got.Report.Recommendations) != 0 {
-		t.Fatalf("recommendations = %+v, want exact-facts-only discover report", got.Report.Recommendations)
+	if !hasDiscoverRecommendation(got.Report.Recommendations, "ignore", "build", "codex", "") {
+		t.Fatalf("missing codex legacy-root ignore recommendation: %+v", got.Report.Recommendations)
+	}
+	if hasDiscoverRecommendation(got.Report.Recommendations, "install_global", "build", "codex", "") {
+		t.Fatalf("legacy codex root should not produce install_global: %+v", got.Report.Recommendations)
+	}
+	if hasDiscoverRecommendation(got.Report.Recommendations, "install_global", "build", "grok", "") {
+		t.Fatalf("claude global skill should already be visible to grok: %+v", got.Report.Recommendations)
+	}
+	if !hasDiscoverRecommendation(got.Report.Recommendations, "review_drift", "review", "", "") {
+		t.Fatalf("missing review drift recommendation: %+v", got.Report.Recommendations)
+	}
+	if !hasDiscoverRecommendation(got.Report.Recommendations, "remove", "", "", "") {
+		t.Fatalf("missing duplicate removal candidate: %+v", got.Report.Recommendations)
+	}
+	for _, rec := range got.Report.Recommendations {
+		if !rec.RequiresPlan {
+			t.Fatalf("recommendation does not require dry-run plan: %+v", rec)
+		}
 	}
 	for _, inst := range got.Installations {
 		if inst.Scope != "global" {
@@ -94,6 +111,186 @@ func TestDiscoverGlobalReportsSkillsAndMissingTools(t *testing.T) {
 	}
 	if !hasDiscoverInstall(got.Installations, "claude", "build", filepath.Join(".claude", "skills", "build")) {
 		t.Fatalf("missing generated-name skill install: %+v", got.Installations)
+	}
+	if inst, ok := findDiscoverInstall(got.Installations, "claude", "build", filepath.Join(".claude", "skills", "build")); !ok || len(inst.CompatibleToolIDs) != 3 {
+		t.Fatalf("missing compatible tool metadata: %+v", inst)
+	}
+}
+
+func TestDiscoverTreatsClaudeGlobalSkillsAsVisibleToGrok(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("SKILLS_MANAGER_HOME", filepath.Join(home, ".skills-manager"))
+
+	writeScanSkill(t, filepath.Join(home, ".claude", "skills"), "claude-visible", "---\nname: claude-visible\ncompatible: [claude, grok]\n---\n# Claude visible\n")
+	if err := os.MkdirAll(filepath.Join(home, ".grok", "skills"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{"--json", "discover", "--global"}, &stdout, &stderr)
+	if code != ExitSuccess {
+		t.Fatalf("code = %d, want %d\nstderr:\n%s", code, ExitSuccess, stderr.String())
+	}
+
+	var got discoverOutput
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal discover output: %v\n%s", err, stdout.String())
+	}
+	if hasDiscoverCoverageGap(got.Report.CoverageGaps, "global_skill_absent_from_detected_tool", "", "claude-visible") {
+		t.Fatalf("claude global skill should not be absent from grok coverage: %+v", got.Report.CoverageGaps)
+	}
+	if hasDiscoverRecommendation(got.Report.Recommendations, "install_global", "claude-visible", "grok", "") {
+		t.Fatalf("claude global skill should not produce duplicate grok install: %+v", got.Report.Recommendations)
+	}
+}
+
+func TestDiscoverClaudeGlobalGrokVisibilityRespectsCompatibility(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("SKILLS_MANAGER_HOME", filepath.Join(home, ".skills-manager"))
+
+	writeScanSkill(t, filepath.Join(home, ".claude", "skills"), "claude-only", "---\nname: claude-only\nexclusive: claude\n---\n# Claude only\n")
+	if err := os.MkdirAll(filepath.Join(home, ".grok", "skills"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{"--json", "discover", "--global"}, &stdout, &stderr)
+	if code != ExitSuccess {
+		t.Fatalf("code = %d, want %d\nstderr:\n%s", code, ExitSuccess, stderr.String())
+	}
+
+	var got discoverOutput
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal discover output: %v\n%s", err, stdout.String())
+	}
+	if !hasDiscoverCoverageGap(got.Report.CoverageGaps, "global_skill_absent_from_detected_tool", "", "claude-only") {
+		t.Fatalf("incompatible claude skill should still be absent from grok coverage: %+v", got.Report.CoverageGaps)
+	}
+	if !hasDiscoverRecommendation(got.Report.Recommendations, "needs_port", "claude-only", "grok", "") {
+		t.Fatalf("incompatible claude skill should require porting for grok: %+v", got.Report.Recommendations)
+	}
+}
+
+func TestDiscoverNormalizesExclusiveCompatibility(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("SKILLS_MANAGER_HOME", filepath.Join(home, ".skills-manager"))
+
+	writeScanSkill(t, filepath.Join(home, ".claude", "skills"), "grok-case", "---\nname: grok-case\nexclusive: Grok\n---\n# Grok case\n")
+	if err := os.MkdirAll(filepath.Join(home, ".grok", "skills"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{"--json", "discover", "--global"}, &stdout, &stderr)
+	if code != ExitSuccess {
+		t.Fatalf("code = %d, want %d\nstderr:\n%s", code, ExitSuccess, stderr.String())
+	}
+
+	var got discoverOutput
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal discover output: %v\n%s", err, stdout.String())
+	}
+	inst, ok := findDiscoverInstall(got.Installations, "claude", "grok-case", filepath.Join(".claude", "skills", "grok-case"))
+	if !ok || inst.ExclusiveToolID != "grok" {
+		t.Fatalf("exclusive tool = %q, want grok: %+v", inst.ExclusiveToolID, inst)
+	}
+	if hasDiscoverRecommendation(got.Report.Recommendations, "needs_port", "grok-case", "grok", "") {
+		t.Fatalf("display-cased exclusive target should match grok: %+v", got.Report.Recommendations)
+	}
+}
+
+func TestDiscoverRecommendationsRespectCompatibilityAndContextCost(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("SKILLS_MANAGER_HOME", filepath.Join(home, ".skills-manager"))
+
+	writeScanSkill(t, filepath.Join(home, ".claude", "skills"), "claude-only", "---\nname: claude-only\nexclusive: claude\n---\n# Claude only\n")
+	writeScanSkill(t, filepath.Join(home, ".claude", "skills"), "unknown-cost", "---\nname: unknown-cost\ncompatible: [claude, gemini]\n---\n# Unknown cost\n")
+	if err := os.MkdirAll(filepath.Join(home, ".codex", "skills"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(home, ".gemini", "skills"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{"--json", "discover", "--global"}, &stdout, &stderr)
+	if code != ExitSuccess {
+		t.Fatalf("code = %d, want %d\nstderr:\n%s", code, ExitSuccess, stderr.String())
+	}
+
+	var got discoverOutput
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal discover output: %v\n%s", err, stdout.String())
+	}
+	if !hasDiscoverRecommendation(got.Report.Recommendations, "needs_port", "claude-only", "codex", "") {
+		t.Fatalf("missing needs-port recommendation: %+v", got.Report.Recommendations)
+	}
+	if !hasDiscoverRecommendation(got.Report.Recommendations, "ignore", "unknown-cost", "gemini", "") {
+		t.Fatalf("missing unknown-context ignore recommendation: %+v", got.Report.Recommendations)
+	}
+	if hasDiscoverRecommendation(got.Report.Recommendations, "install_global", "claude-only", "codex", "") {
+		t.Fatalf("exclusive skill should not produce install_global to codex: %+v", got.Report.Recommendations)
+	}
+}
+
+func TestDiscoverRecommendationsIncludeProjectLocalCandidates(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("SKILLS_MANAGER_HOME", filepath.Join(home, ".skills-manager"))
+
+	repo := filepath.Join(home, "app")
+	if err := os.MkdirAll(filepath.Join(repo, ".git"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	writeScanSkill(t, filepath.Join(repo, ".codex", "skills"), "project-only", "---\nname: project-only\n---\n# Project\n")
+	writeScanSkill(t, filepath.Join(repo, ".claude", "skills"), "project-only", "---\nname: project-only\n---\n# Project\n")
+
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{"--json", "discover", "--projects", repo}, &stdout, &stderr)
+	if code != ExitSuccess {
+		t.Fatalf("code = %d, want %d\nstderr:\n%s", code, ExitSuccess, stderr.String())
+	}
+
+	var got discoverOutput
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal discover output: %v\n%s", err, stdout.String())
+	}
+	if !hasDiscoverRecommendation(got.Report.Recommendations, "install_project", "project-only", "", got.Projects[0].ProjectID) {
+		t.Fatalf("missing project-local recommendation: %+v", got.Report.Recommendations)
+	}
+}
+
+func TestDiscoverRecommendationsSkipSameHarnessProjectDuplicates(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("SKILLS_MANAGER_HOME", filepath.Join(home, ".skills-manager"))
+
+	repo := filepath.Join(home, "app")
+	if err := os.MkdirAll(filepath.Join(repo, ".git"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	writeScanSkill(t, filepath.Join(repo, ".codex", "skills"), "copy-a", "---\nname: duplicate-project\n---\n# Project A\n")
+	writeScanSkill(t, filepath.Join(repo, ".codex", "skills"), "copy-b", "---\nname: duplicate-project\n---\n# Project B\n")
+
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{"--json", "discover", "--projects", repo}, &stdout, &stderr)
+	if code != ExitSuccess {
+		t.Fatalf("code = %d, want %d\nstderr:\n%s", code, ExitSuccess, stderr.String())
+	}
+
+	var got discoverOutput
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal discover output: %v\n%s", err, stdout.String())
+	}
+	if hasDiscoverRecommendation(got.Report.Recommendations, "install_project", "duplicate-project", "", got.Projects[0].ProjectID) {
+		t.Fatalf("same-harness duplicates should not produce project-local recommendation: %+v", got.Report.Recommendations)
+	}
+	if !hasDiscoverRecommendation(got.Report.Recommendations, "review_drift", "duplicate-project", "", "") {
+		t.Fatalf("same-harness duplicates should still produce drift review: %+v", got.Report.Recommendations)
 	}
 }
 
@@ -124,7 +321,7 @@ func TestDiscoverHumanSummaryGolden(t *testing.T) {
 	want := `Discover assessment
 Facts: 3 tools present, 4 tools missing, 5 global skills, 1 project-local skills, 1 projects
 Review facts: 3 drift/overlap, 1 duplicate-content
-Coverage gaps: 8
+Coverage gaps: 7
 
 Exact review facts:
   - Project override: shared - shared exists both globally and in a project scope.
@@ -133,16 +330,28 @@ Exact review facts:
   - Same-name drift: shared - shared has different content across claude/global, codex/project.
 
 Coverage gaps:
-  - Global skill coverage gap: copy-a - copy-a is present in grok but absent from claude, codex.
-  - Global skill coverage gap: copy-b - copy-b is present in grok but absent from claude, codex.
-  - Global skill coverage gap: review - review is present in claude, codex but absent from grok.
-  - Global skill coverage gap: shared - shared is present in claude but absent from codex, grok.
+  - Global skill coverage gap: copy-a - copy-a is visible in grok but absent from claude, codex.
+  - Global skill coverage gap: copy-b - copy-b is visible in grok but absent from claude, codex.
+  - Global skill coverage gap: shared - shared is visible in claude, grok but absent from codex.
   - Missing tool coverage: Antigravity - Antigravity was not detected in this scan scope.
   - Missing tool coverage: Gemini CLI - Gemini CLI was not detected in this scan scope.
   - Missing tool coverage: Hermes - Hermes was not detected in this scan scope.
   - Missing tool coverage: OpenClaw - OpenClaw was not detected in this scan scope.
 
-Recommendations: none generated by discover; review facts are exact inventory signals.
+Recommendations:
+  - Ignore global gap: copy-a -> codex (confidence: low) - copy-a is absent from codex, but the discovered Codex global root is legacy ~/.codex/skills; ignore until the documented .agents/skills target is modeled.
+  - Ignore global gap: copy-b -> codex (confidence: low) - copy-b is absent from codex, but the discovered Codex global root is legacy ~/.codex/skills; ignore until the documented .agents/skills target is modeled.
+  - Ingest unmanaged skill: copy-a (confidence: medium) - grok/global is unmanaged inventory; ingest would first create a dry-run plan and preserve the source path.
+  - Ingest unmanaged skill: copy-b (confidence: medium) - grok/global is unmanaged inventory; ingest would first create a dry-run plan and preserve the source path.
+  - Ingest unmanaged skill: review (confidence: medium) - claude/global is unmanaged inventory; ingest would first create a dry-run plan and preserve the source path.
+  - Ingest unmanaged skill: review (confidence: medium) - codex/global is unmanaged inventory; ingest would first create a dry-run plan and preserve the source path.
+  - Ingest unmanaged skill: shared (confidence: medium) - claude/global is unmanaged inventory; ingest would first create a dry-run plan and preserve the source path.
+  - Ingest unmanaged skill: shared (confidence: medium) - codex/project is unmanaged inventory; ingest would first create a dry-run plan and preserve the source path.
+  - Install globally: copy-a -> claude (confidence: medium) - copy-a is visible in grok and absent from claude; claude has requested/on-demand loading cost, so a global install can be planned safely.
+  - Install globally: copy-b -> claude (confidence: medium) - copy-b is visible in grok and absent from claude; claude has requested/on-demand loading cost, so a global install can be planned safely.
+  - Review duplicate removal: 6bf161bcbe46 (confidence: low) - Exact bytes are installed under different names; generate a dry-run plan before removing any copy.
+  - Review duplicate content (confidence: high) - Identical content appears under different names across grok/global x2.
+  - ... 3 more
 
 Installations:
   - copy-a                   grok         global   $HOME/.grok/skills/copy-a
@@ -265,12 +474,19 @@ func TestDiscoverPersistsDriftGroupsAndOverlap(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeScanSkill(t, filepath.Join(home, ".claude", "skills"), "shared", "---\nname: shared\n---\n# Shared\n")
-	writeScanSkill(t, filepath.Join(repo, ".codex", "skills"), "shared", "---\nname: shared\n---\n# Shared\n")
+	writeScanSkill(t, filepath.Join(repo, ".codex", "skills"), "shared", "---\nname: shared\n---\n# Shared Project\n")
 
 	var stdout, stderr bytes.Buffer
 	code := Run([]string{"--json", "discover", "--global", "--projects", devRoot}, &stdout, &stderr)
 	if code != ExitSuccess {
 		t.Fatalf("discover code = %d, want %d\nstderr:\n%s", code, ExitSuccess, stderr.String())
+	}
+	var got discoverOutput
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal discover output: %v\n%s", err, stdout.String())
+	}
+	if count := countDiscoverRecommendations(got.Report.Recommendations, "review_drift", "shared"); count != 2 {
+		t.Fatalf("shared review recommendations = %d, want overlap and drift recommendations: %+v", count, got.Report.Recommendations)
 	}
 
 	db, err := state.Open(managerHome)
@@ -789,6 +1005,35 @@ func hasDiscoverCoverageGap(gaps []discoverCoverageGap, kind, toolID, skillName 
 		}
 	}
 	return false
+}
+
+func hasDiscoverRecommendation(recs []discoverRecommendation, kind, skillName, targetToolID, targetProjectID string) bool {
+	for _, rec := range recs {
+		if rec.Kind != kind {
+			continue
+		}
+		if skillName != "" && rec.SkillName != skillName {
+			continue
+		}
+		if targetToolID != "" && rec.TargetToolID != targetToolID {
+			continue
+		}
+		if targetProjectID != "" && rec.TargetProjectID != targetProjectID {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
+func countDiscoverRecommendations(recs []discoverRecommendation, kind, skillName string) int {
+	count := 0
+	for _, rec := range recs {
+		if rec.Kind == kind && rec.SkillName == skillName {
+			count++
+		}
+	}
+	return count
 }
 
 func normalizeDiscoverGolden(output, home string) string {
