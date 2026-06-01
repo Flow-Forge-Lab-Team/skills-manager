@@ -59,7 +59,7 @@ into the tool directories you choose.</p>
 Committed HTML is generated with <a
 href="docs/_build.sh"><code>docs/_build.sh</code></a> for
 local/repository browsing; no public docs site is published yet. New
-here? Start with the <a href="docs/TUTORIAL.html">5-minute
+here? Start with the discover-first <a href="docs/TUTORIAL.html">5-minute
 tutorial</a>.</p>
 </blockquote>
 <h2 id="install">Install</h2>
@@ -83,13 +83,16 @@ artifact from the release.</p>
 <span id="cb3-8"><a href="#cb3-8" aria-hidden="true" tabindex="-1"></a><span class="ex">npm</span> install <span class="at">-g</span> @flowforgelab/skills-manager</span>
 <span id="cb3-9"><a href="#cb3-9" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb3-10"><a href="#cb3-10" aria-hidden="true" tabindex="-1"></a><span class="ex">brew</span> install Flow-Forge-Lab-Team/tap/skills-manager</span></code></pre></div>
-<p>Then run the <a href="docs/TUTORIAL.html">5-minute tutorial</a>, or
-<code>skills-manager --help</code>.</p>
-<p>To inspect existing local skill installs without changing them,
-run:</p>
+<p>Then inspect your existing skills before installing anything:</p>
 <div class="sourceCode" id="cb4"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a><span class="ex">skills-manager</span> discover <span class="at">--global</span></span>
-<span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a><span class="ex">skills-manager</span> discover <span class="at">--projects</span> ~/dev <span class="at">--save-project-roots</span></span>
-<span id="cb4-3"><a href="#cb4-3" aria-hidden="true" tabindex="-1"></a><span class="ex">skills-manager</span> discover <span class="at">--saved-project-roots</span></span></code></pre></div>
+<span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a><span class="ex">skills-manager</span> serve</span></code></pre></div>
+<p><code>discover</code> is the first-run path. It is read-only for tool
+and project directories, separates exact inventory facts from
+deterministic recommendations, and persists local state under
+<code>~/.skills-manager</code> for dashboard review.</p>
+<p>To include project-local skills, approve explicit roots:</p>
+<div class="sourceCode" id="cb5"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a><span class="ex">skills-manager</span> discover <span class="at">--projects</span> ~/dev <span class="at">--save-project-roots</span></span>
+<span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a><span class="ex">skills-manager</span> discover <span class="at">--saved-project-roots</span></span></code></pre></div>
 <p>Discovery is read-only for tool and project directories. It reports
 detected tools, global and project-local skills, content hashes, drift
 groups, duplicate content, and missing tool coverage before any install
@@ -102,6 +105,11 @@ removed later. Discovery never performs a full-home scan: it only reads
 known global tool roots when <code>--global</code> is set and explicit
 project roots when <code>--projects</code> or
 <code>--saved-project-roots</code> is set.</p>
+<p>AI assessment is opt-in. Inventory, hashes, drift groups, coverage
+gaps, and deterministic recommendations run without a provider. Use
+<code>assess --handoff</code> for a local prompt or
+<code>assess --auto</code> only when you want configured provider
+credentials used for advisory output.</p>
 <h2 id="real-cli-demo">Real CLI Demo</h2>
 <p>This transcript was generated from the current CLI with a temporary
 manager home and the committed <a

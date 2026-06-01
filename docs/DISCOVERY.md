@@ -47,6 +47,11 @@ it asks the user to install or modify anything.
 `~/.skills-manager` for local state, logs, saved approved roots, and inventory
 snapshots.
 
+The dashboard starts from the same persisted inventory. Its Actions view can
+preview dry-run plans and record review state, but write-capable actions require
+an already computed plan plus explicit confirmation. Failed applies retain
+structured error detail for retry or manual repair.
+
 ## Consent boundaries
 
 Discovery has three consent scopes.
@@ -88,6 +93,12 @@ rest of the scan.
 
 The inventory model is fact-first. Recommendations and AI assessment are
 separate layers that read inventory facts; they do not replace them.
+
+AI assessment is opt-in. `discover`, `serve`, dashboard review states, hashes,
+coverage gaps, and deterministic recommendations do not call a provider. Use
+`skills-manager assess ... --handoff` for a local prompt or
+`skills-manager assess ... --auto` only when advisory output should use the
+configured provider credentials.
 
 ### Tool
 

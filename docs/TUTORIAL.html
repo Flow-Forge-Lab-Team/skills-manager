@@ -50,139 +50,116 @@
       <span class="sep">/</span>
       <span class="crumb">TUTORIAL.md</span>
     </div>
-<h1 id="5-minute-tutorial-from-zero-to-a-working-setup">5-minute
-tutorial: from zero to a working setup</h1>
-<p>This walks you from a fresh install to skills installed in a real
-project, in about five minutes. It uses <strong>copy mode</strong> (the
-default) and needs no LLM provider or network beyond the install step.
-The path below starts from an empty manager home and uses the committed
-<code>examples/hello-skill</code> fixture, so it works even if you have
-never used an AI coding-tool skill before.</p>
-<h2 id="1-install-30s">1. Install (30s)</h2>
-<p>The verified install path today is the public Go module:</p>
+<h1 id="5-minute-tutorial-discover-first-then-act">5-minute tutorial:
+discover first, then act</h1>
+<p>This tutorial starts with the intended first-run path: install the
+CLI, run a read-only inventory of skills you already have, review the
+dashboard assessment, then choose whether to ingest or install anything.
+No LLM provider is required.</p>
+<h2 id="1-install">1. Install</h2>
+<p>The verified install path is the public Go module:</p>
 <div class="sourceCode" id="cb1"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="ex">go</span> install github.com/Flow-Forge-Lab-Team/skills-manager/cmd/skills-manager@v0.1.0</span>
 <span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="ex">skills-manager</span> <span class="at">--version</span></span></code></pre></div>
-<p>Expected output:</p>
+<p>Expected output for the v0.1.0 release:</p>
 <pre class="text"><code>skills-manager 0.1.0</code></pre>
-<p>The <code>curl | sh</code>, npm, and Homebrew commands are also
-release channels after v0.1.0 is published. The shell installer and npm
-wrapper verify release archive checksums, which proves download
-integrity but not publisher authenticity unless you separately verify
-the signed checksum artifact from the GitHub release.</p>
-<h2 id="2-add-your-first-skill-1-min">2. Add your first skill (1
-min)</h2>
-<p>From a checkout of this repository, ingest the sample skill:</p>
-<div class="sourceCode" id="cb3"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="ex">skills-manager</span> add ./examples/hello-skill <span class="at">--yes</span></span>
-<span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a><span class="ex">skills-manager</span> add ./examples/python-skill <span class="at">--yes</span></span></code></pre></div>
-<p>Expected output:</p>
-<pre class="text"><code>Ingested hello-skill to ~/.skills-manager/library/hello-skill
-Ingested python-skill to ~/.skills-manager/library/python-skill</code></pre>
-<p>Check the library:</p>
-<div class="sourceCode" id="cb5"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a><span class="ex">skills-manager</span> list</span></code></pre></div>
-<p>Expected output:</p>
-<pre class="text"><code>hello-skill  Use when you want a small sample build skill for v</code></pre>
-<h2 id="3-create-a-zero-state-project-and-preview-matches-1-min">3.
-Create a zero-state project and preview matches (1 min)</h2>
-<p>Create a small project with one stack signal and one active target
-directory:</p>
-<div class="sourceCode" id="cb7"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a><span class="fu">mkdir</span> <span class="at">-p</span> /tmp/sm-demo/.codex</span>
-<span id="cb7-2"><a href="#cb7-2" aria-hidden="true" tabindex="-1"></a><span class="bu">printf</span> <span class="st">&#39;{&quot;dependencies&quot;:{&quot;next&quot;:&quot;15.0.0&quot;,&quot;react&quot;:&quot;19.0.0&quot;}}\n&#39;</span> <span class="op">&gt;</span> /tmp/sm-demo/package.json</span>
-<span id="cb7-3"><a href="#cb7-3" aria-hidden="true" tabindex="-1"></a><span class="bu">printf</span> <span class="st">&#39;{}\n&#39;</span> <span class="op">&gt;</span> /tmp/sm-demo/.codex/config.json</span>
-<span id="cb7-4"><a href="#cb7-4" aria-hidden="true" tabindex="-1"></a><span class="ex">skills-manager</span> init /tmp/sm-demo <span class="at">--non-interactive</span></span></code></pre></div>
-<p>Expected output:</p>
-<pre class="text"><code>Initialized /tmp/sm-demo
-Categories: Engineering, Design
-Tags: nextjs, nodejs, react
-Harnesses: claude, codex, grok, antigravity, gemini, hermes, openclaw</code></pre>
-<p>The project now has:</p>
-<pre class="text"><code>/tmp/sm-demo/.skills/project.yaml
-/tmp/sm-demo/.skills/installed.lock</code></pre>
-<p>Preview why the sample skill matches:</p>
-<div class="sourceCode" id="cb10"><pre
-class="sourceCode sh"><code class="sourceCode bash"><span id="cb10-1"><a href="#cb10-1" aria-hidden="true" tabindex="-1"></a><span class="ex">skills-manager</span> match <span class="at">--project</span> /tmp/sm-demo <span class="at">--explain</span></span></code></pre></div>
-<p>Expected output:</p>
-<pre class="text"><code>hello-skill (score: 1) - category overlap: 1
-  harnesses: antigravity, claude, codex, gemini, grok, hermes, openclaw
-python-skill (rejected) - no category or tag overlap</code></pre>
-<h2 id="4-install-into-the-project-1-min">4. Install into the project (1
-min)</h2>
-<div class="sourceCode" id="cb12"><pre
-class="sourceCode sh"><code class="sourceCode bash"><span id="cb12-1"><a href="#cb12-1" aria-hidden="true" tabindex="-1"></a><span class="ex">skills-manager</span> install <span class="at">--project</span> /tmp/sm-demo</span></code></pre></div>
-<p>Expected output:</p>
-<pre class="text"><code>Installing skills:
-- hello-skill: category match; harnesses: antigravity, claude, codex, gemini, grok, hermes, openclaw
-  copied .agents/skills/hello-skill
-  copied .claude/skills/hello-skill
-  copied .codex/skills/hello-skill
-  copied .grok/skills/hello-skill
-  copied skills/hello-skill</code></pre>
-<p>This copies matching skills into the active target directory and
-records the manager-owned files. The unrelated Python sample is
-intentionally not installed. Inspect the result:</p>
-<div class="sourceCode" id="cb14"><pre
-class="sourceCode sh"><code class="sourceCode bash"><span id="cb14-1"><a href="#cb14-1" aria-hidden="true" tabindex="-1"></a><span class="fu">find</span> /tmp/sm-demo <span class="at">-maxdepth</span> 4 <span class="at">-type</span> f <span class="kw">|</span> <span class="fu">sort</span></span></code></pre></div>
-<p>Expected files include:</p>
-<pre class="text"><code>/tmp/sm-demo/.agents/skills/hello-skill/.skill-meta.yaml
-/tmp/sm-demo/.agents/skills/hello-skill/SKILL.md
-/tmp/sm-demo/.claude/skills/hello-skill/.skill-meta.yaml
-/tmp/sm-demo/.claude/skills/hello-skill/SKILL.md
-/tmp/sm-demo/.codex/config.json
-/tmp/sm-demo/.codex/skills/hello-skill/.skill-meta.yaml
-/tmp/sm-demo/.codex/skills/hello-skill/SKILL.md
-/tmp/sm-demo/.grok/skills/hello-skill/.skill-meta.yaml
-/tmp/sm-demo/.grok/skills/hello-skill/SKILL.md
-/tmp/sm-demo/.skills/installed.lock
-/tmp/sm-demo/.skills/project.yaml
-/tmp/sm-demo/skills/hello-skill/.skill-meta.yaml
-/tmp/sm-demo/skills/hello-skill/SKILL.md
-/tmp/sm-demo/package.json</code></pre>
-<p>The lock file records the desired skill set:</p>
-<pre class="text"><code>version: 1
-generated_by: skills-manager 0.1.0
-skills:
-  - name: hello-skill
-    harnesses:
-      - antigravity
-      - claude
-      - codex
-      - gemini
-      - grok
-      - hermes
-      - openclaw</code></pre>
-<p>Everything is reversible:</p>
-<div class="sourceCode" id="cb17"><pre
-class="sourceCode sh"><code class="sourceCode bash"><span id="cb17-1"><a href="#cb17-1" aria-hidden="true" tabindex="-1"></a><span class="ex">skills-manager</span> uninstall <span class="at">--project</span> /tmp/sm-demo <span class="at">--confirm</span></span></code></pre></div>
-<h2 id="5-keep-it-healthy-1-min">5. Keep it healthy (1 min)</h2>
-<div class="sourceCode" id="cb18"><pre
-class="sourceCode sh"><code class="sourceCode bash"><span id="cb18-1"><a href="#cb18-1" aria-hidden="true" tabindex="-1"></a><span class="ex">skills-manager</span> check                <span class="co"># poll GitHub-sourced skills for updates</span></span>
-<span id="cb18-2"><a href="#cb18-2" aria-hidden="true" tabindex="-1"></a><span class="ex">skills-manager</span> update               <span class="co"># review pending updates (raw diff + safety flags)</span></span>
-<span id="cb18-3"><a href="#cb18-3" aria-hidden="true" tabindex="-1"></a><span class="ex">skills-manager</span> doctor               <span class="co"># verify manifests, fingerprints, requirements</span></span>
-<span id="cb18-4"><a href="#cb18-4" aria-hidden="true" tabindex="-1"></a><span class="ex">skills-manager</span> serve                <span class="co"># open the local triage web UI</span></span></code></pre></div>
-<h2 id="existing-user-scan-path">Existing-user scan path</h2>
-<p>If you already use Claude Code, Codex, or another supported
-SKILL.md-style tool, you may have skills scattered in
-<code>~/.claude/skills/</code>, <code>~/.codex/skills/</code>, and other
-tool directories. Discover them after the zero-state flow:</p>
-<div class="sourceCode" id="cb19"><pre
-class="sourceCode sh"><code class="sourceCode bash"><span id="cb19-1"><a href="#cb19-1" aria-hidden="true" tabindex="-1"></a><span class="ex">skills-manager</span> scan</span>
-<span id="cb19-2"><a href="#cb19-2" aria-hidden="true" tabindex="-1"></a><span class="ex">skills-manager</span> scan <span class="at">--ingest</span>        <span class="co"># interactive review</span></span>
-<span id="cb19-3"><a href="#cb19-3" aria-hidden="true" tabindex="-1"></a><span class="ex">skills-manager</span> scan <span class="at">--auto-ingest</span>   <span class="co"># non-interactive high-confidence ingest</span></span></code></pre></div>
+<p>This requires Go 1.26 or newer and installs the binary into
+<code>$(go env GOPATH)/bin</code>. Add that directory to
+<code>PATH</code> if your shell cannot find
+<code>skills-manager</code>.</p>
+<h2 id="2-discover-global-skills">2. Discover global skills</h2>
+<p>Discovery is read-only for tool directories. It writes only
+manager-local state under <code>~/.skills-manager</code>, including
+<code>state.db</code>, audit logs, and inventory snapshots.</p>
+<div class="sourceCode" id="cb3"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="ex">skills-manager</span> discover <span class="at">--global</span></span></code></pre></div>
+<p>A small fixture with one Claude Code skill and an empty OpenClaw root
+currently prints this shape:</p>
+<pre class="text"><code>Discover assessment
+Facts: 2 tools present, 5 tools missing, 1 global skills, 0 project-local skills, 0 projects
+Review facts: 0 drift/overlap, 0 duplicate-content
+Coverage gaps: 6
+
+Exact review facts: none
+
+Coverage gaps:
+  - Global skill coverage gap: review - review is visible in claude but absent from openclaw.
+  - Missing tool coverage: Antigravity - Antigravity was not detected in this scan scope.
+  - Missing tool coverage: Codex - Codex was not detected in this scan scope.
+  - Missing tool coverage: Gemini CLI - Gemini CLI was not detected in this scan scope.
+  - Missing tool coverage: Grok - Grok was not detected in this scan scope.
+  - Missing tool coverage: Hermes - Hermes was not detected in this scan scope.
+
+Recommendations:
+  - Ingest unmanaged skill: review (confidence: medium) - claude/global is unmanaged inventory; ingest would first create a dry-run plan and preserve the source path.
+  - Install globally: review -&gt; openclaw (confidence: medium) - review is visible in claude and absent from openclaw; openclaw has requested/on-demand loading cost, so a global install can be planned safely.</code></pre>
+<p>The exact tool counts depend on which supported tools have
+directories on your machine. The important split is stable: facts and
+coverage gaps are exact inventory signals; recommendations are
+deterministic proposals that still require a dry-run plan.</p>
+<h2 id="3-discover-project-local-skills-with-consent">3. Discover
+project-local skills with consent</h2>
+<p>Project scans read only roots you pass or roots you previously saved.
+They prune generated directories such as <code>.git</code>,
+<code>node_modules</code>, <code>.next</code>, <code>dist</code>,
+<code>build</code>, <code>.venv</code>, <code>.cache</code>, and Codex
+scratch workspaces by default.</p>
+<div class="sourceCode" id="cb5"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a><span class="ex">skills-manager</span> discover <span class="at">--projects</span> ~/dev <span class="at">--save-project-roots</span></span>
+<span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a><span class="ex">skills-manager</span> discover <span class="at">--saved-project-roots</span></span>
+<span id="cb5-3"><a href="#cb5-3" aria-hidden="true" tabindex="-1"></a><span class="ex">skills-manager</span> discover <span class="at">--list-project-roots</span></span>
+<span id="cb5-4"><a href="#cb5-4" aria-hidden="true" tabindex="-1"></a><span class="ex">skills-manager</span> discover <span class="at">--remove-project-root</span> ~/dev</span></code></pre></div>
+<p>Use <code>--saved-project-roots</code> only when you want to reuse
+that saved consent. The manager never upgrades a missing scope into a
+full-home scan.</p>
+<h2 id="4-review-the-dashboard">4. Review the dashboard</h2>
+<div class="sourceCode" id="cb6"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a><span class="ex">skills-manager</span> serve</span></code></pre></div>
+<p>Open the local URL printed by the command. The Discover view
+summarizes:</p>
+<ul>
+<li>Inventory</li>
+<li>Drift</li>
+<li>Global vs Project</li>
+<li>Tool Coverage</li>
+<li>Recommendations</li>
+<li>Actions</li>
+</ul>
+<p>The Actions tab previews source path, destination path, target tool,
+ownership, and hash impact before any write. Apply buttons require an
+already computed dry-run plan plus explicit confirmation, and successful
+or failed actions write an audit entry.</p>
+<h2 id="5-optional-ai-assessment">5. Optional AI assessment</h2>
+<p>AI advisory output is opt-in. Inventory, drift groups, hashes,
+coverage gaps, and deterministic recommendations do not require a
+provider.</p>
+<p>Use one of these only when you want advisory help:</p>
+<div class="sourceCode" id="cb7"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a><span class="ex">skills-manager</span> assess review <span class="at">--project</span> /path/to/project <span class="at">--target</span> codex <span class="at">--handoff</span></span>
+<span id="cb7-2"><a href="#cb7-2" aria-hidden="true" tabindex="-1"></a><span class="ex">skills-manager</span> assess review <span class="at">--project</span> /path/to/project <span class="at">--target</span> codex <span class="at">--auto</span></span></code></pre></div>
+<p><code>--handoff</code> writes a local prompt for manual review.
+<code>--auto</code> uses the configured provider credentials.
+Secret-looking values are redacted before handoff or provider calls, and
+cached advisory output stays under the manager home.</p>
+<h2 id="6-legacy-zero-state-demo">6. Legacy zero-state demo</h2>
+<p>If you are starting with no existing skills and want to see install
+mechanics, ingest the committed examples and install into a throwaway
+project:</p>
+<div class="sourceCode" id="cb8"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a><span class="ex">skills-manager</span> add ./examples/hello-skill <span class="at">--yes</span></span>
+<span id="cb8-2"><a href="#cb8-2" aria-hidden="true" tabindex="-1"></a><span class="ex">skills-manager</span> add ./examples/python-skill <span class="at">--yes</span></span>
+<span id="cb8-3"><a href="#cb8-3" aria-hidden="true" tabindex="-1"></a><span class="fu">mkdir</span> <span class="at">-p</span> /tmp/sm-demo/.codex</span>
+<span id="cb8-4"><a href="#cb8-4" aria-hidden="true" tabindex="-1"></a><span class="bu">printf</span> <span class="st">&#39;{&quot;dependencies&quot;:{&quot;next&quot;:&quot;15.0.0&quot;,&quot;react&quot;:&quot;19.0.0&quot;}}\n&#39;</span> <span class="op">&gt;</span> /tmp/sm-demo/package.json</span>
+<span id="cb8-5"><a href="#cb8-5" aria-hidden="true" tabindex="-1"></a><span class="bu">printf</span> <span class="st">&#39;{}\n&#39;</span> <span class="op">&gt;</span> /tmp/sm-demo/.codex/config.json</span>
+<span id="cb8-6"><a href="#cb8-6" aria-hidden="true" tabindex="-1"></a><span class="ex">skills-manager</span> init /tmp/sm-demo <span class="at">--non-interactive</span></span>
+<span id="cb8-7"><a href="#cb8-7" aria-hidden="true" tabindex="-1"></a><span class="ex">skills-manager</span> match <span class="at">--project</span> /tmp/sm-demo <span class="at">--explain</span></span>
+<span id="cb8-8"><a href="#cb8-8" aria-hidden="true" tabindex="-1"></a><span class="ex">skills-manager</span> install <span class="at">--project</span> /tmp/sm-demo</span></code></pre></div>
+<p>Everything installed by the manager is reversible:</p>
+<div class="sourceCode" id="cb9"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a><span class="ex">skills-manager</span> uninstall <span class="at">--project</span> /tmp/sm-demo <span class="at">--confirm</span></span></code></pre></div>
 <h2 id="where-to-go-next">Where to go next</h2>
 <ul>
+<li><a href="DISCOVERY.html">Discovery</a> — inventory schema, consent
+scopes, and recommendations</li>
 <li><a href="CLI_REFERENCE.html">CLI reference</a> — every command and
 flag</li>
-<li><a href="ARCHITECTURE.html">Architecture</a> — how
-install/compile/assemble fit together</li>
-<li><a href="UPDATE_FLOW.html">Update flow</a> — safety review of upstream
-changes</li>
-<li><a href="CROSS_MACHINE.html">Cross-machine</a> — sync your library
-across machines</li>
-<li>The <a
-href="https://github.com/Flow-Forge-Lab-Team/skills-manager/tree/main/examples/sample-project"><code>examples/sample-project</code></a>
-reference application shows a typical project setup end to end.</li>
-<li>The README demo transcript is CI-checked against
-<code>docs/demo_transcript.txt</code>; update that golden fixture and
-run <code>go test ./...</code> when changing demo output.</li>
+<li><a href="SECURITY_MODEL.html">Security model</a> — install, scan, and
+AI assessment boundaries</li>
+<li><a href="CROSS_MACHINE.html">Cross-machine</a> — sync library and
+inventory snapshots across machines</li>
 </ul>
     <footer class="doc-footer">
       <span>skills-manager · design doc</span>
