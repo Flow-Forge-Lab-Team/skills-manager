@@ -588,6 +588,26 @@ Flags:
                           remove a saved approved project root
 
 ` + globalFlagHelp()
+	case "drift":
+		return `skills-manager drift <diff|accept|ignore|canonical> [flags]
+
+Review discovered drift groups from skills-manager discover output.
+
+Commands:
+  diff       show a readable diff for two installations in a drift group
+  accept     mark a drift group accepted with a stored reason
+  ignore     mark a drift group ignored with a stored reason
+  canonical  choose a canonical installation and print a reconciliation plan
+
+Flags:
+  --inventory <file>       saved JSON output from skills-manager discover
+  --group <id>             drift group id
+  --left <id>              left installation for diff (default: first in group)
+  --right <id>             right installation for diff (default: second in group)
+  --canonical <id>         canonical installation for canonical
+  --reason <text>          stored review reason
+
+` + globalFlagHelp()
 	case "new":
 		return `skills-manager new <name> [--guided [--auto | --handoff | --apply <file>]]
 
@@ -629,6 +649,7 @@ Commands:
   discover    read-only global/project skill inventory
   assess      optional cached AI skill assessment
   plan        dry-run action plans for discovery recommendations
+  drift       review inventory drift groups
   new         create a new skill
   check       poll GitHub for new commits on skills
   compat-check  deeper LLM compatibility + requirements analysis

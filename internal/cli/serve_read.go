@@ -92,6 +92,20 @@ type triageProjectCandidate struct {
 	Warnings  []string `json:"warnings,omitempty"`
 }
 
+type triageDriftGroup struct {
+	GroupID                 string   `json:"group_id"`
+	GroupType               string   `json:"group_type"`
+	SkillName               string   `json:"skill_name,omitempty"`
+	ContentSHA256           string   `json:"content_sha256,omitempty"`
+	Status                  string   `json:"status"`
+	Classification          string   `json:"classification,omitempty"`
+	ReviewStatus            string   `json:"review_status,omitempty"`
+	ReviewReason            string   `json:"review_reason,omitempty"`
+	CanonicalInstallationID string   `json:"canonical_installation_id,omitempty"`
+	InstallationIDs         []string `json:"installation_ids"`
+	LastSeenAt              string   `json:"last_seen_at,omitempty"`
+}
+
 type triageDependencyWarning struct {
 	Skill string   `json:"skill"`
 	Kind  string   `json:"kind"`
@@ -218,6 +232,94 @@ func loadTriageSkills(home string) ([]triageSkill, error) {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out, nil
+}
+
+func loadTriageDriftGroups(home string) ([]triageDriftGroup, error) {
+	db, err := state.Open(home)
+	if err != nil {
+		return nil, err
+	}
+	defer db.Close()
+	rows, err := db.Query(`SELECT
+  g.group_id,
+  COALESCE(g.group_type, ''),
+  COALESCE(g.skill_name, ''),
+  COALESCE(g.content_sha256, ''),
+  COALESCE(g.status, ''),
+  COALESCE(r.status, ''),
+  COALESCE(r.reason, ''),
+  COALESCE(r.canonical_installation_id, ''),
+  COALESCE(g.last_seen_at, '')
+FROM discovery_drift_groups g
+LEFT JOIN discovery_drift_reviews r ON r.group_id = g.group_id
+WHERE g.present=1
+ORDER BY g.group_id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var groups []triageDriftGroup
+	for rows.Next() {
+		var group triageDriftGroup
+		if err := rows.Scan(
+			&group.GroupID,
+			&group.GroupType,
+			&group.SkillName,
+			&group.ContentSHA256,
+			&group.Status,
+			&group.ReviewStatus,
+			&group.ReviewReason,
+			&group.CanonicalInstallationID,
+			&group.LastSeenAt,
+		); err != nil {
+			return nil, err
+		}
+		group.InstallationIDs = loadTriageDriftGroupInstallIDs(db, group.GroupID)
+		group.Classification = classifyTriageDriftGroup(db, group)
+		groups = append(groups, group)
+	}
+	return groups, rows.Err()
+}
+
+func loadTriageDriftGroupInstallIDs(db *state.DB, groupID string) []string {
+	rows, err := db.Query(`SELECT installation_id FROM discovery_drift_group_installations WHERE group_id=? ORDER BY installation_id`, groupID)
+	if err != nil {
+		return []string{}
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err == nil {
+			ids = append(ids, id)
+		}
+	}
+	return ids
+}
+
+func classifyTriageDriftGroup(db *state.DB, group triageDriftGroup) string {
+	installs := make([]discoverInstallation, 0, len(group.InstallationIDs))
+	for _, id := range group.InstallationIDs {
+		var inst discoverInstallation
+		var managed int
+		err := db.QueryRow(`SELECT installation_id, skill_name, tool_id, scope, project_id, source_path,
+content_path, content_sha256, managed, ownership, format
+FROM discovery_installations WHERE installation_id=?`, id).Scan(
+			&inst.InstallationID, &inst.SkillName, &inst.ToolID, &inst.Scope, &inst.ProjectID, &inst.SourcePath,
+			&inst.ContentPath, &inst.ContentSHA256, &managed, &inst.Ownership, &inst.Format,
+		)
+		if err != nil {
+			continue
+		}
+		inst.Managed = managed == 1
+		installs = append(installs, inst)
+	}
+	installsByID := discoverInstallationsByID(installs)
+	return classifyDiscoverDriftGroup(discoverDriftGroup{
+		GroupType:       group.GroupType,
+		SkillName:       group.SkillName,
+		InstallationIDs: group.InstallationIDs,
+	}, installsByID)
 }
 
 func loadTriageSkillList(home string, q url.Values) (triageSkillList, error) {
