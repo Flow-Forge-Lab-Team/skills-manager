@@ -42,6 +42,7 @@ configured.
 - [BUNDLED_SKILLS.md](BUNDLED_SKILLS.md) — manager skills (port, ingest, summary, etc.)
 - [SCHEDULING.md](SCHEDULING.md) — local OS scheduling; cloud scheduling deferred
 - [CROSS_MACHINE.md](CROSS_MACHINE.md) — git-based library sync, drift detection
+- [RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md) — validation required before tags
 
 ## Out-of-band
 
