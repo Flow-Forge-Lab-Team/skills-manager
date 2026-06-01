@@ -668,11 +668,38 @@ func discoverGlobal(home string) ([]discoverTool, []discoverInstallation) {
 		}
 		if present {
 			tool.Status = "present"
-			installs = append(installs, discoverSkillDir(root, "global", "", root.path)...)
+			rootInstalls := discoverSkillDir(root, "global", "", root.path)
+			installs = append(installs, applyDiscoverGlobalOwnership(root, rootInstalls)...)
 		}
 		tools = append(tools, tool)
 	}
 	return tools, installs
+}
+
+func applyDiscoverGlobalOwnership(root discoverRoot, installs []discoverInstallation) []discoverInstallation {
+	home, err := managerHome()
+	if err != nil {
+		return installs
+	}
+	manifest, err := readManifest(globalManifestPath(home, root.toolID))
+	if err != nil {
+		return installs
+	}
+	managed := map[string]bool{}
+	for _, rel := range manifest.ManagedPaths {
+		managed[filepath.ToSlash(rel)] = true
+	}
+	for i := range installs {
+		rel, err := filepath.Rel(root.path, installs[i].SourcePath)
+		if err != nil {
+			continue
+		}
+		if managed[filepath.ToSlash(rel)] {
+			installs[i].Managed = true
+			installs[i].Ownership = "manager"
+		}
+	}
+	return installs
 }
 
 func globalDiscoverRoots(home string) []discoverRoot {

@@ -10,12 +10,16 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"gopkg.in/yaml.v3"
 )
 
 type planOptions struct {
 	inventory      string
 	recommendation string
 	all            bool
+	apply          bool
+	confirm        bool
 }
 
 type actionPlanOutput struct {
@@ -78,6 +82,16 @@ func runPlan(args []string, realStdout io.Writer, stderr io.Writer, gf globalFla
 		GeneratedAt:   time.Now().UTC().Format(time.RFC3339),
 		Plans:         plans,
 	}
+	if opts.apply {
+		applyOut := stdout
+		if gf.JSON {
+			applyOut = io.Discard
+		}
+		if err := applyActionPlans(inventory, plans, applyOut); err != nil {
+			fmt.Fprintf(stderr, "apply plan: %v\n", err)
+			return ExitOpError
+		}
+	}
 	if gf.JSON {
 		if err := writeJSON(realStdout, out); err != nil {
 			fmt.Fprintf(stderr, "%v\n", err)
@@ -110,6 +124,10 @@ func parsePlanOptions(args []string) (planOptions, error) {
 		case "--all":
 			opts.all = true
 			opts.recommendation = ""
+		case "--apply":
+			opts.apply = true
+		case "--confirm":
+			opts.confirm = true
 		default:
 			if strings.HasPrefix(arg, "-") {
 				return opts, fmt.Errorf("unexpected plan argument: %s", arg)
@@ -122,7 +140,15 @@ func parsePlanOptions(args []string) (planOptions, error) {
 		}
 	}
 	if opts.inventory == "" {
-		return opts, fmt.Errorf("usage: skills-manager plan --inventory <discover.json> [--recommendation <id>]")
+		return opts, fmt.Errorf("usage: skills-manager plan --inventory <discover.json> [--recommendation <id>] [--apply --confirm]")
+	}
+	if opts.apply {
+		if opts.all || opts.recommendation == "" {
+			return opts, fmt.Errorf("plan --apply requires --recommendation <id>")
+		}
+		if !opts.confirm {
+			return opts, fmt.Errorf("refusing to apply plan without --confirm")
+		}
 	}
 	return opts, nil
 }
@@ -309,6 +335,9 @@ func planInstallGlobal(plan *actionPlan, inventory discoverOutput, installsByID 
 	}
 	target := filepath.Join(root, rec.SkillName)
 	plan.addTargetCreateOrUpdate(target, source.SourcePath, installsByID, rec.SkillName, rec.TargetToolID, "", "global install target")
+	if len(plan.Blockers) == 0 {
+		plan.addMetadataCreateOrUpdate(globalManifestPath(planManagerHome(), rec.TargetToolID), "global install manifest")
+	}
 }
 
 func planInstallProject(plan *actionPlan, projectsByID map[string]discoverProject, installsByID map[string]discoverInstallation, sources []discoverInstallation, rec discoverRecommendation) {
@@ -365,7 +394,17 @@ func planInstallProject(plan *actionPlan, projectsByID map[string]discoverProjec
 			continue
 		}
 		plan.addTargetCreateOrUpdate(target, source.SourcePath, installsByID, rec.SkillName, toolID, rec.TargetProjectID, "project install target")
+		if len(plan.Blockers) == 0 {
+			plan.addProjectMetadata(project.RootPath)
+		}
 	}
+}
+
+func (plan *actionPlan) addProjectMetadata(projectRoot string) {
+	projectConfigPath := filepath.Join(projectRoot, ".skills", "project.yaml")
+	plan.addMetadataCreateOrUpdate(projectConfigPath, "project skill config")
+	plan.addMetadataCreateOrUpdate(filepath.Join(projectRoot, ".skills", "installed.lock"), "project install lock")
+	plan.addMetadataCreateOrUpdate(manifestPath(planManagerHome(), projectRoot), "project install manifest")
 }
 
 func planRemove(plan *actionPlan, sources []discoverInstallation) {
@@ -523,6 +562,22 @@ func (plan *actionPlan) addTargetCreateOrUpdate(target, source string, installsB
 	plan.addCreate(target, source, "manager", reason)
 }
 
+func (plan *actionPlan) addMetadataCreateOrUpdate(path, reason string) {
+	if path == "" {
+		plan.addBlocker("manager home is unavailable")
+		return
+	}
+	if _, err := os.Stat(path); err == nil {
+		plan.addUpdate(path, "", "manager", reason)
+		return
+	} else if !errors.Is(err, os.ErrNotExist) {
+		plan.addPreserve(path, "", "unknown", reason+" existence could not be verified")
+		plan.addBlocker(reason + " ownership is uncertain: " + path)
+		return
+	}
+	plan.addCreate(path, "", "manager", reason)
+}
+
 func (plan *actionPlan) addCreate(path, source, ownership, reason string) {
 	plan.Files.Create = append(plan.Files.Create, actionPlanFile{Path: path, Source: source, Ownership: ownership, Reason: reason})
 }
@@ -586,6 +641,401 @@ func samePlanPath(a, b string) bool {
 		return absA == absB
 	}
 	return filepath.Clean(a) == filepath.Clean(b)
+}
+
+func applyActionPlans(inventory discoverOutput, plans []actionPlan, stdout io.Writer) error {
+	installsByID := map[string]discoverInstallation{}
+	for _, inst := range inventory.Installations {
+		installsByID[inst.InstallationID] = inst
+	}
+	projectsByID := map[string]discoverProject{}
+	for _, project := range inventory.Projects {
+		projectsByID[project.ProjectID] = project
+	}
+	for _, plan := range plans {
+		if plan.Status != "ready" || len(plan.Blockers) > 0 {
+			return fmt.Errorf("%s is not ready", plan.RecommendationID)
+		}
+		switch plan.Kind {
+		case "install_global":
+			if err := applyGlobalInstallPlan(inventory, installsByID, plan, stdout); err != nil {
+				return err
+			}
+		case "install_project":
+			if err := applyProjectInstallPlan(projectsByID, installsByID, plan, stdout); err != nil {
+				return err
+			}
+		case "remove":
+			if err := applyRemovePlan(inventory, projectsByID, installsByID, plan, stdout); err != nil {
+				return err
+			}
+		default:
+			return fmt.Errorf("%s cannot be applied; unsupported kind %q", plan.RecommendationID, plan.Kind)
+		}
+	}
+	return nil
+}
+
+func applyGlobalInstallPlan(inventory discoverOutput, installsByID map[string]discoverInstallation, plan actionPlan, stdout io.Writer) error {
+	source, err := singlePlanSource(installsByID, plan)
+	if err != nil {
+		return err
+	}
+	root, ok := globalPlanRoot(inventory.Tools, plan.TargetToolID)
+	if !ok {
+		return fmt.Errorf("%s missing global target path for tool %q", plan.RecommendationID, plan.TargetToolID)
+	}
+	target := filepath.Join(root, plan.SkillName)
+	if err := ensurePlanAllowsWrite(plan, target); err != nil {
+		return err
+	}
+	home, err := managerHome()
+	if err != nil {
+		return err
+	}
+	manifestPath := globalManifestPath(home, plan.TargetToolID)
+	if err := ensurePlanAllowsWrite(plan, manifestPath); err != nil {
+		return err
+	}
+	manifest, err := readManifest(manifestPath)
+	if err != nil {
+		return err
+	}
+	if manifest.ProjectPath != "" && !samePlanPath(manifest.ProjectPath, root) {
+		return fmt.Errorf("global manifest belongs to %s, not %s", manifest.ProjectPath, root)
+	}
+	if manifest.ProjectPath == "" {
+		manifest = newGlobalManifest(root, plan.TargetToolID)
+	}
+	managed := mapFromSlice(manifest.ManagedPaths)
+	preserved := mapFromSlice(manifest.PreservedPaths)
+	files := manifest.Files
+	if files == nil {
+		files = map[string]string{}
+	}
+	wrote, err := installSkillCopy(source.SourcePath, target, plan.SkillName, manifest, managed, func() error {
+		return validateVariantForHarnesses(source.SourcePath, []string{plan.TargetToolID})
+	})
+	if err != nil {
+		return err
+	}
+	if wrote {
+		if err := applyVariantToTarget(source.SourcePath, target, []string{plan.TargetToolID}); err != nil {
+			return err
+		}
+		fingerprint, err := fingerprintDir(target)
+		if err != nil {
+			return err
+		}
+		managed[plan.SkillName] = true
+		delete(preserved, plan.SkillName)
+		files[plan.SkillName] = fingerprint
+	}
+	if err := saveInstallManifest(manifestPath, manifest, managed, preserved, files); err != nil {
+		return err
+	}
+	fmt.Fprintf(stdout, "applied %s: installed %s globally for %s\n", plan.RecommendationID, plan.SkillName, plan.TargetToolID)
+	return nil
+}
+
+func applyProjectInstallPlan(projectsByID map[string]discoverProject, installsByID map[string]discoverInstallation, plan actionPlan, stdout io.Writer) error {
+	project, ok := projectsByID[plan.TargetProjectID]
+	if !ok {
+		return fmt.Errorf("%s target project not found: %s", plan.RecommendationID, plan.TargetProjectID)
+	}
+	source, err := singlePlanSource(installsByID, plan)
+	if err != nil {
+		return err
+	}
+	base, ok := harnessProjectPaths[plan.TargetToolID]
+	if !ok {
+		return fmt.Errorf("%s missing project target path for tool %q", plan.RecommendationID, plan.TargetToolID)
+	}
+	target := filepath.Join(project.RootPath, base, plan.SkillName)
+	relTarget := filepath.ToSlash(filepath.Join(base, plan.SkillName))
+	if err := ensurePlanAllowsWrite(plan, target); err != nil {
+		return err
+	}
+	home, err := managerHome()
+	if err != nil {
+		return err
+	}
+	manifestPath := manifestPath(home, project.RootPath)
+	lockPath := filepath.Join(project.RootPath, ".skills", "installed.lock")
+	projectConfigPath := filepath.Join(project.RootPath, ".skills", "project.yaml")
+	for _, path := range []string{manifestPath, lockPath, projectConfigPath} {
+		if err := ensurePlanAllowsWrite(plan, path); err != nil {
+			return err
+		}
+	}
+	manifest, err := readManifest(manifestPath)
+	if err != nil {
+		return err
+	}
+	if manifest.ProjectPath != "" && !samePlanPath(manifest.ProjectPath, project.RootPath) {
+		return fmt.Errorf("project manifest belongs to %s, not %s", manifest.ProjectPath, project.RootPath)
+	}
+	if manifest.ProjectPath == "" {
+		manifest = newManifest(project.RootPath)
+	}
+	managed := mapFromSlice(manifest.ManagedPaths)
+	preserved := mapFromSlice(manifest.PreservedPaths)
+	files := manifest.Files
+	if files == nil {
+		files = map[string]string{}
+	}
+	wrote, err := installSkillCopy(source.SourcePath, target, relTarget, manifest, managed, func() error {
+		return validateVariantForHarnesses(source.SourcePath, []string{plan.TargetToolID})
+	})
+	if err != nil {
+		return err
+	}
+	if wrote {
+		if err := applyVariantToTarget(source.SourcePath, target, []string{plan.TargetToolID}); err != nil {
+			return err
+		}
+		fingerprint, err := fingerprintDir(target)
+		if err != nil {
+			return err
+		}
+		managed[relTarget] = true
+		delete(preserved, relTarget)
+		files[relTarget] = fingerprint
+	}
+	if err := ensurePlanProjectConfig(projectConfigPath, project.RootPath, plan.TargetToolID); err != nil {
+		return err
+	}
+	lock, err := readInstallLock(lockPath)
+	if err != nil {
+		return err
+	}
+	targetFingerprint, err := fingerprintDir(target)
+	if err != nil {
+		return err
+	}
+	lock = upsertPlanLockEntry(lock, plan.SkillName, plan.TargetToolID, targetFingerprint)
+	if err := writeInstallLock(lockPath, lock); err != nil {
+		return err
+	}
+	managed[".skills/installed.lock"] = true
+	lockFingerprint, err := fingerprintDir(lockPath)
+	if err != nil {
+		return err
+	}
+	files[".skills/installed.lock"] = lockFingerprint
+	if err := saveInstallManifest(manifestPath, manifest, managed, preserved, files); err != nil {
+		return err
+	}
+	fmt.Fprintf(stdout, "applied %s: installed %s in %s for %s\n", plan.RecommendationID, plan.SkillName, project.RootPath, plan.TargetToolID)
+	return nil
+}
+
+func applyRemovePlan(inventory discoverOutput, projectsByID map[string]discoverProject, installsByID map[string]discoverInstallation, plan actionPlan, stdout io.Writer) error {
+	home, err := managerHome()
+	if err != nil {
+		return err
+	}
+	installByPath := map[string]discoverInstallation{}
+	for _, id := range plan.SourceInstallationIDs {
+		inst, ok := installsByID[id]
+		if !ok {
+			return fmt.Errorf("%s source installation not found: %s", plan.RecommendationID, id)
+		}
+		installByPath[filepath.Clean(inst.SourcePath)] = inst
+	}
+	for _, file := range plan.Files.Remove {
+		if err := ensurePlanAllowsWrite(plan, file.Path); err != nil {
+			return err
+		}
+		inst, ok := installByPath[filepath.Clean(file.Path)]
+		if !ok {
+			return fmt.Errorf("%s remove target is not a selected source: %s", plan.RecommendationID, file.Path)
+		}
+		if !inst.Managed {
+			return fmt.Errorf("%s refuses to remove unmanaged target: %s", plan.RecommendationID, file.Path)
+		}
+		manifestPath, rel, root, err := manifestTargetForInstall(home, inventory, projectsByID, inst)
+		if err != nil {
+			return err
+		}
+		manifest, err := readManifest(manifestPath)
+		if err != nil {
+			return err
+		}
+		managed := mapFromSlice(manifest.ManagedPaths)
+		if !managed[rel] {
+			return fmt.Errorf("%s target is not manager-owned in manifest: %s", plan.RecommendationID, file.Path)
+		}
+		expected := manifest.Files[rel]
+		if expected != "" {
+			actual, err := fingerprintDir(file.Path)
+			if err != nil && !errors.Is(err, os.ErrNotExist) {
+				return err
+			}
+			if err == nil && actual != expected {
+				return fmt.Errorf("%s refuses to remove locally edited target: %s", plan.RecommendationID, file.Path)
+			}
+		}
+		if err := os.RemoveAll(file.Path); err != nil {
+			return err
+		}
+		delete(managed, rel)
+		preserved := mapFromSlice(manifest.PreservedPaths)
+		delete(preserved, rel)
+		files := manifest.Files
+		if files == nil {
+			files = map[string]string{}
+		}
+		delete(files, rel)
+		if len(managed) == 0 {
+			if err := os.Remove(manifestPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+				return err
+			}
+		} else if err := saveInstallManifest(manifestPath, manifest, managed, preserved, files); err != nil {
+			return err
+		}
+		if inst.Scope == "project" {
+			pruneEmptyParents(root, filepath.Dir(file.Path))
+		}
+		fmt.Fprintf(stdout, "applied %s: removed %s\n", plan.RecommendationID, file.Path)
+	}
+	return nil
+}
+
+func singlePlanSource(installsByID map[string]discoverInstallation, plan actionPlan) (discoverInstallation, error) {
+	if len(plan.SourceInstallationIDs) == 0 {
+		return discoverInstallation{}, fmt.Errorf("%s requires a source installation", plan.RecommendationID)
+	}
+	source, ok := installsByID[plan.SourceInstallationIDs[0]]
+	if !ok {
+		return discoverInstallation{}, fmt.Errorf("%s source installation not found: %s", plan.RecommendationID, plan.SourceInstallationIDs[0])
+	}
+	return source, nil
+}
+
+func ensurePlanAllowsWrite(plan actionPlan, path string) error {
+	for _, file := range append(append(append([]actionPlanFile{}, plan.Files.Create...), plan.Files.Update...), plan.Files.Remove...) {
+		if samePlanPath(file.Path, path) {
+			return nil
+		}
+	}
+	return fmt.Errorf("%s would write a path not shown in the plan: %s", plan.RecommendationID, path)
+}
+
+func ensurePlanProjectConfig(path, projectRoot, toolID string) error {
+	data, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		project := projectConfig{
+			Name:      filepath.Base(projectRoot),
+			Harnesses: []string{toolID},
+		}
+		return writeProjectConfig(path, project, time.Now().UTC())
+	}
+	if err != nil {
+		return err
+	}
+	var doc yaml.Node
+	if err := yaml.Unmarshal(data, &doc); err != nil {
+		return err
+	}
+	if len(doc.Content) == 0 || doc.Content[0].Kind != yaml.MappingNode {
+		return fmt.Errorf("project config is not a YAML mapping: %s", path)
+	}
+	root := doc.Content[0]
+	for i := 0; i+1 < len(root.Content); i += 2 {
+		if root.Content[i].Value != "harnesses" {
+			continue
+		}
+		harnesses := root.Content[i+1]
+		if harnesses.Kind != yaml.SequenceNode {
+			return fmt.Errorf("project config harnesses must be a list: %s", path)
+		}
+		for _, item := range harnesses.Content {
+			if item.Value == toolID {
+				return nil
+			}
+		}
+		harnesses.Content = append(harnesses.Content, &yaml.Node{Kind: yaml.ScalarNode, Value: toolID})
+		return writeYAMLNodeFile(path, &doc)
+	}
+	root.Content = append(root.Content,
+		&yaml.Node{Kind: yaml.ScalarNode, Value: "harnesses"},
+		&yaml.Node{Kind: yaml.SequenceNode, Content: []*yaml.Node{{Kind: yaml.ScalarNode, Value: toolID}}},
+	)
+	return writeYAMLNodeFile(path, &doc)
+}
+
+func writeYAMLNodeFile(path string, node *yaml.Node) error {
+	data, err := yaml.Marshal(node)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, data, 0o644)
+}
+
+func upsertPlanLockEntry(lock installLock, skillName, toolID, fingerprint string) installLock {
+	now := time.Now().UTC().Format(time.RFC3339)
+	for i := range lock.Skills {
+		if lock.Skills[i].Name != skillName {
+			continue
+		}
+		lock.Skills[i].Fingerprint = fingerprint
+		lock.Skills[i].Harnesses = unionSorted(lock.Skills[i].Harnesses, []string{toolID})
+		if lock.Skills[i].InstalledAt == "" {
+			lock.Skills[i].InstalledAt = now
+		}
+		return lock
+	}
+	lock.Skills = append(lock.Skills, installLockEntry{
+		Name:        skillName,
+		Fingerprint: fingerprint,
+		InstalledAt: now,
+		Harnesses:   []string{toolID},
+	})
+	sort.Slice(lock.Skills, func(i, j int) bool { return lock.Skills[i].Name < lock.Skills[j].Name })
+	return lock
+}
+
+func manifestTargetForInstall(home string, inventory discoverOutput, projectsByID map[string]discoverProject, inst discoverInstallation) (string, string, string, error) {
+	switch inst.Scope {
+	case "global":
+		root, ok := globalPlanRoot(inventory.Tools, inst.ToolID)
+		if !ok {
+			return "", "", "", fmt.Errorf("missing global root for %s", inst.ToolID)
+		}
+		rel, err := filepath.Rel(root, inst.SourcePath)
+		if err != nil {
+			return "", "", "", err
+		}
+		return globalManifestPath(home, inst.ToolID), filepath.ToSlash(rel), root, nil
+	case "project":
+		project, ok := projectsByID[inst.ProjectID]
+		if !ok {
+			return "", "", "", fmt.Errorf("target project not found: %s", inst.ProjectID)
+		}
+		rel, err := filepath.Rel(project.RootPath, inst.SourcePath)
+		if err != nil {
+			return "", "", "", err
+		}
+		return manifestPath(home, project.RootPath), filepath.ToSlash(rel), project.RootPath, nil
+	default:
+		return "", "", "", fmt.Errorf("unsupported install scope: %s", inst.Scope)
+	}
+}
+
+func globalManifestPath(home, toolID string) string {
+	return filepath.Join(home, "manifests", "global-"+slug(toolID)+".json")
+}
+
+func newGlobalManifest(root, toolID string) installManifest {
+	return installManifest{
+		Version:      1,
+		ProjectPath:  root,
+		ProjectSlug:  "global-" + slug(toolID),
+		InstalledAt:  time.Now().UTC().Format(time.RFC3339),
+		ManagedPaths: []string{},
+		Files:        map[string]string{},
+	}
 }
 
 func planManagerHome() string {
