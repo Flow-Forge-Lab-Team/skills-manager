@@ -295,8 +295,12 @@ func persistDiscoverOutput(home string, out discoverOutput, opts discoverOptions
 	}
 	defer tx.Rollback()
 
-	scanID := "scan-" + shortHash(out.ScannedAt+"|"+strings.Join(opts.projectRoots, ",")+"|"+fmt.Sprint(opts.global)+"|"+time.Now().UTC().Format(time.RFC3339Nano))
-	projectRootsJSON, err := jsonString(opts.projectRoots)
+	persistedProjectRoots, err := normalizePersistedProjectRoots(opts.projectRoots)
+	if err != nil {
+		return err
+	}
+	scanID := "scan-" + shortHash(out.ScannedAt+"|"+strings.Join(persistedProjectRoots, ",")+"|"+fmt.Sprint(opts.global)+"|"+time.Now().UTC().Format(time.RFC3339Nano))
+	projectRootsJSON, err := jsonString(persistedProjectRoots)
 	if err != nil {
 		return err
 	}
@@ -403,11 +407,11 @@ ON CONFLICT(installation_id) DO UPDATE SET
 			return err
 		}
 	}
-	if len(opts.projectRoots) > 0 {
-		if err := markMissingProjects(tx, opts.projectRoots, seenProjects, out.ScannedAt); err != nil {
+	if len(persistedProjectRoots) > 0 {
+		if err := markMissingProjects(tx, persistedProjectRoots, seenProjects, out.ScannedAt); err != nil {
 			return err
 		}
-		if err := markMissingInstallations(tx, "project", opts.projectRoots, seenProjectInstalls, out.ScannedAt); err != nil {
+		if err := markMissingInstallations(tx, "project", persistedProjectRoots, seenProjectInstalls, out.ScannedAt); err != nil {
 			return err
 		}
 	}
@@ -442,6 +446,24 @@ ON CONFLICT(group_id) DO UPDATE SET
 	}
 
 	return tx.Commit()
+}
+
+func normalizePersistedProjectRoots(roots []string) ([]string, error) {
+	normalized := make([]string, 0, len(roots))
+	seen := map[string]bool{}
+	for _, root := range roots {
+		root, err := normalizeDiscoverProjectRoot(root)
+		if err != nil {
+			return nil, err
+		}
+		if seen[root] {
+			continue
+		}
+		seen[root] = true
+		normalized = append(normalized, root)
+	}
+	sort.Strings(normalized)
+	return normalized, nil
 }
 
 func markMissingProjects(tx *sql.Tx, roots []string, seen map[string]bool, missingSince string) error {

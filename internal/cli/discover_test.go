@@ -209,6 +209,52 @@ func TestDiscoverPersistsDriftGroupsAndOverlap(t *testing.T) {
 	assertPersistedDriftGroup(t, db, "global_project_overlap", "shared", "", 2)
 }
 
+func TestDiscoverPersistsProjectMissingForRelativeRoot(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	managerHome := filepath.Join(home, ".skills-manager")
+	t.Setenv("SKILLS_MANAGER_HOME", managerHome)
+
+	devRoot := filepath.Join(home, "dev")
+	repo := filepath.Join(devRoot, "app")
+	if err := os.MkdirAll(filepath.Join(repo, ".git"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	skillPath := writeScanSkill(t, filepath.Join(repo, ".codex", "skills"), "project-skill", "---\nname: project-skill\n---\n# Project\n")
+	t.Chdir(devRoot)
+
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{"--json", "discover", "--projects", "."}, &stdout, &stderr)
+	if code != ExitSuccess {
+		t.Fatalf("first discover code = %d, want %d\nstderr:\n%s", code, ExitSuccess, stderr.String())
+	}
+
+	if err := os.RemoveAll(skillPath); err != nil {
+		t.Fatal(err)
+	}
+	stdout.Reset()
+	stderr.Reset()
+	code = Run([]string{"--json", "discover", "--projects", "."}, &stdout, &stderr)
+	if code != ExitSuccess {
+		t.Fatalf("second discover code = %d, want %d\nstderr:\n%s", code, ExitSuccess, stderr.String())
+	}
+
+	db, err := state.Open(managerHome)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	var present int
+	var missingSince string
+	if err := db.QueryRow(`SELECT present, COALESCE(missing_since, '') FROM discovery_installations WHERE skill_name=?`, "project-skill").Scan(&present, &missingSince); err != nil {
+		t.Fatalf("query project install: %v", err)
+	}
+	if present != 0 || missingSince == "" {
+		t.Fatalf("present=%d missing_since=%q, want relative-root scan to mark missing", present, missingSince)
+	}
+}
+
 func TestDiscoverProjectsPrunesGeneratedDirs(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
