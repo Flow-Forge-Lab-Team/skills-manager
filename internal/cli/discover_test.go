@@ -187,6 +187,114 @@ func TestDiscoverProjectsPrunesGeneratedDirs(t *testing.T) {
 	}
 }
 
+func TestDiscoverProjectsSavesReusesAndRemovesApprovedRoots(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	managerHome := filepath.Join(home, ".skills-manager")
+	t.Setenv("SKILLS_MANAGER_HOME", managerHome)
+
+	devRoot := filepath.Join(home, "dev")
+	repo := filepath.Join(devRoot, "app")
+	if err := os.MkdirAll(filepath.Join(repo, ".git"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	writeScanSkill(t, filepath.Join(repo, ".codex", "skills"), "project-skill", "---\nname: project-skill\n---\n# Project\n")
+
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{"--json", "discover", "--projects", devRoot, "--save-project-roots"}, &stdout, &stderr)
+	if code != ExitSuccess {
+		t.Fatalf("save roots discover code = %d, want %d\nstderr:\n%s", code, ExitSuccess, stderr.String())
+	}
+
+	var saved discoverOutput
+	if err := json.Unmarshal(stdout.Bytes(), &saved); err != nil {
+		t.Fatalf("unmarshal saved discover output: %v\n%s", err, stdout.String())
+	}
+	approvedRoot := discoverWalkRoot(devRoot)
+	if saved.Summary.ProjectsFound != 1 || len(saved.ApprovedProjectRoots) != 1 || saved.ApprovedProjectRoots[0] != approvedRoot {
+		t.Fatalf("saved output = %+v, want one project and saved root %q", saved, approvedRoot)
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	code = Run([]string{"--json", "discover", "--list-project-roots"}, &stdout, &stderr)
+	if code != ExitSuccess {
+		t.Fatalf("list roots code = %d, want %d\nstderr:\n%s", code, ExitSuccess, stderr.String())
+	}
+	var listed discoverProjectRootsOutput
+	if err := json.Unmarshal(stdout.Bytes(), &listed); err != nil {
+		t.Fatalf("unmarshal list output: %v\n%s", err, stdout.String())
+	}
+	if len(listed.ProjectRoots) != 1 || listed.ProjectRoots[0] != approvedRoot {
+		t.Fatalf("list output = %+v, want saved root %q", listed, approvedRoot)
+	}
+
+	staleRoot := filepath.Join(home, "missing-dev")
+	writeFile(t, discoverProjectRootsPath(managerHome), approvedRoot+"\n"+staleRoot+"\n")
+
+	stdout.Reset()
+	stderr.Reset()
+	code = Run([]string{"--json", "discover", "--saved-project-roots"}, &stdout, &stderr)
+	if code != ExitSuccess {
+		t.Fatalf("saved-roots discover code = %d, want %d\nstderr:\n%s", code, ExitSuccess, stderr.String())
+	}
+	var reused discoverOutput
+	if err := json.Unmarshal(stdout.Bytes(), &reused); err != nil {
+		t.Fatalf("unmarshal reused discover output: %v\n%s", err, stdout.String())
+	}
+	if reused.Summary.ProjectsFound != 1 || reused.Summary.ProjectLocalSkills != 1 {
+		t.Fatalf("reused summary = %+v, want saved root project skill", reused.Summary)
+	}
+	if len(reused.SkippedProjectRoots) != 1 || reused.SkippedProjectRoots[0] != staleRoot {
+		t.Fatalf("skipped roots = %+v, want stale root %q", reused.SkippedProjectRoots, staleRoot)
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	code = Run([]string{"--json", "discover", "--remove-project-root", devRoot}, &stdout, &stderr)
+	if code != ExitSuccess {
+		t.Fatalf("remove root code = %d, want %d\nstderr:\n%s", code, ExitSuccess, stderr.String())
+	}
+	var removed discoverProjectRootsOutput
+	if err := json.Unmarshal(stdout.Bytes(), &removed); err != nil {
+		t.Fatalf("unmarshal remove output: %v\n%s", err, stdout.String())
+	}
+	if !removed.Updated || !removed.Removed || len(removed.ProjectRoots) != 1 || removed.ProjectRoots[0] != staleRoot {
+		t.Fatalf("remove output = %+v, want only stale root remaining", removed)
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	code = Run([]string{"--json", "discover", "--saved-project-roots"}, &stdout, &stderr)
+	if code != ExitSuccess {
+		t.Fatalf("empty saved-roots discover code = %d, want %d\nstderr:\n%s", code, ExitSuccess, stderr.String())
+	}
+	var empty discoverOutput
+	if err := json.Unmarshal(stdout.Bytes(), &empty); err != nil {
+		t.Fatalf("unmarshal empty saved discover output: %v\n%s", err, stdout.String())
+	}
+	if empty.Summary.ProjectsFound != 0 || empty.Summary.ProjectLocalSkills != 0 {
+		t.Fatalf("empty saved roots summary = %+v, want no projects", empty.Summary)
+	}
+	if len(empty.SkippedProjectRoots) != 1 || empty.SkippedProjectRoots[0] != staleRoot {
+		t.Fatalf("empty skipped roots = %+v, want stale root %q", empty.SkippedProjectRoots, staleRoot)
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	code = Run([]string{"--json", "discover", "--remove-project-root", staleRoot}, &stdout, &stderr)
+	if code != ExitSuccess {
+		t.Fatalf("remove stale root code = %d, want %d\nstderr:\n%s", code, ExitSuccess, stderr.String())
+	}
+	var removedStale discoverProjectRootsOutput
+	if err := json.Unmarshal(stdout.Bytes(), &removedStale); err != nil {
+		t.Fatalf("unmarshal stale remove output: %v\n%s", err, stdout.String())
+	}
+	if !removedStale.Updated || !removedStale.Removed || len(removedStale.ProjectRoots) != 0 {
+		t.Fatalf("stale remove output = %+v, want empty roots", removedStale)
+	}
+}
+
 func TestDiscoverProjectsAcceptsGitFileWorktree(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)

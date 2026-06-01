@@ -538,14 +538,19 @@ Flags:
 
 ` + globalFlagHelp()
 	case "discover":
-		return `skills-manager discover (--global | --projects <roots>) [flags]
+		return `skills-manager discover (--global | --projects <roots> | --saved-project-roots) [flags]
 
 Build a read-only inventory of existing skill and rule installations. Discovery
 requires an explicit consent scope and writes only manager-local state.
 
 Flags:
-  --global               scan known global tool skill roots
-  --projects <roots>     comma-separated approved roots to search for git repos
+  --global                scan known global tool skill roots
+  --projects <roots>      comma-separated approved roots to search for git repos
+  --save-project-roots    save --projects roots for future scans
+  --saved-project-roots   scan saved approved project roots
+  --list-project-roots    print saved approved project roots
+  --remove-project-root <root>
+                          remove a saved approved project root
 
 ` + globalFlagHelp()
 	case "new":

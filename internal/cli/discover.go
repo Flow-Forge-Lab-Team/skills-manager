@@ -68,12 +68,20 @@ type discoverSummary struct {
 }
 
 type discoverOutput struct {
-	ScannedAt     string                 `json:"scanned_at"`
-	Tools         []discoverTool         `json:"tools"`
-	Projects      []discoverProject      `json:"projects,omitempty"`
-	Installations []discoverInstallation `json:"installations"`
-	DriftGroups   []discoverDriftGroup   `json:"drift_groups,omitempty"`
-	Summary       discoverSummary        `json:"summary"`
+	ScannedAt            string                 `json:"scanned_at"`
+	ApprovedProjectRoots []string               `json:"approved_project_roots,omitempty"`
+	SkippedProjectRoots  []string               `json:"skipped_project_roots,omitempty"`
+	Tools                []discoverTool         `json:"tools"`
+	Projects             []discoverProject      `json:"projects,omitempty"`
+	Installations        []discoverInstallation `json:"installations"`
+	DriftGroups          []discoverDriftGroup   `json:"drift_groups,omitempty"`
+	Summary              discoverSummary        `json:"summary"`
+}
+
+type discoverProjectRootsOutput struct {
+	ProjectRoots []string `json:"project_roots"`
+	Updated      bool     `json:"updated,omitempty"`
+	Removed      bool     `json:"removed,omitempty"`
 }
 
 type discoverRoot struct {
@@ -90,16 +98,55 @@ func runDiscover(args []string, stdout io.Writer, stderr io.Writer, gf globalFla
 		fmt.Fprintln(stderr, err)
 		return ExitUsageError
 	}
-	if !opts.global && len(opts.projectRoots) == 0 {
-		fmt.Fprintln(stderr, "discover requires an explicit scope: --global and/or --projects <roots>")
+	if err := validateDiscoverOptions(opts); err != nil {
+		fmt.Fprintln(stderr, err)
 		return ExitUsageError
 	}
 
+	home, err := managerHome()
+	if err != nil {
+		fmt.Fprintf(stderr, "manager home: %v\n", err)
+		return ExitOpError
+	}
+
+	if opts.listProjectRoots {
+		return printDiscoverProjectRoots(stdout, stderr, gf, home, false, false)
+	}
+	if opts.removeProjectRoot != "" {
+		removed, err := removeDiscoverProjectRoot(home, opts.removeProjectRoot)
+		if err != nil {
+			fmt.Fprintf(stderr, "remove project root: %v\n", err)
+			return ExitOpError
+		}
+		return printDiscoverProjectRoots(stdout, stderr, gf, home, true, removed)
+	}
+	if opts.savedProjectRoots {
+		roots, err := loadDiscoverProjectRoots(home)
+		if err != nil {
+			fmt.Fprintf(stderr, "read project roots: %v\n", err)
+			return ExitOpError
+		}
+		for _, root := range roots {
+			if dirExists(root) {
+				opts.projectRoots = append(opts.projectRoots, root)
+				continue
+			}
+			opts.skippedProjectRoots = append(opts.skippedProjectRoots, root)
+		}
+	}
 	out, err := collectDiscovery(opts)
 	if err != nil {
 		fmt.Fprintf(stderr, "discover: %v\n", err)
 		return ExitOpError
 	}
+	if opts.saveProjectRoots {
+		if err := saveDiscoverProjectRoots(home, opts.projectRoots); err != nil {
+			fmt.Fprintf(stderr, "save project roots: %v\n", err)
+			return ExitOpError
+		}
+	}
+	out.ApprovedProjectRoots, _ = loadDiscoverProjectRoots(home)
+	out.SkippedProjectRoots = opts.skippedProjectRoots
 
 	if gf.JSON {
 		if err := writeJSON(stdout, out); err != nil {
@@ -113,8 +160,13 @@ func runDiscover(args []string, stdout io.Writer, stderr io.Writer, gf globalFla
 }
 
 type discoverOptions struct {
-	global       bool
-	projectRoots []string
+	global              bool
+	projectRoots        []string
+	savedProjectRoots   bool
+	saveProjectRoots    bool
+	listProjectRoots    bool
+	removeProjectRoot   string
+	skippedProjectRoots []string
 }
 
 func parseDiscoverArgs(args []string) (discoverOptions, error) {
@@ -132,11 +184,41 @@ func parseDiscoverArgs(args []string) (discoverOptions, error) {
 			i++
 		case strings.HasPrefix(arg, "--projects="):
 			opts.projectRoots = appendSplitPaths(opts.projectRoots, strings.TrimPrefix(arg, "--projects="))
+		case arg == "--saved-project-roots":
+			opts.savedProjectRoots = true
+		case arg == "--save-project-roots":
+			opts.saveProjectRoots = true
+		case arg == "--list-project-roots":
+			opts.listProjectRoots = true
+		case arg == "--remove-project-root":
+			if i+1 >= len(args) {
+				return opts, fmt.Errorf("--remove-project-root requires a path")
+			}
+			opts.removeProjectRoot = args[i+1]
+			i++
+		case strings.HasPrefix(arg, "--remove-project-root="):
+			opts.removeProjectRoot = strings.TrimPrefix(arg, "--remove-project-root=")
 		default:
 			return opts, fmt.Errorf("unknown discover flag: %s", arg)
 		}
 	}
 	return opts, nil
+}
+
+func validateDiscoverOptions(opts discoverOptions) error {
+	if opts.listProjectRoots && (opts.global || len(opts.projectRoots) > 0 || opts.savedProjectRoots || opts.saveProjectRoots || opts.removeProjectRoot != "") {
+		return fmt.Errorf("--list-project-roots cannot be combined with scan or mutation flags")
+	}
+	if opts.removeProjectRoot != "" && (opts.global || len(opts.projectRoots) > 0 || opts.savedProjectRoots || opts.saveProjectRoots || opts.listProjectRoots) {
+		return fmt.Errorf("--remove-project-root cannot be combined with scan flags")
+	}
+	if opts.saveProjectRoots && len(opts.projectRoots) == 0 {
+		return fmt.Errorf("--save-project-roots requires --projects <roots>")
+	}
+	if opts.global || len(opts.projectRoots) > 0 || opts.savedProjectRoots || opts.listProjectRoots || opts.removeProjectRoot != "" {
+		return nil
+	}
+	return fmt.Errorf("discover requires an explicit scope: --global, --projects <roots>, or --saved-project-roots")
 }
 
 func appendSplitPaths(paths []string, value string) []string {
@@ -226,15 +308,131 @@ func globalDiscoverRoots(home string) []discoverRoot {
 	}
 }
 
+func discoverProjectRootsPath(home string) string {
+	return filepath.Join(home, "discover-project-roots.txt")
+}
+
+func loadDiscoverProjectRoots(home string) ([]string, error) {
+	data, err := os.ReadFile(discoverProjectRootsPath(home))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return []string{}, nil
+		}
+		return nil, err
+	}
+	roots := []string{}
+	seen := map[string]bool{}
+	for _, line := range strings.Split(string(data), "\n") {
+		root := strings.TrimSpace(line)
+		if root == "" || strings.HasPrefix(root, "#") || seen[root] {
+			continue
+		}
+		seen[root] = true
+		roots = append(roots, root)
+	}
+	sort.Strings(roots)
+	return roots, nil
+}
+
+func saveDiscoverProjectRoots(home string, rawRoots []string) error {
+	existing, err := loadDiscoverProjectRoots(home)
+	if err != nil {
+		return err
+	}
+	seen := map[string]bool{}
+	for _, root := range existing {
+		seen[root] = true
+	}
+	for _, raw := range rawRoots {
+		root, err := normalizeDiscoverProjectRoot(raw)
+		if err != nil {
+			return err
+		}
+		seen[root] = true
+	}
+	roots := make([]string, 0, len(seen))
+	for root := range seen {
+		roots = append(roots, root)
+	}
+	sort.Strings(roots)
+	return writeDiscoverProjectRoots(home, roots)
+}
+
+func removeDiscoverProjectRoot(home, rawRoot string) (bool, error) {
+	target, err := normalizeDiscoverProjectRoot(rawRoot)
+	if err != nil {
+		return false, err
+	}
+	existing, err := loadDiscoverProjectRoots(home)
+	if err != nil {
+		return false, err
+	}
+	var kept []string
+	removed := false
+	for _, root := range existing {
+		if sameDiscoverPath(root, target) {
+			removed = true
+			continue
+		}
+		kept = append(kept, root)
+	}
+	if !removed {
+		return false, nil
+	}
+	return true, writeDiscoverProjectRoots(home, kept)
+}
+
+func writeDiscoverProjectRoots(home string, roots []string) error {
+	if err := os.MkdirAll(home, 0755); err != nil {
+		return err
+	}
+	var b strings.Builder
+	for _, root := range roots {
+		fmt.Fprintln(&b, root)
+	}
+	return os.WriteFile(discoverProjectRootsPath(home), []byte(b.String()), 0600)
+}
+
+func printDiscoverProjectRoots(stdout io.Writer, stderr io.Writer, gf globalFlags, home string, updated bool, removed bool) int {
+	roots, err := loadDiscoverProjectRoots(home)
+	if err != nil {
+		fmt.Fprintf(stderr, "read project roots: %v\n", err)
+		return ExitOpError
+	}
+	if gf.JSON {
+		if err := writeJSON(stdout, discoverProjectRootsOutput{ProjectRoots: roots, Updated: updated, Removed: removed}); err != nil {
+			fmt.Fprintln(stderr, err)
+			return ExitOpError
+		}
+		return ExitSuccess
+	}
+	out := gf.outWriter(stdout)
+	if updated {
+		if removed {
+			fmt.Fprintln(out, "Removed approved project root.")
+		} else {
+			fmt.Fprintln(out, "No matching approved project root was saved.")
+		}
+	}
+	if len(roots) == 0 {
+		fmt.Fprintln(out, "Approved project roots: none")
+		return ExitSuccess
+	}
+	fmt.Fprintln(out, "Approved project roots:")
+	for _, root := range roots {
+		fmt.Fprintf(out, "  - %s\n", root)
+	}
+	return ExitSuccess
+}
+
 func discoverProjectRoots(paths []string) ([]string, error) {
 	seen := map[string]bool{}
 	var repos []string
 	for _, raw := range paths {
-		root, err := absoluteProjectPath(raw)
+		root, err := normalizeDiscoverProjectRoot(raw)
 		if err != nil {
 			return nil, err
 		}
-		root = discoverWalkRoot(root)
 		err = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 			if err != nil {
 				if path == root {
@@ -264,6 +462,14 @@ func discoverProjectRoots(paths []string) ([]string, error) {
 	}
 	sort.Strings(repos)
 	return repos, nil
+}
+
+func normalizeDiscoverProjectRoot(raw string) (string, error) {
+	root, err := absoluteProjectPath(raw)
+	if err != nil {
+		return "", err
+	}
+	return discoverWalkRoot(root), nil
 }
 
 func shouldPruneDiscoverDir(name, path string) bool {
@@ -700,6 +906,9 @@ func printDiscoverSummary(out io.Writer, result discoverOutput) {
 	fmt.Fprintf(out, "Discovered tools: %d present, %d missing\n", result.Summary.ToolsFound, result.Summary.ToolsMissing)
 	fmt.Fprintf(out, "Skills: %d global, %d project-local\n", result.Summary.GlobalSkills, result.Summary.ProjectLocalSkills)
 	fmt.Fprintf(out, "Projects: %d\n", result.Summary.ProjectsFound)
+	if len(result.SkippedProjectRoots) > 0 {
+		fmt.Fprintf(out, "Skipped saved project roots: %d\n", len(result.SkippedProjectRoots))
+	}
 	fmt.Fprintf(out, "Review groups: %d drift, %d duplicate-content\n", result.Summary.DriftGroups, result.Summary.DuplicateContent)
 	if len(result.Installations) > 0 {
 		fmt.Fprintln(out, "\nInstallations:")

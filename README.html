@@ -88,11 +88,13 @@ artifact from the release.</p>
 <p>To inspect existing local skill installs without changing them,
 run:</p>
 <div class="sourceCode" id="cb4"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a><span class="ex">skills-manager</span> discover <span class="at">--global</span></span>
-<span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a><span class="ex">skills-manager</span> discover <span class="at">--projects</span> ~/dev</span></code></pre></div>
+<span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a><span class="ex">skills-manager</span> discover <span class="at">--projects</span> ~/dev <span class="at">--save-project-roots</span></span>
+<span id="cb4-3"><a href="#cb4-3" aria-hidden="true" tabindex="-1"></a><span class="ex">skills-manager</span> discover <span class="at">--saved-project-roots</span></span></code></pre></div>
 <p>Discovery is read-only for tool and project directories. It reports
 detected tools, global and project-local skills, content hashes, drift
 groups, duplicate content, and missing tool coverage before any install
-or cleanup action.</p>
+or cleanup action. Saved project roots are manager-local consent state
+and can be listed or removed later.</p>
 <h2 id="real-cli-demo">Real CLI Demo</h2>
 <p>This transcript was generated from the current CLI with a temporary
 manager home and the committed <a

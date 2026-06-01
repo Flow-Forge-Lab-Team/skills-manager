@@ -160,7 +160,10 @@ id="skills-manager-discover"><code>skills-manager discover</code></h3>
 the assessment-first path: it reports what exists before recommending or
 applying changes.</p>
 <pre><code>skills-manager discover --global
-skills-manager discover --projects ~/dev
+skills-manager discover --projects ~/dev --save-project-roots
+skills-manager discover --saved-project-roots
+skills-manager discover --list-project-roots
+skills-manager discover --remove-project-root ~/dev
 skills-manager discover --global --projects ~/dev --json</code></pre>
 <p>Discovery requires an explicit consent scope. <code>--global</code>
 checks known global tool roots such as Claude, Codex, Grok,
@@ -169,6 +172,13 @@ searches approved roots for git repositories, pruning generated
 directories such as <code>node_modules</code>, <code>.next</code>,
 <code>dist</code>, <code>build</code>, <code>.git</code>, vendored
 caches, and Codex scratch workspaces.</p>
+<p>Use <code>--save-project-roots</code> with <code>--projects</code> to
+persist approved roots under <code>~/.skills-manager</code>,
+<code>--saved-project-roots</code> to scan them later,
+<code>--list-project-roots</code> to inspect them, and
+<code>--remove-project-root &lt;root&gt;</code> to revoke one. Stale
+saved roots are skipped during <code>--saved-project-roots</code> scans
+and reported as <code>skipped_project_roots</code> in JSON output.</p>
 <p>JSON output includes detected tools, projects, concrete
 installations, content hashes, ownership, scope, and drift groups.
 Missing tools are coverage gaps, not errors.</p>
