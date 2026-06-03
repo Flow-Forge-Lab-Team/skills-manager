@@ -105,6 +105,7 @@ function el(tag, attrs, children) {
       if (k === "className") n.className = v;
       else if (k === "text") n.textContent = v;
       else if (k === "htmlFor") n.htmlFor = v;
+      else if (typeof v === "boolean") { if (v) n.setAttribute(k, ""); }
       else if (k.startsWith("on")) n.addEventListener(k.slice(2).toLowerCase(), v);
       else n.setAttribute(k, v);
     });
