@@ -920,7 +920,8 @@ const WIZARD_STEPS = [
     body: "Run a read-only discovery to build your inventory: detected tools, global and project skills, unmanaged skills, drift, duplicates, and coverage gaps.",
     primary: "Review recommendations",
     operation: true,
-    hint: "Build your inventory by running `skills-manager discover --global` in your terminal, then reopen setup to continue.",
+    refreshable: true,
+    hint: "Build your inventory by running `skills-manager discover --global` in your terminal, then choose Check again to continue.",
   },
   {
     id: "review", label: "Review", title: "Review recommendations",
@@ -1073,6 +1074,14 @@ async function renderSetupWizard(content) {
     el("p", { className: "muted", text: step.body }),
   ]);
   if (step.hint) panel.appendChild(el("p", { className: "advisory-note", text: step.hint }));
+  const resolved = operationStepResolved(step, setupStatus);
+  // Re-read the read-only setup status in place, so a user who ran the hinted
+  // CLI discovery can continue without leaving the wizard (the FLO-406 Discover
+  // "Refresh"). This only re-reads status; it does not run discovery itself.
+  if (step.refreshable && !resolved) {
+    panel.appendChild(el("button", { className: "btn", type: "button", text: "Check again",
+      onClick: async () => { await refreshSetupStatus(); render(); } }));
+  }
   wizard.appendChild(panel);
 
   const back = el("button", { className: "btn", type: "button", text: "Back" });
@@ -1087,7 +1096,7 @@ async function renderSetupWizard(content) {
   // Discover when an inventory exists) never strands the user with a disabled
   // Next. The operations themselves land in FLO-409/411; until then an
   // unresolved operation step's hint points to the working CLI path.
-  next.disabled = !operationStepResolved(step, setupStatus);
+  next.disabled = !resolved;
   next.onclick = () => { if (wizardStep >= WIZARD_STEPS.length) exitSetupWizard(); else wizardGoTo(wizardStep + 1); };
   wizard.appendChild(el("div", { className: "wizard-nav" }, [
     back,
