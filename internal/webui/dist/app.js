@@ -1080,6 +1080,13 @@ async function previewWizardRecommendation(rec) {
   render();
 }
 
+function mergeWizardActionReview(review) {
+  if (!wizardAssessment || wizardAssessment.error || !review) return;
+  const reviews = (wizardAssessment.action_reviews || []).filter((r) => r.recommendation_id !== review.recommendation_id);
+  reviews.push(review);
+  wizardAssessment.action_reviews = reviews;
+}
+
 async function deferWizardRecommendation(rec, reason) {
   const id = rec.recommendation_id;
   const entry = wizardReviewEntry(id);
@@ -1092,6 +1099,8 @@ async function deferWizardRecommendation(rec, reason) {
       status: "ignored",
       reason: reason || "deferred in setup wizard",
     });
+    mergeWizardActionReview(entry.review);
+    await refreshSetupStatus();
   } catch (e) {
     entry.previewError = e.message;
   }
@@ -1126,8 +1135,9 @@ function renderWizardReviewGroups(panel, assessment) {
 function renderWizardRecommendationCard(rec, persistedReview, installsByID, assessment) {
   const id = rec.recommendation_id;
   const entry = wizardReviewEntry(id);
-  const selectable = wizardRecommendationSelectable(rec, persistedReview);
-  const selected = wizardDefaultSelected(rec, persistedReview);
+  const review = entry.review || persistedReview || { status: "new" };
+  const selectable = wizardRecommendationSelectable(rec, review);
+  const selected = wizardDefaultSelected(rec, review);
   const risky = wizardRecommendationIsRisky(rec);
   const skillState = wizardRecommendationSkillState(rec, installsByID);
   const card = el("article", { className: "wizard-review-card" + (risky ? " wizard-review-card-risky" : "") });
@@ -1153,7 +1163,7 @@ function renderWizardRecommendationCard(rec, persistedReview, installsByID, asse
     el("div", { className: "wizard-review-badges" }, [
       badge(rec.kind || "action", risky ? "warn" : ""),
       badge(skillState.label, skillState.tone),
-      persistedReview && persistedReview.status !== "new" ? badge(persistedReview.status, actionStatusTone(persistedReview.status)) : null,
+      review.status !== "new" ? badge(review.status, actionStatusTone(review.status)) : null,
     ].filter(Boolean)),
   ]);
   if (selectable) {
