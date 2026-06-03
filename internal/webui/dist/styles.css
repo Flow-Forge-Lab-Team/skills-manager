@@ -185,3 +185,32 @@ pre.compact { max-height: 260px; margin-top: 8px; }
   .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .stat { padding: 12px; }
 }
+
+/* First-run setup wizard (FLO-408) */
+.setup-wizard { display: grid; gap: 16px; max-width: 760px; }
+.wizard-stepper { list-style: none; display: flex; flex-wrap: wrap; gap: 8px; padding: 0; }
+.wizard-step {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 12px; border: 1px solid var(--border); border-radius: 999px;
+  background: var(--bg-panel); color: var(--text-faint); font-size: 12px;
+}
+.wizard-step-index {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 20px; height: 20px; border-radius: 999px;
+  background: var(--bg-elev); color: var(--text-muted);
+  font-size: 11px; font-variant-numeric: tabular-nums;
+}
+.wizard-step.active { border-color: var(--accent); background: var(--accent-dim); color: var(--accent); }
+.wizard-step.active .wizard-step-index { background: var(--accent); color: var(--accent-text); }
+.wizard-step.complete { color: var(--ok); }
+.wizard-step.complete .wizard-step-index { background: rgba(111, 199, 141, 0.16); color: var(--ok); }
+.wizard-panel { display: grid; gap: 8px; }
+.wizard-title { font-size: 15px; width: fit-content; }
+.wizard-title:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.wizard-nav { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.wizard-nav .btn.confirm { margin-left: auto; }
+.setup-resume {
+  display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between;
+  border-color: var(--accent); background: var(--accent-dim); margin-bottom: 16px;
+}
+.setup-resume .update-actions { margin-top: 0; }

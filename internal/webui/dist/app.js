@@ -317,6 +317,7 @@ async function renderOverview(content) {
   document.getElementById("page-subtitle").textContent =
     "Live state from disk · " + (o.generated_at || "");
   setHomePill(o.home || "");
+  renderSetupResumeBanner(content);
   content.appendChild(el("div", { className: "stats" }, [
     statCard("Library skills", o.library_skills),
     statCard("Projects", o.projects),
@@ -894,6 +895,224 @@ function selectControlPreset(label, value, options, onChange) {
   return select;
 }
 
+// ---- First-run setup wizard (FLO-408) -------------------------------------
+// Status-driven onboarding shell per the FLO-406 UX contract
+// (docs/SETUP_WIZARD.md). This issue owns the shell and routing only: the
+// wizard owns the step layout, stepper, back/next, and exit, and Overview and
+// Discover hand fresh users off to it so a first-run user never lands on an
+// empty dashboard. Running discovery (FLO-409) and applying recommendations
+// (FLO-410/411) fill in the operation steps later; here the steps describe the
+// flow and navigation works end to end.
+
+let setupStatus = null;           // last /api/v1/setup response (read-only)
+let setupExited = false;          // ephemeral: user exited the wizard this load
+let setupResumeDismissed = false; // ephemeral: "Resume setup" banner dismissed
+let wizardStep = 1;               // current wizard step, 1-based
+
+const WIZARD_STEPS = [
+  {
+    id: "scope", label: "Scope", title: "Choose what to inspect",
+    body: "Pick what to inspect: your global skills, the current project, or both. Inspection is read-only and local-only — nothing leaves your machine and no files are changed.",
+    primary: "Start discovery",
+  },
+  {
+    id: "discover", label: "Discover", title: "Discover your skills",
+    body: "Run a read-only discovery to build your inventory: detected tools, global and project skills, unmanaged skills, drift, duplicates, and coverage gaps.",
+    primary: "Review recommendations",
+    operation: true,
+    refreshable: true,
+    hint: "Build your inventory by running `skills-manager discover --global` in your terminal, then choose Check again to continue.",
+  },
+  {
+    id: "review", label: "Review", title: "Review recommendations",
+    body: "Review recommendations grouped by kind — ingest, install, review drift, or ignore. Each explains why it exists, and you can preview the exact files an action would change before anything is applied.",
+    primary: "Continue to apply",
+  },
+  {
+    id: "apply", label: "Apply", title: "Apply selected actions",
+    body: "Apply only the actions you selected, and only after you confirm the previewed changes. Each plan's exact file changes are shown, and results are reported per action.",
+    primary: "Apply selected",
+    operation: true,
+    hint: "Applying changes happens here, after you review and confirm each action. You can finish setup later and resume from the dashboard.",
+  },
+  {
+    id: "done", label: "Done", title: "Setup complete",
+    body: "You're set up. Review what was applied, ignored, or failed. You can re-run discovery anytime from the Discover tab.",
+    primary: "Go to dashboard",
+  },
+];
+
+async function refreshSetupStatus() {
+  try {
+    setupStatus = await api("/api/v1/setup");
+    // The home pill lives in the app shell but is otherwise only populated by
+    // the Overview view; set it here so it is correct on the first-run wizard,
+    // which Overview-skipping fresh users see first.
+    if (setupStatus && setupStatus.home) setHomePill(setupStatus.home);
+  } catch (e) {
+    // A status that cannot load is treated as no_discovery with an error banner
+    // (the FLO-406/407 contract) so the UI shows a helpful next step, not a
+    // blank screen.
+    setupStatus = { state: "no_discovery", error: e.message };
+  }
+  return setupStatus;
+}
+
+// isFreshSetupState reports the states whose default landing is the wizard (the
+// fresh-user invariant): such a user never lands on an empty dashboard.
+function isFreshSetupState(state) {
+  return state === "no_discovery" || state === "discovered_unmanaged";
+}
+
+// setupStartStep maps a setup state to the wizard's entry step (1-based) per the
+// FLO-406 routing table; earlier steps are treated as already complete.
+function setupStartStep(state) {
+  switch (state) {
+    case "discovered_unmanaged": return 3; // skip scope/discover, resume at review
+    case "partially_managed": return 3;    // first incomplete step is review
+    case "completed": return WIZARD_STEPS.length;
+    default: return 1;                      // no_discovery and unknown: start at scope
+  }
+}
+
+function enterSetupWizard(step) {
+  setupExited = false;
+  wizardStep = Math.min(WIZARD_STEPS.length, Math.max(1, step || 1));
+  currentView = "setup";
+  render();
+}
+
+function exitSetupWizard() {
+  // Exit is safe and non-destructive: the shell never writes, so only the
+  // ephemeral in-wizard position is dropped. Re-entry recomputes status.
+  setupExited = true;
+  currentView = "overview";
+  render();
+}
+
+function wizardGoTo(step) {
+  wizardStep = Math.min(WIZARD_STEPS.length, Math.max(1, step));
+  render();
+}
+
+// renderSetupResumeBanner shows a persistent, dismissible affordance on the
+// dashboard whenever first-run setup is incomplete. partially_managed users
+// land on the dashboard and resume here; a fresh user who cancels the wizard
+// also lands here, so this is their one-click way back in — never only a reload
+// (FLO-406 routing table; keeps Cancel honest about "returns to the dashboard"
+// without trapping the user back in the wizard on every navigation).
+function renderSetupResumeBanner(content) {
+  if (!setupStatus || setupResumeDismissed || setupStatus.state === "completed") return;
+  // no_discovery has nothing discovered yet, so frame it as starting setup;
+  // the other incomplete states already have an inventory to resume from.
+  const fresh = !setupStatus.inventory_exists;
+  content.appendChild(el("section", { className: "panel setup-resume" }, [
+    el("div", null, [
+      el("div", { className: "row-title", text: fresh ? "Set up skills-manager" : "Finish setting up" }),
+      el("p", { className: "muted", text: fresh
+        ? "Discover the skills you already have and review what's recommended. Nothing changes without your confirmation."
+        : "Some recommendations are still unreviewed. Resume setup to review and apply what's left." }),
+    ]),
+    el("div", { className: "update-actions" }, [
+      el("button", { className: "btn confirm", type: "button", text: fresh ? "Start setup" : "Resume setup", onClick: () => enterSetupWizard(setupStartStep(setupStatus.state)) }),
+      el("button", { className: "btn", type: "button", text: "Dismiss", onClick: () => { setupResumeDismissed = true; render(); } }),
+    ]),
+  ]));
+}
+
+function renderSetupStepper() {
+  const list = el("ol", { className: "wizard-stepper" });
+  WIZARD_STEPS.forEach((step, i) => {
+    const n = i + 1;
+    const stateClass = n === wizardStep ? " active" : (n < wizardStep ? " complete" : "");
+    list.appendChild(el("li", {
+      className: "wizard-step" + stateClass,
+      "aria-current": n === wizardStep ? "step" : "false",
+    }, [
+      el("span", { className: "wizard-step-index", "aria-hidden": "true", text: n < wizardStep ? "✓" : String(n) }),
+      el("span", { className: "wizard-step-label", text: step.label }),
+    ]));
+  });
+  return list;
+}
+
+// operationStepResolved reports whether an operation step's work is already done
+// per persisted setup status (FLO-406 advance conditions): Discover resolves
+// once an inventory snapshot exists; Apply resolves once no actionable
+// recommendation is left open. Non-operation steps are always "resolved".
+// Forward navigation is blocked only on operations that have NOT resolved, so
+// returning to an already-resolved step does not strand the user.
+function operationStepResolved(step, status) {
+  if (!step.operation) return true;
+  if (!status) return false;
+  if (step.id === "discover") return !!status.inventory_exists;
+  if (step.id === "apply") return !status.open_actions;
+  return false;
+}
+
+// renderSetupWizard renders the wizard shell: stepper progress, the current
+// step's description, and Back / Cancel / primary controls. Focus moves to the
+// step heading on each render so keyboard and screen-reader users land at the
+// start of the new step; the controls are native buttons with visible focus.
+async function renderSetupWizard(content) {
+  if (!setupStatus) await refreshSetupStatus();
+  const step = WIZARD_STEPS[wizardStep - 1];
+  document.getElementById("page-title").textContent = "Setup";
+  document.getElementById("page-subtitle").textContent =
+    "Guided first-run setup · step " + wizardStep + " of " + WIZARD_STEPS.length;
+
+  const wizard = el("section", { className: "setup-wizard", role: "group", "aria-label": "First-run setup" });
+  wizard.appendChild(renderSetupStepper());
+
+  if (setupStatus && setupStatus.error) {
+    wizard.appendChild(el("div", { className: "safety-banner", text: "Could not load setup status: " + setupStatus.error + ". Showing first-run setup." }));
+  }
+
+  const heading = el("h2", { className: "panel-title wizard-title", tabindex: "-1", text: step.title });
+  const panel = el("section", { className: "panel wizard-panel" }, [
+    heading,
+    el("p", { className: "muted", text: step.body }),
+  ]);
+  if (step.hint) panel.appendChild(el("p", { className: "advisory-note", text: step.hint }));
+  const resolved = operationStepResolved(step, setupStatus);
+  // Re-read the read-only setup status in place, so a user who ran the hinted
+  // CLI discovery can continue without leaving the wizard (the FLO-406 Discover
+  // "Refresh"). This only re-reads status; it does not run discovery itself.
+  if (step.refreshable && !resolved) {
+    panel.appendChild(el("button", { className: "btn", type: "button", text: "Check again",
+      onClick: async () => { await refreshSetupStatus(); render(); } }));
+  }
+  wizard.appendChild(panel);
+
+  const back = el("button", { className: "btn", type: "button", text: "Back" });
+  back.disabled = wizardStep <= 1;
+  back.onclick = () => wizardGoTo(wizardStep - 1);
+  // Operation steps (Discover, Apply) block forward navigation until their
+  // operation resolves (FLO-406 progress behavior), so the wizard never advances
+  // to Done without a discovery snapshot or apply result. Resolution is read
+  // from persisted status, so returning to an already-resolved step never
+  // strands the user. The operations themselves land in FLO-409/411, so until
+  // then an unresolved operation step keeps a non-dead-end forward action:
+  //   - self-serviceable steps (Discover) keep the advancing primary disabled
+  //     and offer "Check again" after the user runs the hinted CLI discovery;
+  //   - steps with no in-build path to resolve (Apply) convert the primary to a
+  //     "Finish setup later" exit, since setup stays resumable from the dashboard.
+  const isLast = wizardStep >= WIZARD_STEPS.length;
+  const blocked = step.operation && !resolved;
+  const exitInstead = blocked && !step.refreshable;
+  const next = el("button", { className: "btn confirm", type: "button", text: exitInstead ? "Finish setup later" : step.primary });
+  next.disabled = blocked && !exitInstead;
+  next.onclick = exitInstead ? exitSetupWizard : () => { if (isLast) exitSetupWizard(); else wizardGoTo(wizardStep + 1); };
+  wizard.appendChild(el("div", { className: "wizard-nav" }, [
+    back,
+    el("button", { className: "btn", type: "button", text: "Cancel setup", onClick: exitSetupWizard }),
+    next,
+  ]));
+
+  content.appendChild(wizard);
+  heading.focus();
+}
+
 async function render() {
   try {
     await ensureSession();
@@ -901,6 +1120,25 @@ async function render() {
     document.getElementById("content").replaceChildren(el("div", { className: "error", text: e.message }));
     return;
   }
+
+  // Status-driven entry points (FLO-406 DR-1 / FLO-408): Overview and Discover
+  // read setup status on load and hand fresh users off to the wizard, so a
+  // first-run user never lands on an empty dashboard. Returning users with a
+  // useful dashboard (partially_managed, completed) render normally.
+  //
+  // Discover is purely an inventory surface — empty for a fresh user — so it
+  // always hands them to the wizard. Overview is also the Cancel/Exit
+  // destination, so it honors a one-session exit and stays viewable (with the
+  // "Start setup" affordance) rather than trapping the user back in the wizard.
+  if (currentView === "overview" || currentView === "discover") {
+    await refreshSetupStatus();
+    const honorExit = currentView === "overview" && setupExited;
+    if (!honorExit && isFreshSetupState(setupStatus.state)) {
+      wizardStep = setupStartStep(setupStatus.state);
+      currentView = "setup";
+    }
+  }
+
   renderNav();
   const view = views.find((v) => v.id === currentView);
   document.getElementById("page-title").textContent = view ? view.label : "";
@@ -909,7 +1147,8 @@ async function render() {
   const content = document.getElementById("content");
   content.replaceChildren();
   try {
-    if (currentView === "overview") await renderOverview(content);
+    if (currentView === "setup") await renderSetupWizard(content);
+    else if (currentView === "overview") await renderOverview(content);
     else if (currentView === "library") await renderLibrary(content);
     else if (currentView === "updates") await renderUpdates(content);
     else if (currentView === "projects") await renderProjects(content);

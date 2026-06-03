@@ -32,6 +32,10 @@ const (
 type triageSetupStatus struct {
 	State       string `json:"state"`
 	GeneratedAt string `json:"generated_at"`
+	// Home is the manager home the status was computed for, so the web UI can
+	// show it (e.g. the sidebar home pill) on the first-run wizard, which fresh
+	// users see before the dashboard — otherwise the only screen that reports it.
+	Home string `json:"home"`
 
 	// Signals from the FLO-406 contract.
 	InventoryExists bool `json:"inventory_exists"` // A: a discovery snapshot is persisted
@@ -75,6 +79,7 @@ func loadTriageSetupStatus(home string) triageSetupStatus {
 		status := triageSetupStatus{
 			State:                setupStateNoDiscovery,
 			GeneratedAt:          generatedAt,
+			Home:                 home,
 			ManagedLibrarySkills: managedLibrarySkills,
 		}
 		// A missing database is a fresh user with nothing discovered yet; any
@@ -91,6 +96,7 @@ func loadTriageSetupStatus(home string) triageSetupStatus {
 		return triageSetupStatus{
 			State:                setupStateNoDiscovery,
 			GeneratedAt:          generatedAt,
+			Home:                 home,
 			ManagedLibrarySkills: managedLibrarySkills,
 			Error:                err.Error(),
 		}
@@ -98,6 +104,7 @@ func loadTriageSetupStatus(home string) triageSetupStatus {
 
 	status := setupStatusFromAssessment(assessment, managedLibrarySkills)
 	status.GeneratedAt = generatedAt
+	status.Home = home
 	return status
 }
 
