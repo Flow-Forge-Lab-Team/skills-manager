@@ -1281,13 +1281,7 @@ async function renderSetupWizard(content) {
     next.disabled = !wizardScanScope || wizardDiscoverPhase === "running";
     next.onclick = async () => {
       wizardGoTo(2);
-      if (setupStatus && setupStatus.inventory_exists) {
-        wizardDiscoverPhase = "done";
-        await loadWizardDiscoverSummary();
-        render();
-      } else {
-        await startWizardDiscovery();
-      }
+      await startWizardDiscovery();
     };
   } else {
     next.disabled = (blocked && !exitInstead) || wizardDiscoverPhase === "running";
