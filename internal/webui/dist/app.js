@@ -895,33 +895,43 @@ function selectControlPreset(label, value, options, onChange) {
   return select;
 }
 
-// ---- First-run setup wizard (FLO-408) -------------------------------------
+// ---- First-run setup wizard (FLO-408 / FLO-409) ---------------------------
 // Status-driven onboarding shell per the FLO-406 UX contract
-// (docs/SETUP_WIZARD.md). This issue owns the shell and routing only: the
-// wizard owns the step layout, stepper, back/next, and exit, and Overview and
-// Discover hand fresh users off to it so a first-run user never lands on an
-// empty dashboard. Running discovery (FLO-409) and applying recommendations
-// (FLO-410/411) fill in the operation steps later; here the steps describe the
-// flow and navigation works end to end.
+// (docs/SETUP_WIZARD.md). FLO-408 owns shell and routing; FLO-409 owns scope
+// selection and the discovery operation step.
 
 let setupStatus = null;           // last /api/v1/setup response (read-only)
 let setupExited = false;          // ephemeral: user exited the wizard this load
 let setupResumeDismissed = false; // ephemeral: "Resume setup" banner dismissed
 let wizardStep = 1;               // current wizard step, 1-based
+let wizardScanScope = sessionStorage.getItem("skills-manager-wizard-scope") || "";
+let wizardDiscoverPhase = "idle"; // idle | running | error | empty | done
+let wizardDiscoverError = "";
+let wizardDiscoverSummary = null; // compact assessment summary for step 2
+
+const WIZARD_GLOBAL_PATH_HINTS = [
+  "~/.claude/skills", "~/.codex/skills", "~/.grok/skills", "~/.gemini/skills",
+  "~/.hermes/skills", "~/.openclaw/skills", "~/.gemini/antigravity/skills",
+];
+
+const WIZARD_SCOPE_OPTIONS = [
+  { id: "global", label: "Global skills", detail: "Inspect known tool skill folders under your home directory." },
+  { id: "projects", label: "Saved project roots", detail: "Scan git repos under roots you previously approved with discover --save-project-roots." },
+  { id: "both", label: "Global and projects", detail: "Combine global tool folders with your saved project roots." },
+];
 
 const WIZARD_STEPS = [
   {
     id: "scope", label: "Scope", title: "Choose what to inspect",
-    body: "Pick what to inspect: your global skills, the current project, or both. Inspection is read-only and local-only — nothing leaves your machine and no files are changed.",
+    body: "Choose what skills-manager may read on this machine. Discovery is local-only: it inspects paths you select, writes only to your manager home, and never changes skills on disk.",
     primary: "Start discovery",
   },
   {
     id: "discover", label: "Discover", title: "Discover your skills",
-    body: "Run a read-only discovery to build your inventory: detected tools, global and project skills, unmanaged skills, drift, duplicates, and coverage gaps.",
+    body: "Run read-only discovery to build your inventory. Results list detected tools, global and project skills, and unmanaged findings — discovered on disk, not yet managed by skills-manager.",
     primary: "Review recommendations",
     operation: true,
     refreshable: true,
-    hint: "Build your inventory by running `skills-manager discover --global` in your terminal, then choose Check again to continue.",
   },
   {
     id: "review", label: "Review", title: "Review recommendations",
@@ -1050,6 +1060,175 @@ function operationStepResolved(step, status) {
   return false;
 }
 
+function discoverCLIArgs(scope) {
+  switch (scope) {
+    case "global": return ["discover", "--global"];
+    case "projects": return ["discover", "--saved-project-roots"];
+    case "both": return ["discover", "--global", "--saved-project-roots"];
+    default: return null;
+  }
+}
+
+function saveWizardScanScope(scope) {
+  wizardScanScope = scope;
+  if (scope) sessionStorage.setItem("skills-manager-wizard-scope", scope);
+  else sessionStorage.removeItem("skills-manager-wizard-scope");
+}
+
+function countUnmanagedInstallations(installations) {
+  return (installations || []).filter((i) => i.ownership !== "manager").length;
+}
+
+function summarizeAssessmentForWizard(a) {
+  const summary = a.summary || {};
+  const tools = (a.tools || []).filter((t) => t.detected);
+  return {
+    toolsDetected: tools.length,
+    toolNames: tools.map((t) => t.display_name || t.tool_id).join(", ") || "none",
+    globalSkills: summary.global_skills || 0,
+    projectSkills: summary.project_local_skills || 0,
+    unmanaged: countUnmanagedInstallations(a.installations),
+    driftGroups: summary.drift_groups || 0,
+    duplicateContent: summary.duplicate_content || 0,
+    coverageGaps: summary.missing_tool_coverage || 0,
+    projectsFound: summary.projects_found || 0,
+  };
+}
+
+async function loadWizardDiscoverSummary() {
+  try {
+    const a = await api("/api/v1/assessment");
+    wizardDiscoverSummary = summarizeAssessmentForWizard(a);
+    return wizardDiscoverSummary;
+  } catch (e) {
+    wizardDiscoverSummary = { error: e.message };
+    return wizardDiscoverSummary;
+  }
+}
+
+async function startWizardDiscovery() {
+  if (!wizardScanScope || wizardDiscoverPhase === "running") return;
+  const args = discoverCLIArgs(wizardScanScope);
+  if (!args) {
+    wizardDiscoverPhase = "error";
+    wizardDiscoverError = "Choose a scan scope before starting discovery.";
+    render();
+    return;
+  }
+  wizardDiscoverPhase = "running";
+  wizardDiscoverError = "";
+  wizardDiscoverSummary = null;
+  render();
+  try {
+    const r = await runCLI(args);
+    if (r.exit_code !== 0) {
+      wizardDiscoverPhase = "error";
+      wizardDiscoverError = (r.stderr || r.stdout || "Discovery failed").trim();
+      render();
+      return;
+    }
+    await refreshSetupStatus();
+    if (!setupStatus || !setupStatus.inventory_exists) {
+      wizardDiscoverPhase = "empty";
+      render();
+      return;
+    }
+    wizardDiscoverPhase = "done";
+    await loadWizardDiscoverSummary();
+    render();
+  } catch (e) {
+    wizardDiscoverPhase = "error";
+    wizardDiscoverError = e.message;
+    render();
+  }
+}
+
+function renderWizardScopePanel(panel) {
+  const fieldset = el("fieldset", { className: "wizard-scope-options" }, [
+    el("legend", { className: "muted", text: "Scan scope" }),
+  ]);
+  WIZARD_SCOPE_OPTIONS.forEach((opt) => {
+    const input = el("input", {
+      type: "radio",
+      name: "wizard-scan-scope",
+      id: "wizard-scope-" + opt.id,
+      value: opt.id,
+    });
+    input.checked = wizardScanScope === opt.id;
+    input.addEventListener("change", () => saveWizardScanScope(opt.id));
+    const label = el("label", { className: "wizard-scope-option" }, [
+      input,
+      el("span", { className: "row-title", text: opt.label }),
+      el("span", { className: "muted", text: opt.detail }),
+    ]);
+    label.htmlFor = "wizard-scope-" + opt.id;
+    fieldset.appendChild(label);
+  });
+  panel.appendChild(fieldset);
+  panel.appendChild(el("p", { className: "advisory-note", text: "Global inspection checks paths such as " + WIZARD_GLOBAL_PATH_HINTS.join(", ") + ". Project scans only touch saved approved roots. Nothing is uploaded." }));
+  if (wizardScanScope === "projects" || wizardScanScope === "both") {
+    panel.appendChild(el("p", { className: "muted", text: "No saved project roots yet? Run skills-manager discover --projects <folder> --save-project-roots in your terminal, then return here." }));
+  }
+}
+
+function renderWizardDiscoverSummary(panel) {
+  const s = wizardDiscoverSummary;
+  if (!s) return;
+  if (s.error) {
+    panel.appendChild(el("div", { className: "error", text: "Could not load discovery summary: " + s.error }));
+    return;
+  }
+  const grid = el("div", { className: "stats wizard-discover-summary" });
+  grid.appendChild(statCard("Tools detected", s.toolsDetected));
+  grid.appendChild(statCard("Global skills", s.globalSkills));
+  grid.appendChild(statCard("Project skills", s.projectSkills));
+  grid.appendChild(statCard("Unmanaged found", s.unmanaged));
+  if (s.driftGroups) grid.appendChild(statCard("Drift groups", s.driftGroups));
+  if (s.duplicateContent) grid.appendChild(statCard("Duplicate content", s.duplicateContent));
+  if (s.coverageGaps) grid.appendChild(statCard("Coverage gaps", s.coverageGaps));
+  panel.appendChild(grid);
+  panel.appendChild(el("p", { className: "muted", text: "Detected: " + s.toolNames + (s.projectsFound ? " · " + s.projectsFound + " project(s) scanned" : "") + ". Unmanaged skills are on disk only until you ingest or install them through a confirmed plan." }));
+}
+
+function renderWizardDiscoverPanel(panel, resolved) {
+  if (resolved && wizardDiscoverPhase === "idle") {
+    wizardDiscoverPhase = "done";
+    void loadWizardDiscoverSummary().then(() => render());
+  }
+  if (wizardDiscoverPhase === "running") {
+    panel.appendChild(el("p", { className: "wizard-discover-status", text: "Running discovery… This stays on your machine and only updates your manager inventory." }));
+    return;
+  }
+  if (wizardDiscoverPhase === "error") {
+    panel.appendChild(el("div", { className: "error", text: wizardDiscoverError || "Discovery failed." }));
+    panel.appendChild(el("button", { className: "btn confirm", type: "button", text: "Retry discovery",
+      onClick: () => startWizardDiscovery() }));
+    return;
+  }
+  if (wizardDiscoverPhase === "empty") {
+    panel.appendChild(el("p", { className: "empty", text: "Discovery finished but no skills were found in the selected scope. Try a broader scope or add saved project roots, then run discovery again." }));
+    panel.appendChild(el("button", { className: "btn", type: "button", text: "Run discovery again",
+      onClick: () => startWizardDiscovery() }));
+    return;
+  }
+  if (wizardDiscoverPhase === "done" || resolved) {
+    renderWizardDiscoverSummary(panel);
+    panel.appendChild(el("button", { className: "btn", type: "button", text: "Run discovery again",
+      onClick: () => startWizardDiscovery() }));
+    return;
+  }
+  if (!wizardScanScope) {
+    panel.appendChild(el("p", { className: "empty", text: "Choose a scan scope on the previous step, then start discovery." }));
+    panel.appendChild(el("button", { className: "btn confirm", type: "button", text: "Start discovery",
+      onClick: () => startWizardDiscovery() }));
+    return;
+  }
+  panel.appendChild(el("p", { className: "muted", text: "Ready to inspect " + (WIZARD_SCOPE_OPTIONS.find((o) => o.id === wizardScanScope) || {}).label + "." }));
+  panel.appendChild(el("button", { className: "btn confirm", type: "button", text: "Start discovery",
+    onClick: () => startWizardDiscovery() }));
+  panel.appendChild(el("p", { className: "advisory-note", text: "Prefer the terminal? Run skills-manager discover --global (and --saved-project-roots when needed), then choose Check again." }));
+}
+
 // renderSetupWizard renders the wizard shell: stepper progress, the current
 // step's description, and Back / Cancel / primary controls. Focus moves to the
 // step heading on each render so keyboard and screen-reader users land at the
@@ -1075,34 +1254,45 @@ async function renderSetupWizard(content) {
   ]);
   if (step.hint) panel.appendChild(el("p", { className: "advisory-note", text: step.hint }));
   const resolved = operationStepResolved(step, setupStatus);
-  // Re-read the read-only setup status in place, so a user who ran the hinted
-  // CLI discovery can continue without leaving the wizard (the FLO-406 Discover
-  // "Refresh"). This only re-reads status; it does not run discovery itself.
+  if (step.id === "scope") renderWizardScopePanel(panel);
+  else if (step.id === "discover") renderWizardDiscoverPanel(panel, resolved);
+  // Re-read setup status after external CLI discovery (FLO-406 "Refresh").
   if (step.refreshable && !resolved) {
     panel.appendChild(el("button", { className: "btn", type: "button", text: "Check again",
-      onClick: async () => { await refreshSetupStatus(); render(); } }));
+      onClick: async () => {
+        await refreshSetupStatus();
+        if (setupStatus && setupStatus.inventory_exists) {
+          wizardDiscoverPhase = "done";
+          await loadWizardDiscoverSummary();
+        }
+        render();
+      } }));
   }
   wizard.appendChild(panel);
 
   const back = el("button", { className: "btn", type: "button", text: "Back" });
   back.disabled = wizardStep <= 1;
   back.onclick = () => wizardGoTo(wizardStep - 1);
-  // Operation steps (Discover, Apply) block forward navigation until their
-  // operation resolves (FLO-406 progress behavior), so the wizard never advances
-  // to Done without a discovery snapshot or apply result. Resolution is read
-  // from persisted status, so returning to an already-resolved step never
-  // strands the user. The operations themselves land in FLO-409/411, so until
-  // then an unresolved operation step keeps a non-dead-end forward action:
-  //   - self-serviceable steps (Discover) keep the advancing primary disabled
-  //     and offer "Check again" after the user runs the hinted CLI discovery;
-  //   - steps with no in-build path to resolve (Apply) convert the primary to a
-  //     "Finish setup later" exit, since setup stays resumable from the dashboard.
   const isLast = wizardStep >= WIZARD_STEPS.length;
   const blocked = step.operation && !resolved;
   const exitInstead = blocked && !step.refreshable;
   const next = el("button", { className: "btn confirm", type: "button", text: exitInstead ? "Finish setup later" : step.primary });
-  next.disabled = blocked && !exitInstead;
-  next.onclick = exitInstead ? exitSetupWizard : () => { if (isLast) exitSetupWizard(); else wizardGoTo(wizardStep + 1); };
+  if (step.id === "scope") {
+    next.disabled = !wizardScanScope || wizardDiscoverPhase === "running";
+    next.onclick = async () => {
+      wizardGoTo(2);
+      if (setupStatus && setupStatus.inventory_exists) {
+        wizardDiscoverPhase = "done";
+        await loadWizardDiscoverSummary();
+        render();
+      } else {
+        await startWizardDiscovery();
+      }
+    };
+  } else {
+    next.disabled = (blocked && !exitInstead) || wizardDiscoverPhase === "running";
+    next.onclick = exitInstead ? exitSetupWizard : () => { if (isLast) exitSetupWizard(); else wizardGoTo(wizardStep + 1); };
+  }
   wizard.appendChild(el("div", { className: "wizard-nav" }, [
     back,
     el("button", { className: "btn", type: "button", text: "Cancel setup", onClick: exitSetupWizard }),

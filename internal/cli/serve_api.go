@@ -753,6 +753,9 @@ var serveAllowedCLI = map[string]bool{
 	"doctor": true,
 	"scan":   true,
 	"match":  true,
+	// `discover` backs the first-run setup wizard discovery step (FLO-409). It is
+	// read-only for tool/project directories and writes only manager-local state.
+	"discover": true,
 	// `add` backs the Overview "Ingest" action for a single watcher
 	// notification path. `scan --ingest` can't be used here because it requires
 	// interactive stdin, which the non-interactive run endpoint never provides.

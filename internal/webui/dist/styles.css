@@ -214,3 +214,20 @@ pre.compact { max-height: 260px; margin-top: 8px; }
   border-color: var(--accent); background: var(--accent-dim); margin-bottom: 16px;
 }
 .setup-resume .update-actions { margin-top: 0; }
+.wizard-scope-options { border: 0; padding: 0; margin: 8px 0 0; display: grid; gap: 10px; }
+.wizard-scope-options legend { padding: 0; margin-bottom: 4px; }
+.wizard-scope-option {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 4px 10px;
+  align-items: start;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: pointer;
+}
+.wizard-scope-option input { margin-top: 3px; }
+.wizard-scope-option .row-title { grid-column: 2; }
+.wizard-scope-option .muted { grid-column: 2; font-size: 12px; }
+.wizard-discover-status { font-style: italic; }
+.wizard-discover-summary { margin-top: 8px; }

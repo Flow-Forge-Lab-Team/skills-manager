@@ -367,6 +367,53 @@ func TestSetupStatusDiscoveredUnmanaged(t *testing.T) {
 	}
 }
 
+// TestServeRunCLIDiscover verifies the setup wizard can start discovery through
+// the guarded /api/v1/run endpoint (FLO-409).
+func TestServeRunCLIDiscover(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	managerHome := filepath.Join(home, ".skills-manager")
+	t.Setenv("SKILLS_MANAGER_HOME", managerHome)
+	writeScanSkill(t, filepath.Join(home, ".claude", "skills"), "review", "---\nname: review\n---\n# Review\n")
+
+	ts := httptest.NewServer(newServeServer(managerHome))
+	defer ts.Close()
+	token := serveSessionToken(t, ts.URL)
+
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/v1/run",
+		bytes.NewReader([]byte(`{"args":["discover","--global"]}`)))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Skills-Manager-Token", token)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("discover run status = %d, want 200", resp.StatusCode)
+	}
+	var run cliRunResponse
+	if err := json.NewDecoder(resp.Body).Decode(&run); err != nil {
+		t.Fatalf("decode run response: %v", err)
+	}
+	if run.ExitCode != ExitSuccess {
+		t.Fatalf("discover exit = %d, stderr=%q", run.ExitCode, run.Stderr)
+	}
+
+	statusResp, err := http.Get(ts.URL + "/api/v1/setup")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer statusResp.Body.Close()
+	var got triageSetupStatus
+	if err := json.NewDecoder(statusResp.Body).Decode(&got); err != nil {
+		t.Fatalf("decode setup status: %v", err)
+	}
+	if !got.InventoryExists || got.DiscoveredInstallations == 0 {
+		t.Fatalf("inventory should exist after UI discover run: %#v", got)
+	}
+}
+
 func fileSHA256(t *testing.T, path string) string {
 	t.Helper()
 	f, err := os.Open(path)
