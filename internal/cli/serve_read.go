@@ -2,6 +2,7 @@ package cli
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
@@ -177,9 +178,12 @@ type triageUpdateView struct {
 }
 
 func loadTriageCatalog(home string) (catalog, string, error) {
-	libraryPath, err := ensureLibrary(home)
-	if err != nil {
-		return catalog{}, "", err
+	libraryPath := filepath.Join(home, "library")
+	if _, err := os.Stat(libraryPath); err != nil {
+		if os.IsNotExist(err) {
+			return catalog{}, libraryPath, nil
+		}
+		return catalog{}, libraryPath, err
 	}
 	catalogPath := filepath.Join(libraryPath, "catalog.yaml")
 	if _, err := os.Stat(catalogPath); err != nil {
@@ -194,20 +198,15 @@ func loadTriageCatalog(home string) (catalog, string, error) {
 }
 
 func loadTriageOverview(home string) (triageOverview, error) {
-	out := triageOverview{Home: home}
-
-	libraryPath, err := ensureLibrary(home)
-	if err != nil {
-		return out, err
+	out := triageOverview{
+		Home:     home,
+		MostUsed: []triageUsage{},
+		Activity: []triageActivity{},
 	}
+
+	libraryPath := filepath.Join(home, "library")
 	out.LibrarySkills = countLibrarySkills(libraryPath)
 	out.PendingUpdates = countPendingUpdates(libraryPath)
-
-	db, err := state.Open(home)
-	if err != nil {
-		return out, err
-	}
-	defer db.Close()
 
 	if entries, err := os.ReadDir(filepath.Join(home, "manifests")); err == nil {
 		for _, e := range entries {
@@ -216,6 +215,17 @@ func loadTriageOverview(home string) (triageOverview, error) {
 			}
 		}
 	}
+
+	// Read-only: never create home, state.db, or library (FLO-423 / FLO-407 contract).
+	db, err := state.OpenForRead(home)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			out.ScheduledCheck = "not configured"
+			return out, nil
+		}
+		return out, err
+	}
+	defer db.Close()
 
 	_ = db.QueryRow("SELECT COUNT(*) FROM detected WHERE action IS NULL OR action = '' OR action = 'pending'").Scan(&out.Unregistered)
 	out.ScheduledCheck = checkScheduledState(db)
@@ -258,8 +268,11 @@ func loadTriageSkills(home string) ([]triageSkill, error) {
 }
 
 func loadTriageAssessment(home string) (triageAssessment, error) {
-	db, err := state.Open(home)
+	db, err := state.OpenForRead(home)
 	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return triageAssessment{GeneratedAt: time.Now().UTC().Format(time.RFC3339)}, nil
+		}
 		return triageAssessment{}, err
 	}
 	defer db.Close()
@@ -423,8 +436,11 @@ FROM dashboard_action_reviews ORDER BY recommendation_id`)
 }
 
 func loadTriageDriftGroups(home string) ([]triageDriftGroup, error) {
-	db, err := state.Open(home)
+	db, err := state.OpenForRead(home)
 	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return []triageDriftGroup{}, nil
+		}
 		return nil, err
 	}
 	defer db.Close()
@@ -777,8 +793,11 @@ func loadTriageProjectDetail(home, slug string) (triageProjectDetail, error) {
 }
 
 func loadTriageUpdates(home string) ([]triageUpdateView, error) {
-	stateDB, err := state.Open(home)
+	stateDB, err := state.OpenForRead(home)
 	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return []triageUpdateView{}, nil
+		}
 		return nil, err
 	}
 	updates, err := stateDB.ListPendingUpdates()
@@ -867,7 +886,7 @@ func loadTriageMatrix(home string) (triageMatrix, error) {
 	// Per-skill×project usage counts and per-skill totals / last activity.
 	usageTotals := map[string]int{}
 	lastActivity := map[string]string{}
-	if db, err := state.Open(home); err == nil {
+	if db, err := state.OpenForRead(home); err == nil {
 		if cells, err := db.UsageMatrix(); err == nil {
 			for _, c := range cells {
 				usageTotals[c.SkillName] += c.Count
