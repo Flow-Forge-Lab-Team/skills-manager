@@ -1,8 +1,11 @@
-# 5-minute tutorial: discover first, then act
+# 5-minute tutorial: guided setup, then the CLI
 
-This tutorial starts with the intended first-run path: install the CLI, run a
-read-only inventory of skills you already have, review the dashboard assessment,
-then choose whether to ingest or install anything. No LLM provider is required.
+This tutorial starts with the intended first-run path: install the CLI, then let
+the **guided setup wizard** in `skills-manager serve` walk you through it — a
+read-only **discover** of the skills you already have, a **review** of
+deterministic recommendations, a **dry-run** preview of every change, and an
+**apply** step that only touches disk after you confirm. The same steps are
+available as CLI commands, shown afterward. No LLM provider is required.
 
 ## 1. Install
 
@@ -23,11 +26,48 @@ This requires Go 1.26 or newer and installs the binary into
 `$(go env GOPATH)/bin`. Add that directory to `PATH` if your shell cannot find
 `skills-manager`.
 
-## 2. Discover global skills
+## 2. Guided setup in your browser (recommended)
 
-Discovery is read-only for tool directories. It writes only manager-local state
-under `~/.skills-manager`, including `state.db`, audit logs, and inventory
-snapshots.
+Start the local dashboard and open the URL it prints:
+
+```sh
+skills-manager serve
+```
+
+On a fresh machine the dashboard does not drop you on an empty screen — it routes
+you into the five-step **setup** wizard:
+
+1. **Scope** — choose what to inspect: global skills, the current project, or
+   both. Inspection is local-only, and the wizard discloses which paths it may
+   read.
+2. **Discover** — run the read-only **discover** pass. It builds your inventory
+   (detected tools, global and project skills, drift, duplicate content, coverage
+   gaps) and writes only manager-local state under `~/.skills-manager`.
+3. **Review** — read the deterministic **recommendations**, grouped by kind
+   (ingest, install, review drift, ignore). Each explains *why*, and whether the
+   skill is **unmanaged** or already **managed**.
+4. **Apply** — preview each selected action as a **dry-run** (the exact files to
+   create, update, preserve, skip, or remove), then **apply** only what you
+   explicitly confirm. Each applied action records an audit entry.
+5. **Done** — see what was applied, ignored, or failed, and land on the
+   dashboard.
+
+The order is deliberately **safe and read-first**: discover and dry-run never
+touch your tool directories, so nothing changes until the confirmed apply.
+
+**Discovered vs. managed.** Discovered skills are everything found on disk; most
+are **unmanaged** — the manager did not create them and will not change them
+without a dry-run and your confirmation. A skill becomes **managed** once you
+ingest or install it through the manager, which manifest-tracks it so uninstall
+removes only manager-owned files. See [`SETUP_WIZARD.md`](SETUP_WIZARD.md) for
+the full contract and vocabulary.
+
+## 3. Run discovery from the CLI
+
+Prefer the terminal, or automating? The wizard's discover step is also a plain
+command. Discovery is read-only for tool directories; it writes only
+manager-local state under `~/.skills-manager`, including `state.db`, audit logs,
+and inventory snapshots.
 
 ```sh
 skills-manager discover --global
@@ -62,10 +102,10 @@ machine. The important split is stable: facts and coverage gaps are exact
 inventory signals; recommendations are deterministic proposals that still
 require a dry-run plan.
 
-## 3. Discover project-local skills with consent
+## 4. Discover project-local skills with consent
 
-Project scans read only roots you pass or roots you previously saved. They prune
-generated directories such as `.git`, `node_modules`, `.next`, `dist`, `build`,
+Project discovery reads only the roots you pass or roots you previously saved. It
+prunes generated directories such as `.git`, `node_modules`, `.next`, `dist`, `build`,
 `.venv`, `.cache`, and Codex scratch workspaces by default.
 
 ```sh
@@ -78,13 +118,10 @@ skills-manager discover --remove-project-root ~/dev
 Use `--saved-project-roots` only when you want to reuse that saved consent. The
 manager never upgrades a missing scope into a full-home scan.
 
-## 4. Review the dashboard
+## 5. Review the dashboard
 
-```sh
-skills-manager serve
-```
-
-Open the local URL printed by the command. The Discover view summarizes:
+Once setup is complete, `skills-manager serve` opens the steady-state dashboard
+instead of the wizard. The Discover view summarizes:
 
 - Inventory
 - Drift
@@ -98,7 +135,7 @@ and hash impact before any write. Apply buttons require an already computed
 dry-run plan plus explicit confirmation, and successful or failed actions write
 an audit entry.
 
-## 5. Optional AI assessment
+## 6. Optional AI assessment
 
 AI advisory output is opt-in. Inventory, drift groups, hashes, coverage gaps,
 and deterministic recommendations do not require a provider.
@@ -114,7 +151,7 @@ skills-manager assess review --project /path/to/project --target codex --auto
 provider credentials. Secret-looking values are redacted before handoff or
 provider calls, and cached advisory output stays under the manager home.
 
-## 6. Legacy zero-state demo
+## 7. Legacy zero-state demo
 
 If you are starting with no existing skills and want to see install mechanics,
 ingest the committed examples and install into a throwaway project:
@@ -138,6 +175,7 @@ skills-manager uninstall --project /tmp/sm-demo --confirm
 
 ## Where to go next
 
+- [Setup wizard](SETUP_WIZARD.md) — the first-run setup contract and vocabulary
 - [Discovery](DISCOVERY.md) — inventory schema, consent scopes, and recommendations
 - [CLI reference](CLI_REFERENCE.md) — every command and flag
 - [Security model](SECURITY_MODEL.md) — install, scan, and AI assessment boundaries

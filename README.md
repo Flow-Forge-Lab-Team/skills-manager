@@ -41,16 +41,41 @@ npm install -g @flowforgelab/skills-manager
 brew install Flow-Forge-Lab-Team/tap/skills-manager
 ```
 
-Then inspect your existing skills before installing anything:
+## First run: guided setup
+
+The guided path is the local dashboard. Start it, then open the URL it prints:
 
 ```sh
-skills-manager discover --global
 skills-manager serve
 ```
 
-`discover` is the first-run path. It is read-only for tool and project
-directories, separates exact inventory facts from deterministic recommendations,
-and persists local state under `~/.skills-manager` for dashboard review.
+On first run — before the manager owns any skills — the dashboard does not drop
+you on an empty screen. It routes you into a five-step **setup** wizard: choose a
+**scope** (global skills, a project, or both), run a read-only **discover**,
+**review** the deterministic recommendations, preview each change as a
+**dry-run**, and **apply** only the actions you confirm. Discover and dry-run
+never write to your tool directories, so nothing changes until that final apply,
+and every applied action records an audit entry. See
+[`docs/SETUP_WIZARD.md`](docs/SETUP_WIZARD.md) for the full setup contract and
+vocabulary.
+
+**Discovered vs. managed.** *Discovered* skills are everything the wizard finds
+already on disk; most start **unmanaged** — the manager did not create them and
+never modifies or removes them without an explicit dry-run plan and your
+confirmation. A skill becomes **managed** once you ingest or install it through
+the manager, which records a manifest so uninstall removes only manager-owned
+files.
+
+### Or drive it from the CLI
+
+The wizard runs commands you can also invoke directly. `discover` is the
+read-only inventory pass: it separates exact inventory facts from deterministic
+recommendations and persists local state under `~/.skills-manager` for dashboard
+review.
+
+```sh
+skills-manager discover --global
+```
 
 To include project-local skills, approve explicit roots:
 
@@ -63,7 +88,7 @@ Discovery is read-only for tool and project directories. It reports detected
 tools, global and project-local skills, content hashes, drift groups, duplicate
 content, and missing tool coverage before any install or cleanup action. It
 persists manager-local inventory snapshots in `~/.skills-manager/state.db` so
-later commands can compare scans. Human output separates exact review facts from
+later commands can compare snapshots. Human output separates exact review facts from
 recommendations, and JSON includes the same assessment under `report`. Saved
 project roots are manager-local consent state and can be listed or removed
 later. Discovery never performs a full-home scan: it only reads known global

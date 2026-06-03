@@ -83,27 +83,49 @@ artifact from the release.</p>
 <span id="cb3-8"><a href="#cb3-8" aria-hidden="true" tabindex="-1"></a><span class="ex">npm</span> install <span class="at">-g</span> @flowforgelab/skills-manager</span>
 <span id="cb3-9"><a href="#cb3-9" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb3-10"><a href="#cb3-10" aria-hidden="true" tabindex="-1"></a><span class="ex">brew</span> install Flow-Forge-Lab-Team/tap/skills-manager</span></code></pre></div>
-<p>Then inspect your existing skills before installing anything:</p>
-<div class="sourceCode" id="cb4"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a><span class="ex">skills-manager</span> discover <span class="at">--global</span></span>
-<span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a><span class="ex">skills-manager</span> serve</span></code></pre></div>
-<p><code>discover</code> is the first-run path. It is read-only for tool
-and project directories, separates exact inventory facts from
-deterministic recommendations, and persists local state under
-<code>~/.skills-manager</code> for dashboard review.</p>
+<h2 id="first-run-guided-setup">First run: guided setup</h2>
+<p>The guided path is the local dashboard. Start it, then open the URL
+it prints:</p>
+<div class="sourceCode" id="cb4"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a><span class="ex">skills-manager</span> serve</span></code></pre></div>
+<p>On first run — before the manager owns any skills — the dashboard
+does not drop you on an empty screen. It routes you into a five-step
+<strong>setup</strong> wizard: choose a <strong>scope</strong> (global
+skills, a project, or both), run a read-only <strong>discover</strong>,
+<strong>review</strong> the deterministic recommendations, preview each
+change as a <strong>dry-run</strong>, and <strong>apply</strong> only
+the actions you confirm. Discover and dry-run never write to your tool
+directories, so nothing changes until that final apply, and every
+applied action records an audit entry. See <a
+href="docs/SETUP_WIZARD.html"><code>docs/SETUP_WIZARD.md</code></a> for
+the full setup contract and vocabulary.</p>
+<p><strong>Discovered vs. managed.</strong> <em>Discovered</em> skills
+are everything the wizard finds already on disk; most start
+<strong>unmanaged</strong> — the manager did not create them and never
+modifies or removes them without an explicit dry-run plan and your
+confirmation. A skill becomes <strong>managed</strong> once you ingest
+or install it through the manager, which records a manifest so uninstall
+removes only manager-owned files.</p>
+<h3 id="or-drive-it-from-the-cli">Or drive it from the CLI</h3>
+<p>The wizard runs commands you can also invoke directly.
+<code>discover</code> is the read-only inventory pass: it separates
+exact inventory facts from deterministic recommendations and persists
+local state under <code>~/.skills-manager</code> for dashboard
+review.</p>
+<div class="sourceCode" id="cb5"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a><span class="ex">skills-manager</span> discover <span class="at">--global</span></span></code></pre></div>
 <p>To include project-local skills, approve explicit roots:</p>
-<div class="sourceCode" id="cb5"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a><span class="ex">skills-manager</span> discover <span class="at">--projects</span> ~/dev <span class="at">--save-project-roots</span></span>
-<span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a><span class="ex">skills-manager</span> discover <span class="at">--saved-project-roots</span></span></code></pre></div>
+<div class="sourceCode" id="cb6"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a><span class="ex">skills-manager</span> discover <span class="at">--projects</span> ~/dev <span class="at">--save-project-roots</span></span>
+<span id="cb6-2"><a href="#cb6-2" aria-hidden="true" tabindex="-1"></a><span class="ex">skills-manager</span> discover <span class="at">--saved-project-roots</span></span></code></pre></div>
 <p>Discovery is read-only for tool and project directories. It reports
 detected tools, global and project-local skills, content hashes, drift
 groups, duplicate content, and missing tool coverage before any install
 or cleanup action. It persists manager-local inventory snapshots in
 <code>~/.skills-manager/state.db</code> so later commands can compare
-scans. Human output separates exact review facts from recommendations,
-and JSON includes the same assessment under <code>report</code>. Saved
-project roots are manager-local consent state and can be listed or
-removed later. Discovery never performs a full-home scan: it only reads
-known global tool roots when <code>--global</code> is set and explicit
-project roots when <code>--projects</code> or
+snapshots. Human output separates exact review facts from
+recommendations, and JSON includes the same assessment under
+<code>report</code>. Saved project roots are manager-local consent state
+and can be listed or removed later. Discovery never performs a full-home
+scan: it only reads known global tool roots when <code>--global</code>
+is set and explicit project roots when <code>--projects</code> or
 <code>--saved-project-roots</code> is set.</p>
 <p>AI assessment is opt-in. Inventory, hashes, drift groups, coverage
 gaps, and deterministic recommendations run without a provider. Use

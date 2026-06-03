@@ -50,12 +50,17 @@
       <span class="sep">/</span>
       <span class="crumb">TUTORIAL.md</span>
     </div>
-<h1 id="5-minute-tutorial-discover-first-then-act">5-minute tutorial:
-discover first, then act</h1>
+<h1 id="5-minute-tutorial-guided-setup-then-the-cli">5-minute tutorial:
+guided setup, then the CLI</h1>
 <p>This tutorial starts with the intended first-run path: install the
-CLI, run a read-only inventory of skills you already have, review the
-dashboard assessment, then choose whether to ingest or install anything.
-No LLM provider is required.</p>
+CLI, then let the <strong>guided setup wizard</strong> in
+<code>skills-manager serve</code> walk you through it — a read-only
+<strong>discover</strong> of the skills you already have, a
+<strong>review</strong> of deterministic recommendations, a
+<strong>dry-run</strong> preview of every change, and an
+<strong>apply</strong> step that only touches disk after you confirm.
+The same steps are available as CLI commands, shown afterward. No LLM
+provider is required.</p>
 <h2 id="1-install">1. Install</h2>
 <p>The verified install path is the public Go module:</p>
 <div class="sourceCode" id="cb1"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="ex">go</span> install github.com/Flow-Forge-Lab-Team/skills-manager/cmd/skills-manager@v0.1.0</span>
@@ -66,11 +71,50 @@ No LLM provider is required.</p>
 <code>$(go env GOPATH)/bin</code>. Add that directory to
 <code>PATH</code> if your shell cannot find
 <code>skills-manager</code>.</p>
-<h2 id="2-discover-global-skills">2. Discover global skills</h2>
-<p>Discovery is read-only for tool directories. It writes only
-manager-local state under <code>~/.skills-manager</code>, including
-<code>state.db</code>, audit logs, and inventory snapshots.</p>
-<div class="sourceCode" id="cb3"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="ex">skills-manager</span> discover <span class="at">--global</span></span></code></pre></div>
+<h2 id="2-guided-setup-in-your-browser-recommended">2. Guided setup in
+your browser (recommended)</h2>
+<p>Start the local dashboard and open the URL it prints:</p>
+<div class="sourceCode" id="cb3"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="ex">skills-manager</span> serve</span></code></pre></div>
+<p>On a fresh machine the dashboard does not drop you on an empty screen
+— it routes you into the five-step <strong>setup</strong> wizard:</p>
+<ol type="1">
+<li><strong>Scope</strong> — choose what to inspect: global skills, the
+current project, or both. Inspection is local-only, and the wizard
+discloses which paths it may read.</li>
+<li><strong>Discover</strong> — run the read-only
+<strong>discover</strong> pass. It builds your inventory (detected
+tools, global and project skills, drift, duplicate content, coverage
+gaps) and writes only manager-local state under
+<code>~/.skills-manager</code>.</li>
+<li><strong>Review</strong> — read the deterministic
+<strong>recommendations</strong>, grouped by kind (ingest, install,
+review drift, ignore). Each explains <em>why</em>, and whether the skill
+is <strong>unmanaged</strong> or already <strong>managed</strong>.</li>
+<li><strong>Apply</strong> — preview each selected action as a
+<strong>dry-run</strong> (the exact files to create, update, preserve,
+skip, or remove), then <strong>apply</strong> only what you explicitly
+confirm. Each applied action records an audit entry.</li>
+<li><strong>Done</strong> — see what was applied, ignored, or failed,
+and land on the dashboard.</li>
+</ol>
+<p>The order is deliberately <strong>safe and read-first</strong>:
+discover and dry-run never touch your tool directories, so nothing
+changes until the confirmed apply.</p>
+<p><strong>Discovered vs. managed.</strong> Discovered skills are
+everything found on disk; most are <strong>unmanaged</strong> — the
+manager did not create them and will not change them without a dry-run
+and your confirmation. A skill becomes <strong>managed</strong> once you
+ingest or install it through the manager, which manifest-tracks it so
+uninstall removes only manager-owned files. See <a
+href="SETUP_WIZARD.html"><code>SETUP_WIZARD.md</code></a> for the full
+contract and vocabulary.</p>
+<h2 id="3-run-discovery-from-the-cli">3. Run discovery from the CLI</h2>
+<p>Prefer the terminal, or automating? The wizard's discover step is
+also a plain command. Discovery is read-only for tool directories; it
+writes only manager-local state under <code>~/.skills-manager</code>,
+including <code>state.db</code>, audit logs, and inventory
+snapshots.</p>
+<div class="sourceCode" id="cb4"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a><span class="ex">skills-manager</span> discover <span class="at">--global</span></span></code></pre></div>
 <p>A small fixture with one Claude Code skill and an empty OpenClaw root
 currently prints this shape:</p>
 <pre class="text"><code>Discover assessment
@@ -95,23 +139,23 @@ Recommendations:
 directories on your machine. The important split is stable: facts and
 coverage gaps are exact inventory signals; recommendations are
 deterministic proposals that still require a dry-run plan.</p>
-<h2 id="3-discover-project-local-skills-with-consent">3. Discover
+<h2 id="4-discover-project-local-skills-with-consent">4. Discover
 project-local skills with consent</h2>
-<p>Project scans read only roots you pass or roots you previously saved.
-They prune generated directories such as <code>.git</code>,
-<code>node_modules</code>, <code>.next</code>, <code>dist</code>,
-<code>build</code>, <code>.venv</code>, <code>.cache</code>, and Codex
-scratch workspaces by default.</p>
-<div class="sourceCode" id="cb5"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a><span class="ex">skills-manager</span> discover <span class="at">--projects</span> ~/dev <span class="at">--save-project-roots</span></span>
-<span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a><span class="ex">skills-manager</span> discover <span class="at">--saved-project-roots</span></span>
-<span id="cb5-3"><a href="#cb5-3" aria-hidden="true" tabindex="-1"></a><span class="ex">skills-manager</span> discover <span class="at">--list-project-roots</span></span>
-<span id="cb5-4"><a href="#cb5-4" aria-hidden="true" tabindex="-1"></a><span class="ex">skills-manager</span> discover <span class="at">--remove-project-root</span> ~/dev</span></code></pre></div>
+<p>Project discovery reads only the roots you pass or roots you
+previously saved. It prunes generated directories such as
+<code>.git</code>, <code>node_modules</code>, <code>.next</code>,
+<code>dist</code>, <code>build</code>, <code>.venv</code>,
+<code>.cache</code>, and Codex scratch workspaces by default.</p>
+<div class="sourceCode" id="cb6"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a><span class="ex">skills-manager</span> discover <span class="at">--projects</span> ~/dev <span class="at">--save-project-roots</span></span>
+<span id="cb6-2"><a href="#cb6-2" aria-hidden="true" tabindex="-1"></a><span class="ex">skills-manager</span> discover <span class="at">--saved-project-roots</span></span>
+<span id="cb6-3"><a href="#cb6-3" aria-hidden="true" tabindex="-1"></a><span class="ex">skills-manager</span> discover <span class="at">--list-project-roots</span></span>
+<span id="cb6-4"><a href="#cb6-4" aria-hidden="true" tabindex="-1"></a><span class="ex">skills-manager</span> discover <span class="at">--remove-project-root</span> ~/dev</span></code></pre></div>
 <p>Use <code>--saved-project-roots</code> only when you want to reuse
 that saved consent. The manager never upgrades a missing scope into a
 full-home scan.</p>
-<h2 id="4-review-the-dashboard">4. Review the dashboard</h2>
-<div class="sourceCode" id="cb6"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a><span class="ex">skills-manager</span> serve</span></code></pre></div>
-<p>Open the local URL printed by the command. The Discover view
+<h2 id="5-review-the-dashboard">5. Review the dashboard</h2>
+<p>Once setup is complete, <code>skills-manager serve</code> opens the
+steady-state dashboard instead of the wizard. The Discover view
 summarizes:</p>
 <ul>
 <li>Inventory</li>
@@ -125,7 +169,7 @@ summarizes:</p>
 ownership, and hash impact before any write. Apply buttons require an
 already computed dry-run plan plus explicit confirmation, and successful
 or failed actions write an audit entry.</p>
-<h2 id="5-optional-ai-assessment">5. Optional AI assessment</h2>
+<h2 id="6-optional-ai-assessment">6. Optional AI assessment</h2>
 <p>AI advisory output is opt-in. Inventory, drift groups, hashes,
 coverage gaps, and deterministic recommendations do not require a
 provider.</p>
@@ -136,7 +180,7 @@ provider.</p>
 <code>--auto</code> uses the configured provider credentials.
 Secret-looking values are redacted before handoff or provider calls, and
 cached advisory output stays under the manager home.</p>
-<h2 id="6-legacy-zero-state-demo">6. Legacy zero-state demo</h2>
+<h2 id="7-legacy-zero-state-demo">7. Legacy zero-state demo</h2>
 <p>If you are starting with no existing skills and want to see install
 mechanics, ingest the committed examples and install into a throwaway
 project:</p>
@@ -152,6 +196,8 @@ project:</p>
 <div class="sourceCode" id="cb9"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a><span class="ex">skills-manager</span> uninstall <span class="at">--project</span> /tmp/sm-demo <span class="at">--confirm</span></span></code></pre></div>
 <h2 id="where-to-go-next">Where to go next</h2>
 <ul>
+<li><a href="SETUP_WIZARD.html">Setup wizard</a> — the first-run setup
+contract and vocabulary</li>
 <li><a href="DISCOVERY.html">Discovery</a> — inventory schema, consent
 scopes, and recommendations</li>
 <li><a href="CLI_REFERENCE.html">CLI reference</a> — every command and
