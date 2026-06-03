@@ -104,6 +104,7 @@ function el(tag, attrs, children) {
     Object.entries(attrs).forEach(([k, v]) => {
       if (k === "className") n.className = v;
       else if (k === "text") n.textContent = v;
+      else if (k === "htmlFor") n.htmlFor = v;
       else if (k.startsWith("on")) n.addEventListener(k.slice(2).toLowerCase(), v);
       else n.setAttribute(k, v);
     });
@@ -909,7 +910,7 @@ let wizardDiscoverPhase = "idle"; // idle | running | error | empty | done
 let wizardDiscoverError = "";
 let wizardDiscoverSummary = null; // compact assessment summary for step 2
 let wizardAssessment = null;      // full /api/v1/assessment for review/apply steps
-let wizardReviewState = loadWizardReviewState(); // ephemeral selection + dry-run previews
+let wizardReviewState = {}; // ephemeral selection + dry-run previews (not persisted across reload)
 
 const WIZARD_GLOBAL_PATH_HINTS = [
   "~/.claude/skills", "~/.codex/skills", "~/.grok/skills", "~/.gemini/skills",
@@ -967,19 +968,6 @@ const WIZARD_REC_GROUP_LABELS = {
   needs_port: "Compatibility review",
 };
 
-function loadWizardReviewState() {
-  try {
-    const raw = sessionStorage.getItem("skills-manager-wizard-review");
-    return raw ? JSON.parse(raw) : {};
-  } catch (_) {
-    return {};
-  }
-}
-
-function saveWizardReviewState() {
-  sessionStorage.setItem("skills-manager-wizard-review", JSON.stringify(wizardReviewState));
-}
-
 function wizardReviewEntry(id) {
   if (!wizardReviewState[id]) wizardReviewState[id] = {};
   return wizardReviewState[id];
@@ -1011,7 +999,6 @@ function wizardInstallationsByPath(assessment) {
 function resetWizardReviewAfterDiscovery() {
   wizardAssessment = null;
   wizardReviewState = {};
-  sessionStorage.removeItem("skills-manager-wizard-review");
 }
 
 function wizardRecommendationSkillState(rec, installsByID) {
@@ -1080,7 +1067,6 @@ async function previewWizardRecommendation(rec) {
   const entry = wizardReviewEntry(id);
   entry.previewing = true;
   entry.previewError = "";
-  saveWizardReviewState();
   render();
   try {
     const resp = await dashboardAction("plan", { recommendation_id: id });
@@ -1091,7 +1077,6 @@ async function previewWizardRecommendation(rec) {
     entry.previewError = e.message;
   }
   entry.previewing = false;
-  saveWizardReviewState();
   render();
 }
 
@@ -1110,7 +1095,6 @@ async function deferWizardRecommendation(rec, reason) {
   } catch (e) {
     entry.previewError = e.message;
   }
-  saveWizardReviewState();
   render();
 }
 
@@ -1156,11 +1140,9 @@ function renderWizardRecommendationCard(rec, persistedReview, installsByID, asse
       if (!cb.checked) {
         entry.plan = null;
         entry.previewError = "";
-        saveWizardReviewState();
         render();
         return;
       }
-      saveWizardReviewState();
       await previewWizardRecommendation(rec);
     });
     head.appendChild(cb);
