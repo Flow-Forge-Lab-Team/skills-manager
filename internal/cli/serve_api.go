@@ -772,6 +772,30 @@ type cliRunResponse struct {
 	Stderr   string `json:"stderr"`
 }
 
+// validateServeDiscoverArgs restricts UI-triggered discovery to the read-only
+// wizard scopes (FLO-409). Mutating discover flags such as --save-project-roots
+// or --remove-project-root are rejected.
+func validateServeDiscoverArgs(args []string) error {
+	if len(args) == 0 || args[0] != "discover" {
+		return fmt.Errorf("expected discover command")
+	}
+	var global, saved bool
+	for _, arg := range args[1:] {
+		switch arg {
+		case "--global":
+			global = true
+		case "--saved-project-roots":
+			saved = true
+		default:
+			return fmt.Errorf("discover flag %q is not allowed from the UI", arg)
+		}
+	}
+	if !global && !saved {
+		return fmt.Errorf("discover requires --global and/or --saved-project-roots from the UI")
+	}
+	return nil
+}
+
 func (s *serveServer) handleRunCLI(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -793,6 +817,12 @@ func (s *serveServer) handleRunCLI(w http.ResponseWriter, r *http.Request) {
 	if !serveAllowedCLI[cmd] {
 		writeAPIError(w, http.StatusForbidden, fmt.Errorf("command %q is not allowed from the UI", cmd))
 		return
+	}
+	if cmd == "discover" {
+		if err := validateServeDiscoverArgs(req.Args); err != nil {
+			writeAPIError(w, http.StatusBadRequest, err)
+			return
+		}
 	}
 
 	args := append([]string{"--json", "--non-interactive", "--quiet"}, req.Args...)

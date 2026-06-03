@@ -414,6 +414,26 @@ func TestServeRunCLIDiscover(t *testing.T) {
 	}
 }
 
+func TestServeRunCLIDiscoverRejectsMutatingFlags(t *testing.T) {
+	home := t.TempDir()
+	ts := httptest.NewServer(newServeServer(filepath.Join(home, ".skills-manager")))
+	defer ts.Close()
+	token := serveSessionToken(t, ts.URL)
+
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/v1/run",
+		bytes.NewReader([]byte(`{"args":["discover","--projects","/tmp","--save-project-roots"]}`)))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Skills-Manager-Token", token)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("mutating discover status = %d, want 400", resp.StatusCode)
+	}
+}
+
 func fileSHA256(t *testing.T, path string) string {
 	t.Helper()
 	f, err := os.Open(path)
