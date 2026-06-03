@@ -1155,7 +1155,7 @@ function renderWizardScopePanel(panel) {
       value: opt.id,
     });
     input.checked = wizardScanScope === opt.id;
-    input.addEventListener("change", () => saveWizardScanScope(opt.id));
+    input.addEventListener("change", () => { saveWizardScanScope(opt.id); render(); });
     const label = el("label", { className: "wizard-scope-option" }, [
       input,
       el("span", { className: "row-title", text: opt.label }),
