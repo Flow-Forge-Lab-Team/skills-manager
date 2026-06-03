@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -1149,6 +1150,185 @@ func TestDashboardActionsRequirePreviewConfirmAndRecordState(t *testing.T) {
 	}
 }
 
+func TestDashboardApplySelectedActionCompletesSetup(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	managerHome := filepath.Join(home, ".skills-manager")
+	t.Setenv("SKILLS_MANAGER_HOME", managerHome)
+	writeScanSkill(t, filepath.Join(home, ".claude", "skills"), "review", "---\nname: review\n---\n# Review\n")
+	writeScanSkill(t, filepath.Join(home, ".claude", "skills"), "deferred", "---\nname: deferred\n---\n# Deferred\n")
+	if err := os.MkdirAll(filepath.Join(home, ".openclaw", "skills"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{"--json", "discover", "--global"}, &stdout, &stderr)
+	if code != ExitSuccess {
+		t.Fatalf("discover exit = %d\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+	}
+
+	srv := newServeServer(managerHome)
+	ts := httptest.NewServer(srv)
+	defer ts.Close()
+	assessment := getTestAssessment(t, ts.URL)
+	selectedRec := findTestRecommendation(t, assessment, "review", "install_global")
+	for _, rec := range assessment.Recommendations {
+		if rec.RecommendationID == selectedRec.RecommendationID {
+			continue
+		}
+		_ = postTestAction[triageActionReview](t, ts.URL, srv.token, "review", map[string]string{
+			"recommendation_id": rec.RecommendationID,
+			"status":            "ignored",
+			"reason":            "deferred in setup wizard",
+		})
+	}
+	preview := postTestAction[triageActionPlanResponse](t, ts.URL, srv.token, "plan", map[string]string{
+		"recommendation_id": selectedRec.RecommendationID,
+	})
+	applied := postTestAction[triageActionPlanResponse](t, ts.URL, srv.token, "apply", map[string]any{
+		"recommendation_id": selectedRec.RecommendationID,
+		"plan":              preview.Plan,
+		"confirm":           true,
+		"reason":            "confirmed in setup wizard",
+	})
+	if applied.Review.Status != "applied" {
+		t.Fatalf("applied review = %#v", applied.Review)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".openclaw", "skills", "review", "SKILL.md")); err != nil {
+		t.Fatalf("selected skill install missing: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".openclaw", "skills", "deferred", "SKILL.md")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("deferred skill was applied unexpectedly, err=%v", err)
+	}
+	setup := getTestSetupStatus(t, ts.URL)
+	if setup.State != setupStateCompleted || setup.OpenActions {
+		t.Fatalf("setup status = %#v, want completed with no open actions", setup)
+	}
+}
+
+func TestDashboardApplySelectedIngestCompletesSetup(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	managerHome := filepath.Join(home, ".skills-manager")
+	t.Setenv("SKILLS_MANAGER_HOME", managerHome)
+	writeScanSkill(t, filepath.Join(home, ".claude", "skills"), "review", "---\nname: review\n---\n# Review\n")
+
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{"--json", "discover", "--global"}, &stdout, &stderr)
+	if code != ExitSuccess {
+		t.Fatalf("discover exit = %d\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+	}
+
+	srv := newServeServer(managerHome)
+	ts := httptest.NewServer(srv)
+	defer ts.Close()
+	assessment := getTestAssessment(t, ts.URL)
+	selectedRec := findTestRecommendation(t, assessment, "review", "ingest")
+	for _, rec := range assessment.Recommendations {
+		if rec.RecommendationID == selectedRec.RecommendationID {
+			continue
+		}
+		_ = postTestAction[triageActionReview](t, ts.URL, srv.token, "review", map[string]string{
+			"recommendation_id": rec.RecommendationID,
+			"status":            "ignored",
+			"reason":            "deferred in setup wizard",
+		})
+	}
+	preview := postTestAction[triageActionPlanResponse](t, ts.URL, srv.token, "plan", map[string]string{
+		"recommendation_id": selectedRec.RecommendationID,
+	})
+	applied := postTestAction[triageActionPlanResponse](t, ts.URL, srv.token, "apply", map[string]any{
+		"recommendation_id": selectedRec.RecommendationID,
+		"plan":              preview.Plan,
+		"confirm":           true,
+		"reason":            "confirmed in setup wizard",
+	})
+	if applied.Review.Status != "applied" {
+		t.Fatalf("applied review = %#v", applied.Review)
+	}
+	if _, err := os.Stat(filepath.Join(managerHome, "library", "review", "SKILL.md")); err != nil {
+		t.Fatalf("selected skill ingest missing: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(managerHome, "library", "catalog.yaml")); err != nil {
+		t.Fatalf("catalog missing after ingest: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".claude", "skills", "review", "SKILL.md")); err != nil {
+		t.Fatalf("ingest should preserve original source: %v", err)
+	}
+	setup := getTestSetupStatus(t, ts.URL)
+	if setup.State != setupStateCompleted || setup.OpenActions {
+		t.Fatalf("setup status = %#v, want completed with no open actions", setup)
+	}
+}
+
+func TestDashboardBatchApplyIngestKeepsSharedCatalogPlansValid(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	managerHome := filepath.Join(home, ".skills-manager")
+	t.Setenv("SKILLS_MANAGER_HOME", managerHome)
+	writeScanSkill(t, filepath.Join(home, ".claude", "skills"), "review", "---\nname: review\n---\n# Review\n")
+	writeScanSkill(t, filepath.Join(home, ".claude", "skills"), "deploy", "---\nname: deploy\n---\n# Deploy\n")
+
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{"--json", "discover", "--global"}, &stdout, &stderr)
+	if code != ExitSuccess {
+		t.Fatalf("discover exit = %d\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+	}
+
+	srv := newServeServer(managerHome)
+	ts := httptest.NewServer(srv)
+	defer ts.Close()
+	assessment := getTestAssessment(t, ts.URL)
+	reviewRec := findTestRecommendation(t, assessment, "review", "ingest")
+	deployRec := findTestRecommendation(t, assessment, "deploy", "ingest")
+	for _, rec := range assessment.Recommendations {
+		if rec.RecommendationID == reviewRec.RecommendationID || rec.RecommendationID == deployRec.RecommendationID {
+			continue
+		}
+		_ = postTestAction[triageActionReview](t, ts.URL, srv.token, "review", map[string]string{
+			"recommendation_id": rec.RecommendationID,
+			"status":            "ignored",
+			"reason":            "deferred in setup wizard",
+		})
+	}
+	reviewPreview := postTestAction[triageActionPlanResponse](t, ts.URL, srv.token, "plan", map[string]string{
+		"recommendation_id": reviewRec.RecommendationID,
+	})
+	deployPreview := postTestAction[triageActionPlanResponse](t, ts.URL, srv.token, "plan", map[string]string{
+		"recommendation_id": deployRec.RecommendationID,
+	})
+	if !containsPlanFile(reviewPreview.Plan.Files.Create, filepath.Join(managerHome, "library", "catalog.yaml")) ||
+		!containsPlanFile(deployPreview.Plan.Files.Create, filepath.Join(managerHome, "library", "catalog.yaml")) {
+		t.Fatalf("previews should both include catalog create before either apply: review=%#v deploy=%#v", reviewPreview.Plan.Files, deployPreview.Plan.Files)
+	}
+
+	batch := postTestAction[triageActionBatchApplyResponse](t, ts.URL, srv.token, "apply-batch", map[string]any{
+		"confirm": true,
+		"reason":  "confirmed in setup wizard",
+		"actions": []map[string]any{
+			{"recommendation_id": reviewRec.RecommendationID, "plan": reviewPreview.Plan},
+			{"recommendation_id": deployRec.RecommendationID, "plan": deployPreview.Plan},
+		},
+	})
+	if len(batch.Results) != 2 {
+		t.Fatalf("batch results = %#v, want 2", batch.Results)
+	}
+	for _, result := range batch.Results {
+		if result.Review.Status != "applied" {
+			t.Fatalf("batch result = %#v, want applied", result)
+		}
+	}
+	for _, name := range []string{"review", "deploy"} {
+		if _, err := os.Stat(filepath.Join(managerHome, "library", name, "SKILL.md")); err != nil {
+			t.Fatalf("ingested %s missing: %v", name, err)
+		}
+	}
+	setup := getTestSetupStatus(t, ts.URL)
+	if setup.State != setupStateCompleted || setup.OpenActions {
+		t.Fatalf("setup status = %#v, want completed with no open actions", setup)
+	}
+}
+
 func getTestAssessment(t *testing.T, baseURL string) triageAssessment {
 	t.Helper()
 	resp, err := http.Get(baseURL + "/api/v1/assessment")
@@ -1164,6 +1344,23 @@ func getTestAssessment(t *testing.T, baseURL string) triageAssessment {
 		t.Fatal(err)
 	}
 	return assessment
+}
+
+func getTestSetupStatus(t *testing.T, baseURL string) triageSetupStatus {
+	t.Helper()
+	resp, err := http.Get(baseURL + "/api/v1/setup")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("setup status = %d", resp.StatusCode)
+	}
+	var setup triageSetupStatus
+	if err := json.NewDecoder(resp.Body).Decode(&setup); err != nil {
+		t.Fatal(err)
+	}
+	return setup
 }
 
 func findTestRecommendation(t *testing.T, assessment triageAssessment, skillName, kind string) discoverRecommendation {

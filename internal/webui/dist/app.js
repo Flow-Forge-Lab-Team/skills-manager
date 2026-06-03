@@ -15,6 +15,7 @@ let sessionToken = null;
 let libraryState = { search: "", category: "", tag: "", source: "", compatibility: "", requirements: "", sort: "name", page: 1, pageSize: 25 };
 let scanAutoIngestState = null;
 let assessmentActionState = {};
+let assessmentSection = "inventory";
 
 async function ensureSession() {
   if (sessionToken) return;
@@ -912,6 +913,13 @@ let wizardDiscoverError = "";
 let wizardDiscoverSummary = null; // compact assessment summary for step 2
 let wizardAssessment = null;      // full /api/v1/assessment for review/apply steps
 let wizardReviewState = {}; // ephemeral selection + dry-run previews (not persisted across reload)
+let wizardApplyState = {
+  confirm: false,
+  applying: false,
+  completed: false,
+  error: "",
+  results: {},
+};
 
 const WIZARD_GLOBAL_PATH_HINTS = [
   "~/.claude/skills", "~/.codex/skills", "~/.grok/skills", "~/.gemini/skills",
@@ -944,9 +952,9 @@ const WIZARD_STEPS = [
   },
   {
     id: "apply", label: "Apply", title: "Review before apply",
-    body: "Confirm the dry-run previews for actions you selected. Applying with confirmation is the next setup step; nothing on disk changes on this screen.",
-    primary: "Continue to summary",
-    hint: "Applying changes requires explicit confirmation in a follow-up step. You can finish setup later and resume from the dashboard.",
+    body: "Confirm the dry-run previews for actions you selected. Only the exact file changes shown here can be applied.",
+    primary: "Apply selected",
+    hint: "Applying changes writes to disk and records action state. Failed actions stay open so setup is not marked complete.",
   },
   {
     id: "done", label: "Done", title: "Setup complete",
@@ -1000,6 +1008,13 @@ function wizardInstallationsByPath(assessment) {
 function resetWizardReviewAfterDiscovery() {
   wizardAssessment = null;
   wizardReviewState = {};
+  wizardApplyState = {
+    confirm: false,
+    applying: false,
+    completed: false,
+    error: "",
+    results: {},
+  };
 }
 
 function wizardRecommendationSkillState(rec, installsByID) {
@@ -1020,11 +1035,15 @@ function wizardRecommendationSkillState(rec, installsByID) {
 }
 
 function wizardRecommendationIsRisky(rec) {
-  return rec.kind === "review_drift" || rec.kind === "needs_port" || rec.kind === "ignore";
+  return !wizardRecommendationApplyable(rec);
+}
+
+function wizardRecommendationApplyable(rec) {
+  return ["ingest", "install_global", "install_project", "remove"].includes(rec.kind);
 }
 
 function wizardRecommendationSelectable(rec, persistedReview) {
-  if (wizardRecommendationIsRisky(rec)) return false;
+  if (!wizardRecommendationApplyable(rec)) return false;
   if (persistedReview && ["ignored", "applied", "accepted"].includes(persistedReview.status)) return false;
   return true;
 }
@@ -1033,7 +1052,7 @@ function wizardDefaultSelected(rec, persistedReview) {
   if (!wizardRecommendationSelectable(rec, persistedReview)) return false;
   const entry = wizardReviewEntry(rec.recommendation_id);
   if (typeof entry.selected === "boolean") return entry.selected;
-  return ["ingest", "install_global", "install_project", "remove"].includes(rec.kind);
+  return wizardRecommendationApplyable(rec);
 }
 
 function wizardSelectedRecommendationIDs(assessment) {
@@ -1051,6 +1070,13 @@ function wizardReviewStepCanAdvance(assessment) {
     const entry = wizardReviewEntry(id);
     return entry.plan && !entry.previewError;
   });
+}
+
+function resetWizardApplyProgress() {
+  wizardApplyState.confirm = false;
+  wizardApplyState.completed = false;
+  wizardApplyState.error = "";
+  wizardApplyState.results = {};
 }
 
 async function loadWizardAssessment() {
@@ -1073,9 +1099,11 @@ async function previewWizardRecommendation(rec) {
     const resp = await dashboardAction("plan", { recommendation_id: id });
     entry.plan = resp.plan;
     entry.previewError = "";
+    resetWizardApplyProgress();
   } catch (e) {
     entry.plan = null;
     entry.previewError = e.message;
+    resetWizardApplyProgress();
   }
   entry.previewing = false;
   render();
@@ -1101,6 +1129,7 @@ async function deferWizardRecommendation(rec, reason) {
       reason: reason || "deferred in setup wizard",
     });
     mergeWizardActionReview(entry.review);
+    resetWizardApplyProgress();
     await refreshSetupStatus();
   } catch (e) {
     entry.previewError = e.message;
@@ -1148,6 +1177,7 @@ function renderWizardRecommendationCard(rec, persistedReview, installsByID, asse
     cb.checked = selected;
     cb.addEventListener("change", async () => {
       entry.selected = cb.checked;
+      resetWizardApplyProgress();
       if (!cb.checked) {
         entry.plan = null;
         entry.previewError = "";
@@ -1176,7 +1206,7 @@ function renderWizardRecommendationCard(rec, persistedReview, installsByID, asse
   }
   card.appendChild(head);
   if (risky) {
-    card.appendChild(el("p", { className: "advisory-note", text: "Stays in review — resolve drift or compatibility before any install can be applied implicitly." }));
+    card.appendChild(el("p", { className: "advisory-note", text: "Stays in review — this setup apply pass only supports ingest, install, and remove actions with ready dry-run plans." }));
   }
   const actions = el("div", { className: "wizard-review-actions" });
   if (selectable && selected || risky) {
@@ -1216,31 +1246,129 @@ async function renderWizardReviewPanel(panel) {
   }
 }
 
+function wizardSelectedPlans(assessment) {
+  const byID = {};
+  (assessment.recommendations || []).forEach((r) => { byID[r.recommendation_id] = r; });
+  return wizardSelectedRecommendationIDs(assessment).map((id) => {
+    const entry = wizardReviewEntry(id);
+    return { id, rec: byID[id], entry, plan: entry.plan };
+  }).filter((item) => item.rec);
+}
+
+async function applyWizardSelections() {
+  if (!wizardAssessment || wizardAssessment.error || wizardApplyState.applying) return;
+  const items = wizardSelectedPlans(wizardAssessment);
+  if (!items.length || items.some((item) => !item.plan)) return;
+  wizardApplyState.applying = true;
+  wizardApplyState.completed = false;
+  wizardApplyState.error = "";
+  wizardApplyState.results = {};
+  render();
+  try {
+    const batch = await dashboardAction("apply-batch", {
+      confirm: true,
+      reason: "confirmed in setup wizard",
+      actions: items.map((item) => ({
+        recommendation_id: item.id,
+        plan: item.plan,
+      })),
+    });
+    const results = batch.results || [];
+    results.forEach((result) => {
+      const id = result && result.plan && result.plan.recommendation_id;
+      if (!id) return;
+      const item = items.find((candidate) => candidate.id === id);
+      if (item) {
+        item.entry.review = result.review;
+        mergeWizardActionReview(result.review);
+      }
+      wizardApplyState.results[id] = result;
+    });
+  } catch (e) {
+    wizardApplyState.error = e.message;
+    items.forEach((item) => {
+      if (!wizardApplyState.results[item.id]) wizardApplyState.results[item.id] = { error: e.message };
+    });
+  }
+  items.forEach((item) => {
+    if (wizardApplyState.results[item.id]) return;
+    wizardApplyState.results[item.id] = { error: "No apply result returned." };
+  });
+  wizardApplyState.applying = false;
+  wizardApplyState.completed = true;
+  await refreshSetupStatus();
+  await loadWizardAssessment();
+  render();
+  if (setupStatus && !setupStatus.open_actions) wizardGoTo(5);
+}
+
 function renderWizardApplyPanel(panel) {
   const assessment = wizardAssessment;
   if (!assessment || assessment.error) {
     panel.appendChild(el("p", { className: "empty", text: "Load recommendations on the Review step first." }));
     return;
   }
-  const selected = wizardSelectedRecommendationIDs(assessment);
-  if (!selected.length) {
-    panel.appendChild(el("p", { className: "empty", text: "No actions selected. You can finish setup and apply recommendations later from the Discover tab." }));
+  const items = wizardSelectedPlans(assessment);
+  if (!items.length) {
+    panel.appendChild(el("p", { className: "empty", text: setupStatus && setupStatus.open_actions
+      ? "No applyable actions are selected. Return to Review to defer open recommendations, or finish setup later from the dashboard."
+      : "No actions selected. You can finish setup and apply recommendations later from the Discover tab." }));
     return;
   }
   const installsByPath = wizardInstallationsByPath(assessment);
-  const byID = {};
-  (assessment.recommendations || []).forEach((r) => { byID[r.recommendation_id] = r; });
-  panel.appendChild(el("p", { className: "advisory-note", text: "Applying selected actions with confirmation ships separately (FLO-411). Below are the dry-run previews you reviewed — no files have been changed." }));
-  selected.forEach((id) => {
-    const rec = byID[id];
-    const entry = wizardReviewEntry(id);
-    if (!rec) return;
+  const missingPlans = items.filter((item) => !item.plan);
+  const displayedItems = items.slice();
+  const displayed = {};
+  displayedItems.forEach((item) => { displayed[item.id] = true; });
+  Object.entries(wizardApplyState.results).forEach(([id, result]) => {
+    if (displayed[id] || !result || !result.plan) return;
+    displayedItems.push({
+      id,
+      rec: { title: result.plan.title, skill_name: result.plan.skill_name },
+      entry: { plan: result.plan, review: result.review },
+      plan: result.plan,
+    });
+    displayed[id] = true;
+  });
+  panel.appendChild(el("p", { className: "advisory-note", text: "Review the exact planned file changes, then confirm once. The apply pass uses these same dry-run plans and refuses changed plans." }));
+  displayedItems.forEach(({ id, rec, entry }) => {
+    const result = wizardApplyState.results[id];
+    const review = (result && result.review) || entry.review || {};
     const block = el("section", { className: "wizard-apply-item" });
-    block.appendChild(el("div", { className: "row-title", text: rec.title || rec.skill_name || id }));
+    block.appendChild(el("div", { className: "wizard-apply-head" }, [
+      el("div", { className: "row-title", text: rec.title || rec.skill_name || id }),
+      review.status ? badge(review.status, actionStatusTone(review.status)) : null,
+    ].filter(Boolean)));
     if (entry.plan) block.appendChild(renderActionPlanPreview(entry.plan, installsByPath));
     else block.appendChild(el("p", { className: "error", text: "Missing dry-run preview — return to Review and preview this action." }));
+    if (result && result.error) block.appendChild(el("p", { className: "error", text: result.error }));
+    if (review.error_detail) block.appendChild(el("p", { className: "error", text: "Action failed: " + review.error_detail }));
+    if (result && result.stdout) block.appendChild(el("pre", { className: "diff compact", text: result.stdout }));
     panel.appendChild(block);
   });
+  if (wizardApplyState.error) panel.appendChild(el("p", { className: "error", text: wizardApplyState.error }));
+  if (wizardApplyState.completed && setupStatus && setupStatus.open_actions) {
+    panel.appendChild(el("p", { className: "advisory-note", text: "Some actions are still open or failed. Setup is not complete; review the error state before finishing later." }));
+  }
+  const confirmID = "wizard-apply-confirm";
+  const confirm = el("input", { type: "checkbox", id: confirmID });
+  confirm.checked = wizardApplyState.confirm;
+  confirm.disabled = wizardApplyState.applying || missingPlans.length > 0;
+  confirm.addEventListener("change", () => {
+    wizardApplyState.confirm = confirm.checked;
+    render();
+  });
+  panel.appendChild(el("label", { className: "wizard-apply-confirm", htmlFor: confirmID }, [
+    confirm,
+    el("span", { text: "I reviewed the dry-run file changes shown above and want to apply only these selected actions." }),
+  ]));
+  panel.appendChild(el("button", {
+    className: "btn confirm",
+    type: "button",
+    text: wizardApplyState.applying ? "Applying..." : "Apply selected",
+    disabled: wizardApplyState.applying || !wizardApplyState.confirm || missingPlans.length > 0,
+    onClick: applyWizardSelections,
+  }));
 }
 
 async function refreshSetupStatus() {
@@ -1288,6 +1416,14 @@ function exitSetupWizard() {
   // ephemeral in-wizard position is dropped. Re-entry recomputes status.
   setupExited = true;
   currentView = "overview";
+  render();
+}
+
+function finishSetupWizard() {
+  setupExited = true;
+  setupResumeDismissed = true;
+  assessmentSection = "actions";
+  currentView = "discover";
   render();
 }
 
@@ -1594,14 +1730,23 @@ async function renderSetupWizard(content) {
   } else if (step.id === "apply") {
     const assessment = wizardAssessment && !wizardAssessment.error ? wizardAssessment : await loadWizardAssessment();
     const pendingSelected = !assessment.error ? wizardSelectedRecommendationIDs(assessment) : [];
-    if (pendingSelected.length) {
+    const selectedPlans = !assessment.error ? wizardSelectedPlans(assessment) : [];
+    const missingPlan = selectedPlans.some((item) => !item.plan);
+    if (pendingSelected.length && !wizardApplyState.completed) {
+      next.textContent = wizardApplyState.applying ? "Applying..." : "Apply selected";
+      next.disabled = wizardApplyState.applying || !wizardApplyState.confirm || missingPlan;
+      next.onclick = applyWizardSelections;
+    } else if (pendingSelected.length && setupStatus && setupStatus.open_actions) {
+      next.textContent = "Finish setup later";
+      next.onclick = exitSetupWizard;
+    } else if (!pendingSelected.length && setupStatus && setupStatus.open_actions) {
       next.textContent = "Finish setup later";
       next.onclick = exitSetupWizard;
     } else {
       next.onclick = () => wizardGoTo(wizardStep + 1);
     }
   } else if (step.id === "done") {
-    next.onclick = exitSetupWizard;
+    next.onclick = finishSetupWizard;
   } else {
     next.disabled = (blocked && !exitInstead) || wizardDiscoverPhase === "running";
     next.onclick = exitInstead ? exitSetupWizard : () => { if (isLast) exitSetupWizard(); else wizardGoTo(wizardStep + 1); };
@@ -1891,6 +2036,7 @@ async function renderDiscover(content) {
   ];
   const body = el("div", { className: "assessment-body", role: "tabpanel", id: "assessment-panel", tabindex: "0" });
   const renderSection = (id) => {
+    assessmentSection = id;
     body.replaceChildren();
     tabs.querySelectorAll("button").forEach((b) => {
       const selected = b.dataset.section === id;
@@ -1932,7 +2078,7 @@ async function renderDiscover(content) {
   });
   content.appendChild(tabs);
   content.appendChild(body);
-  renderSection("inventory");
+  renderSection(assessmentSection);
 }
 
 function renderAssessmentInventory(content, a) {
@@ -2096,7 +2242,7 @@ function renderAssessmentActions(content, a) {
         renderAssessmentActions(content, a);
       } }),
     ]);
-    if (local.plan && local.plan.status === "ready" && ["install_global", "install_project", "remove"].includes(local.plan.kind)) {
+    if (local.plan && local.plan.status === "ready" && ["ingest", "install_global", "install_project", "remove"].includes(local.plan.kind)) {
       controls.appendChild(el("button", { className: "btn danger", text: "Confirm apply", onClick: async () => {
         if (!window.confirm("Apply this precomputed dry-run plan and record an audit entry?")) return;
         assessmentActionState[id] = await dashboardAction("apply", { recommendation_id: id, plan: local.plan, confirm: true, reason: "confirmed in dashboard" });
