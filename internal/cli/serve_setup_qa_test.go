@@ -1,44 +1,40 @@
 package cli
 
 import (
+	"io"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
 // TestSetupWizardFixtureMatrixAndLandingInvariant is the FLO-413 end-to-end QA
 // matrix. It builds each of the four FLO-406 setup states (docs/SETUP_WIZARD.md)
-// from isolated HOME fixtures and asserts, over the real /api/v1/setup endpoint,
-// two things per state:
+// from isolated HOME fixtures and asserts, per state:
 //
-//   - the derived state matches the fixture, and
+//   - the derived state returned by /api/v1/setup matches the fixture, and
 //   - the fresh-user landing invariant holds: no_discovery and
-//     discovered_unmanaged are "fresh" users who enter the setup wizard, while
-//     partially_managed and completed are "returning" users who land on the
-//     dashboard. This is the headline assertion from the UX contract — a fresh
-//     user must never land on an empty Overview.
+//     discovered_unmanaged are "fresh" users routed to the setup wizard, while
+//     partially_managed and completed are "returning" users routed to the
+//     dashboard. A fresh user must never land on an empty Overview.
+//
+// The landing half is checked against the real client routing predicate
+// (isFreshSetupState in the served app.js), not a table duplicated in this test,
+// so a routing change in app.js that left /api/v1/setup unchanged still fails the
+// invariant here.
 //
 // Single-state endpoint tests already cover no_discovery
 // (TestSetupStatusFreshHomeIsNoDiscoveryWithoutWrites), discovered_unmanaged
 // (TestSetupStatusDiscoveredUnmanaged), and completed (the apply-completion
-// tests). This test ties all four into one matrix, encodes the routing table as
-// an executable invariant, and adds the partially_managed endpoint case, which
-// no other test exercises.
+// tests). This test ties all four into one matrix and adds the partially_managed
+// endpoint case, which no other test exercises.
 func TestSetupWizardFixtureMatrixAndLandingInvariant(t *testing.T) {
-	// Landing per the FLO-406 routing table (docs/SETUP_WIZARD.md, "Default
-	// landing and routing"). true => wizard (fresh user), false => dashboard.
-	wizardLanding := map[string]bool{
-		setupStateNoDiscovery:         true,
-		setupStateDiscoveredUnmanaged: true,
-		setupStatePartiallyManaged:    false,
-		setupStateCompleted:           false,
-	}
-
 	cases := []struct {
 		name       string
 		wantState  string
-		wantWizard bool // expected landing, authored independently of wizardLanding
+		wantWizard bool // expected landing per the FLO-406 routing table
 		build      func(t *testing.T) (managerHome string)
 	}{
 		{
@@ -113,12 +109,19 @@ func TestSetupWizardFixtureMatrixAndLandingInvariant(t *testing.T) {
 				t.Fatalf("setup state = %q, want %q (%#v)", setup.State, tc.wantState, setup)
 			}
 
-			// Headline invariant: the routing table classifies this state's landing
-			// exactly as the QA expects, so a fresh user is never routed to an empty
-			// Overview and a returning user is never trapped in the wizard.
-			if wizardLanding[setup.State] != tc.wantWizard {
-				t.Fatalf("state %q routes to wizard=%v, want %v per the FLO-406 routing table",
-					setup.State, wizardLanding[setup.State], tc.wantWizard)
+			// Headline invariant, checked against the real client routing predicate
+			// served as app.js: exactly the two fresh states route to the wizard, so
+			// a fresh user is never sent to an empty Overview and a returning user is
+			// never trapped in the wizard.
+			fresh := freshSetupStatesFromServedAppJS(t, ts.URL)
+			if !fresh[setupStateNoDiscovery] || !fresh[setupStateDiscoveredUnmanaged] ||
+				fresh[setupStatePartiallyManaged] || fresh[setupStateCompleted] {
+				t.Fatalf("served app.js routes fresh states = %v; want only no_discovery and discovered_unmanaged to the wizard", fresh)
+			}
+			// This fixture's actual derived state lands where the served routing
+			// predicate sends it, matching the QA expectation.
+			if fresh[setup.State] != tc.wantWizard {
+				t.Fatalf("served routing sends state %q to wizard=%v, want %v", setup.State, fresh[setup.State], tc.wantWizard)
 			}
 
 			// Read-only contract (FLO-407): computing the no_discovery status must
@@ -131,6 +134,51 @@ func TestSetupWizardFixtureMatrixAndLandingInvariant(t *testing.T) {
 			}
 		})
 	}
+}
+
+// freshSetupStatesFromServedAppJS extracts, from the app.js served by the running
+// server, the set of setup states that the real client routing predicate
+// (isFreshSetupState) sends to the wizard. The QA matrix asserts each fixture's
+// landing against this served routing source rather than a table duplicated in
+// the test, so a divergence between app.js routing and /api/v1/setup is caught.
+func freshSetupStatesFromServedAppJS(t *testing.T, baseURL string) map[string]bool {
+	t.Helper()
+	resp, err := http.Get(baseURL + "/app.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET /app.js = %d, want 200", resp.StatusCode)
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	js := string(body)
+
+	const marker = "function isFreshSetupState"
+	start := strings.Index(js, marker)
+	if start < 0 {
+		t.Fatalf("served app.js no longer defines %q; the client wizard-routing predicate moved or was renamed", marker)
+	}
+	open := strings.Index(js[start:], "{")
+	end := strings.Index(js[start:], "}")
+	if open < 0 || end < 0 || end < open {
+		t.Fatalf("could not locate the isFreshSetupState body in served app.js")
+	}
+	predicate := js[start+open : start+end]
+
+	fresh := map[string]bool{}
+	for _, state := range []string{
+		setupStateNoDiscovery, setupStateDiscoveredUnmanaged,
+		setupStatePartiallyManaged, setupStateCompleted,
+	} {
+		if strings.Contains(predicate, `"`+state+`"`) {
+			fresh[state] = true
+		}
+	}
+	return fresh
 }
 
 // seedManagedLibrarySkill writes a minimal managed-library skill so countLibrarySkills

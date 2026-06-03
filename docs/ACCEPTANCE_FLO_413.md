@@ -35,9 +35,12 @@ plus a load-error case were built read-only from already-persisted state:
 ### Fixture-matrix + landing invariant
 
 New end-to-end test ties all four states into one matrix and asserts, over the
-real `/api/v1/setup` endpoint, both the derived state and the routing-table
-landing (wizard vs. dashboard). It adds the `partially_managed` endpoint case
-that no prior test exercised.
+real `/api/v1/setup` endpoint, the derived state per fixture. It then checks the
+fresh-user landing against the **real client routing predicate**
+(`isFreshSetupState` parsed from the app.js served by the test server) rather
+than a table duplicated in the test, so a routing change in app.js that left
+`/api/v1/setup` unchanged still fails the invariant. It adds the
+`partially_managed` endpoint case that no prior test exercised.
 
 ```sh
 go test ./internal/cli/ -run TestSetupWizardFixtureMatrixAndLandingInvariant -v

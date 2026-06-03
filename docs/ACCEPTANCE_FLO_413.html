@@ -113,9 +113,13 @@ reviewed</td>
 <h3 id="fixture-matrix--landing-invariant">Fixture-matrix + landing
 invariant</h3>
 <p>New end-to-end test ties all four states into one matrix and asserts,
-over the real <code>/api/v1/setup</code> endpoint, both the derived
-state and the routing-table landing (wizard vs. dashboard). It adds the
-<code>partially_managed</code> endpoint case that no prior test
+over the real <code>/api/v1/setup</code> endpoint, the derived state per
+fixture. It then checks the fresh-user landing against the <strong>real
+client routing predicate</strong> (<code>isFreshSetupState</code> parsed
+from the app.js served by the test server) rather than a table
+duplicated in the test, so a routing change in app.js that left
+<code>/api/v1/setup</code> unchanged still fails the invariant. It adds
+the <code>partially_managed</code> endpoint case that no prior test
 exercised.</p>
 <div class="sourceCode" id="cb1"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="ex">go</span> test ./internal/cli/ <span class="at">-run</span> TestSetupWizardFixtureMatrixAndLandingInvariant <span class="at">-v</span></span></code></pre></div>
 <p>Result: pass (4 subtests — one per state).</p>
