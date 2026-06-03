@@ -223,6 +223,101 @@ func TestSetupStatusFreshHomeIsNoDiscoveryWithoutWrites(t *testing.T) {
 	}
 }
 
+// TestOverviewFreshHomeWithoutWrites mirrors FLO-407 setup-status contract for
+// GET /api/v1/overview (FLO-423).
+func TestOverviewFreshHomeWithoutWrites(t *testing.T) {
+	home := t.TempDir()
+	managerHome := filepath.Join(home, ".skills-manager")
+
+	ts := httptest.NewServer(newServeServer(managerHome))
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/api/v1/overview")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET overview = %d, want 200", resp.StatusCode)
+	}
+	var got triageOverview
+	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
+		t.Fatalf("decode overview: %v", err)
+	}
+	if got.Home != managerHome {
+		t.Fatalf("home = %q, want %q", got.Home, managerHome)
+	}
+	if got.LibrarySkills != 0 || got.Projects != 0 || got.PendingUpdates != 0 || got.Unregistered != 0 {
+		t.Fatalf("fresh overview counts should be zero: %#v", got)
+	}
+	if got.GeneratedAt == "" {
+		t.Fatalf("generated_at should be set")
+	}
+	if _, err := os.Stat(managerHome); !os.IsNotExist(err) {
+		t.Fatalf("GET overview created manager home %q (stat err=%v)", managerHome, err)
+	}
+}
+
+func TestAssessmentFreshHomeWithoutWrites(t *testing.T) {
+	home := t.TempDir()
+	managerHome := filepath.Join(home, ".skills-manager")
+
+	ts := httptest.NewServer(newServeServer(managerHome))
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/api/v1/assessment")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET assessment = %d, want 200", resp.StatusCode)
+	}
+	if _, err := os.Stat(managerHome); !os.IsNotExist(err) {
+		t.Fatalf("GET assessment created manager home (stat err=%v)", err)
+	}
+}
+
+func TestProjectsFreshHomeWithoutWrites(t *testing.T) {
+	home := t.TempDir()
+	managerHome := filepath.Join(home, ".skills-manager")
+
+	ts := httptest.NewServer(newServeServer(managerHome))
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/api/v1/projects")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET projects = %d, want 200", resp.StatusCode)
+	}
+	if _, err := os.Stat(managerHome); !os.IsNotExist(err) {
+		t.Fatalf("GET projects created manager home (stat err=%v)", err)
+	}
+}
+
+func TestMatrixFreshHomeWithoutWrites(t *testing.T) {
+	home := t.TempDir()
+	managerHome := filepath.Join(home, ".skills-manager")
+
+	ts := httptest.NewServer(newServeServer(managerHome))
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/api/v1/matrix")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET matrix = %d, want 200", resp.StatusCode)
+	}
+	if _, err := os.Stat(managerHome); !os.IsNotExist(err) {
+		t.Fatalf("GET matrix created manager home (stat err=%v)", err)
+	}
+}
+
 // TestSetupStatusDiscoveredUnmanaged drives real discovery end-to-end and
 // confirms the endpoint reports inventory that is discovered but not yet
 // manager-owned.
