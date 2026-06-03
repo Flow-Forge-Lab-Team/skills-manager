@@ -33,7 +33,7 @@ type triageSetupStatus struct {
 	// Signals from the FLO-406 contract.
 	InventoryExists bool `json:"inventory_exists"` // A: a discovery snapshot is persisted
 	ManagedExists   bool `json:"managed_exists"`   // B: the manager owns >=1 skill
-	OpenActions     bool `json:"open_actions"`     // C: >=1 actionable recommendation still in review state "new"
+	OpenActions     bool `json:"open_actions"`     // C: >=1 actionable recommendation not yet accepted, ignored, or applied
 
 	// Counts distinguishing discovered skills from manager-owned/managed skills.
 	DiscoveredInstallations   int `json:"discovered_installations"`
@@ -118,8 +118,7 @@ func setupStatusFromAssessment(a triageAssessment, managedLibrarySkills int) tri
 		if !isActionableRecommendation(rec.Kind) {
 			continue
 		}
-		// A recommendation with no review row is implicitly "new".
-		if status := reviewStatus[rec.RecommendationID]; status == "" || status == "new" {
+		if isOpenReviewStatus(reviewStatus[rec.RecommendationID]) {
 			openRecommendations++
 		}
 	}
@@ -159,6 +158,21 @@ func deriveSetupState(inventoryExists, managedExists, openActions bool) string {
 		return setupStateDiscoveredUnmanaged
 	default:
 		return setupStatePartiallyManaged
+	}
+}
+
+// isOpenReviewStatus reports whether a recommendation's review status leaves it
+// open for signal C. Per the FLO-406 contract, an action stays open until it is
+// "accepted, ignored, or applied": a missing review row is implicitly "new",
+// and a "failed" apply stays open so setup is not marked complete (failures are
+// retryable or repairable). Unknown statuses are treated as open so setup is
+// never silently marked complete.
+func isOpenReviewStatus(status string) bool {
+	switch status {
+	case "accepted", "ignored", "applied":
+		return false
+	default:
+		return true
 	}
 }
 

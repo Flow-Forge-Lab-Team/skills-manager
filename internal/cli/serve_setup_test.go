@@ -124,14 +124,35 @@ func TestSetupStatusFromAssessment(t *testing.T) {
 			wantOpenRecs: 1,
 		},
 		{
-			name: "a failed action is not open (only review state new counts)",
+			name: "a failed action stays open so setup is not marked complete",
 			assessment: triageAssessment{
 				Installations:   []discoverInstallation{unmanaged},
 				Recommendations: []discoverRecommendation{rec("r1", "install_global")},
 				ActionReviews:   []triageActionReview{review("r1", "failed")},
 			},
+			wantState:    setupStateDiscoveredUnmanaged,
+			wantOpenRecs: 1,
+		},
+		{
+			name: "an ignored review closes the action",
+			assessment: triageAssessment{
+				Installations:   []discoverInstallation{unmanaged},
+				Recommendations: []discoverRecommendation{rec("r1", "install_global")},
+				ActionReviews:   []triageActionReview{review("r1", "ignored")},
+			},
 			wantState:    setupStateCompleted,
 			wantOpenRecs: 0,
+		},
+		{
+			name: "an applied review closes the action",
+			assessment: triageAssessment{
+				Installations:   []discoverInstallation{unmanaged, managed},
+				Recommendations: []discoverRecommendation{rec("r1", "install_global")},
+				ActionReviews:   []triageActionReview{review("r1", "applied")},
+			},
+			wantState:        setupStateCompleted,
+			wantOpenRecs:     0,
+			wantManagerOwned: 1,
 		},
 	}
 
