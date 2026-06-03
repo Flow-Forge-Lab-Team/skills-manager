@@ -895,10 +895,10 @@ function selectControlPreset(label, value, options, onChange) {
   return select;
 }
 
-// ---- First-run setup wizard (FLO-408 / FLO-409) ---------------------------
+// ---- First-run setup wizard (FLO-408 / FLO-409 / FLO-410) -------------------
 // Status-driven onboarding shell per the FLO-406 UX contract
 // (docs/SETUP_WIZARD.md). FLO-408 owns shell and routing; FLO-409 owns scope
-// selection and the discovery operation step.
+// selection and discovery; FLO-410 owns recommendation review and dry-run preview.
 
 let setupStatus = null;           // last /api/v1/setup response (read-only)
 let setupExited = false;          // ephemeral: user exited the wizard this load
@@ -908,6 +908,8 @@ let wizardScanScope = sessionStorage.getItem("skills-manager-wizard-scope") || "
 let wizardDiscoverPhase = "idle"; // idle | running | error | empty | done
 let wizardDiscoverError = "";
 let wizardDiscoverSummary = null; // compact assessment summary for step 2
+let wizardAssessment = null;      // full /api/v1/assessment for review/apply steps
+let wizardReviewState = loadWizardReviewState(); // ephemeral selection + dry-run previews
 
 const WIZARD_GLOBAL_PATH_HINTS = [
   "~/.claude/skills", "~/.codex/skills", "~/.grok/skills", "~/.gemini/skills",
@@ -939,11 +941,10 @@ const WIZARD_STEPS = [
     primary: "Continue to apply",
   },
   {
-    id: "apply", label: "Apply", title: "Apply selected actions",
-    body: "Apply only the actions you selected, and only after you confirm the previewed changes. Each plan's exact file changes are shown, and results are reported per action.",
-    primary: "Apply selected",
-    operation: true,
-    hint: "Applying changes happens here, after you review and confirm each action. You can finish setup later and resume from the dashboard.",
+    id: "apply", label: "Apply", title: "Review before apply",
+    body: "Confirm the dry-run previews for actions you selected. Applying with confirmation is the next setup step; nothing on disk changes on this screen.",
+    primary: "Continue to summary",
+    hint: "Applying changes requires explicit confirmation in a follow-up step. You can finish setup later and resume from the dashboard.",
   },
   {
     id: "done", label: "Done", title: "Setup complete",
@@ -951,6 +952,289 @@ const WIZARD_STEPS = [
     primary: "Go to dashboard",
   },
 ];
+
+const WIZARD_REC_GROUP_ORDER = [
+  "ingest", "install_global", "install_project", "review_drift", "ignore", "remove", "needs_port",
+];
+
+const WIZARD_REC_GROUP_LABELS = {
+  ingest: "Ingest into library",
+  install_global: "Install globally",
+  install_project: "Install to project",
+  review_drift: "Review drift",
+  ignore: "Ignore / no action",
+  remove: "Remove",
+  needs_port: "Compatibility review",
+};
+
+function loadWizardReviewState() {
+  try {
+    const raw = sessionStorage.getItem("skills-manager-wizard-review");
+    return raw ? JSON.parse(raw) : {};
+  } catch (_) {
+    return {};
+  }
+}
+
+function saveWizardReviewState() {
+  sessionStorage.setItem("skills-manager-wizard-review", JSON.stringify(wizardReviewState));
+}
+
+function wizardReviewEntry(id) {
+  if (!wizardReviewState[id]) wizardReviewState[id] = {};
+  return wizardReviewState[id];
+}
+
+function wizardRecommendationGroupLabel(kind) {
+  return WIZARD_REC_GROUP_LABELS[kind] || (kind ? kind.replace(/_/g, " ") : "Other");
+}
+
+function wizardRecommendationGroupRank(kind) {
+  const idx = WIZARD_REC_GROUP_ORDER.indexOf(kind);
+  return idx >= 0 ? idx : WIZARD_REC_GROUP_ORDER.length;
+}
+
+function wizardInstallationsByID(assessment) {
+  const map = {};
+  (assessment.installations || []).forEach((i) => { map[i.installation_id] = i; });
+  return map;
+}
+
+function wizardRecommendationSkillState(rec, installsByID) {
+  const ids = rec.source_installation_ids || [];
+  if (!ids.length) return { label: "discovered", tone: "" };
+  let managed = 0;
+  let unmanaged = 0;
+  ids.forEach((id) => {
+    const inst = installsByID[id];
+    if (!inst) return;
+    if (inst.managed || inst.ownership === "manager") managed++;
+    else unmanaged++;
+  });
+  if (managed && !unmanaged) return { label: "managed", tone: "ok" };
+  if (unmanaged && !managed) return { label: "unmanaged", tone: "warn" };
+  if (managed && unmanaged) return { label: "mixed", tone: "warn" };
+  return { label: "discovered", tone: "" };
+}
+
+function wizardRecommendationIsRisky(rec) {
+  return rec.kind === "review_drift" || rec.kind === "needs_port" || rec.kind === "ignore";
+}
+
+function wizardRecommendationSelectable(rec, persistedReview) {
+  if (wizardRecommendationIsRisky(rec)) return false;
+  if (persistedReview && (persistedReview.status === "ignored" || persistedReview.status === "applied")) return false;
+  return true;
+}
+
+function wizardDefaultSelected(rec, persistedReview) {
+  if (!wizardRecommendationSelectable(rec, persistedReview)) return false;
+  const entry = wizardReviewEntry(rec.recommendation_id);
+  if (typeof entry.selected === "boolean") return entry.selected;
+  return ["ingest", "install_global", "install_project", "remove"].includes(rec.kind);
+}
+
+function wizardSelectedRecommendationIDs(assessment) {
+  const reviews = {};
+  (assessment.action_reviews || []).forEach((r) => { reviews[r.recommendation_id] = r; });
+  return (assessment.recommendations || [])
+    .filter((rec) => wizardDefaultSelected(rec, reviews[rec.recommendation_id]))
+    .map((rec) => rec.recommendation_id);
+}
+
+function wizardReviewStepCanAdvance(assessment) {
+  const selected = wizardSelectedRecommendationIDs(assessment);
+  if (!selected.length) return true;
+  return selected.every((id) => {
+    const entry = wizardReviewEntry(id);
+    return entry.plan && !entry.previewError;
+  });
+}
+
+async function loadWizardAssessment() {
+  try {
+    wizardAssessment = await api("/api/v1/assessment");
+    return wizardAssessment;
+  } catch (e) {
+    wizardAssessment = { error: e.message };
+    return wizardAssessment;
+  }
+}
+
+async function previewWizardRecommendation(rec) {
+  const id = rec.recommendation_id;
+  const entry = wizardReviewEntry(id);
+  entry.previewing = true;
+  entry.previewError = "";
+  saveWizardReviewState();
+  render();
+  try {
+    const resp = await dashboardAction("plan", { recommendation_id: id });
+    entry.plan = resp.plan;
+    entry.previewError = "";
+  } catch (e) {
+    entry.plan = null;
+    entry.previewError = e.message;
+  }
+  entry.previewing = false;
+  saveWizardReviewState();
+  render();
+}
+
+async function deferWizardRecommendation(rec, reason) {
+  const id = rec.recommendation_id;
+  const entry = wizardReviewEntry(id);
+  entry.selected = false;
+  entry.plan = null;
+  entry.previewError = "";
+  try {
+    entry.review = await dashboardAction("review", {
+      recommendation_id: id,
+      status: "ignored",
+      reason: reason || "deferred in setup wizard",
+    });
+  } catch (e) {
+    entry.previewError = e.message;
+  }
+  saveWizardReviewState();
+  render();
+}
+
+function renderWizardReviewGroups(panel, assessment) {
+  const recs = assessment.recommendations || [];
+  if (!recs.length) {
+    panel.appendChild(el("p", { className: "empty", text: "No recommendations in the latest inventory. Run discovery on the previous step, or finish setup and revisit Discover later." }));
+    return;
+  }
+  const reviews = {};
+  (assessment.action_reviews || []).forEach((r) => { reviews[r.recommendation_id] = r; });
+  const installsByID = wizardInstallationsByID(assessment);
+  const grouped = {};
+  recs.forEach((rec) => {
+    const kind = rec.kind || "other";
+    grouped[kind] = grouped[kind] || [];
+    grouped[kind].push(rec);
+  });
+  const kinds = Object.keys(grouped).sort((a, b) => wizardRecommendationGroupRank(a) - wizardRecommendationGroupRank(b));
+  kinds.forEach((kind) => {
+    const section = el("section", { className: "wizard-review-group", "data-kind": kind });
+    section.appendChild(el("div", { className: "subhead", text: wizardRecommendationGroupLabel(kind) }));
+    grouped[kind].sort((a, b) => (a.title || a.skill_name || "").localeCompare(b.title || b.skill_name || ""))
+      .forEach((rec) => section.appendChild(renderWizardRecommendationCard(rec, reviews[rec.recommendation_id], installsByID)));
+    panel.appendChild(section);
+  });
+}
+
+function renderWizardRecommendationCard(rec, persistedReview, installsByID) {
+  const id = rec.recommendation_id;
+  const entry = wizardReviewEntry(id);
+  const selectable = wizardRecommendationSelectable(rec, persistedReview);
+  const selected = wizardDefaultSelected(rec, persistedReview);
+  const risky = wizardRecommendationIsRisky(rec);
+  const skillState = wizardRecommendationSkillState(rec, installsByID);
+  const card = el("article", { className: "wizard-review-card" + (risky ? " wizard-review-card-risky" : "") });
+  const head = el("div", { className: "wizard-review-card-head" });
+  if (selectable) {
+    const cb = el("input", { type: "checkbox", id: "wizard-rec-" + id });
+    cb.checked = selected;
+    cb.addEventListener("change", async () => {
+      entry.selected = cb.checked;
+      if (!cb.checked) {
+        entry.plan = null;
+        entry.previewError = "";
+        saveWizardReviewState();
+        render();
+        return;
+      }
+      saveWizardReviewState();
+      await previewWizardRecommendation(rec);
+    });
+    head.appendChild(cb);
+  }
+  const meta = el("div", null, [
+    el("div", { className: "row-title", text: rec.title || rec.skill_name || id }),
+    el("div", { className: "muted", text: rec.reason || "" }),
+    el("div", { className: "wizard-review-badges" }, [
+      badge(rec.kind || "action", risky ? "warn" : ""),
+      badge(skillState.label, skillState.tone),
+      persistedReview && persistedReview.status !== "new" ? badge(persistedReview.status, actionStatusTone(persistedReview.status)) : null,
+    ].filter(Boolean)),
+  ]);
+  if (selectable) {
+    const label = el("label", { className: "wizard-review-select", htmlFor: "wizard-rec-" + id });
+    label.appendChild(meta);
+    head.appendChild(label);
+  } else {
+    head.appendChild(meta);
+  }
+  card.appendChild(head);
+  if (risky) {
+    card.appendChild(el("p", { className: "advisory-note", text: "Stays in review — resolve drift or compatibility before any install can be applied implicitly." }));
+  }
+  const actions = el("div", { className: "wizard-review-actions" });
+  if (selectable && selected || risky) {
+    actions.appendChild(el("button", {
+      className: "btn",
+      type: "button",
+      text: entry.previewing ? "Previewing…" : (entry.plan ? "Refresh dry-run" : "Preview dry-run"),
+      disabled: !!entry.previewing,
+      onClick: () => previewWizardRecommendation(rec),
+    }));
+  }
+  actions.appendChild(el("button", {
+    className: "btn",
+    type: "button",
+    text: "Defer",
+    onClick: () => deferWizardRecommendation(rec, "deferred in setup wizard"),
+  }));
+  card.appendChild(actions);
+  if (entry.previewError) card.appendChild(el("p", { className: "error", text: entry.previewError }));
+  if (entry.plan) card.appendChild(renderActionPlanPreview(entry.plan, installsByID));
+  else if (selectable && selected && !entry.previewing) {
+    card.appendChild(el("p", { className: "muted", text: "Preview the dry-run plan to see exact files before continuing." }));
+  }
+  return card;
+}
+
+async function renderWizardReviewPanel(panel) {
+  const assessment = wizardAssessment && !wizardAssessment.error ? wizardAssessment : await loadWizardAssessment();
+  if (assessment.error) {
+    panel.appendChild(el("div", { className: "error", text: "Could not load recommendations: " + assessment.error }));
+    return;
+  }
+  panel.appendChild(el("p", { className: "advisory-note", text: "Deterministic recommendations from your inventory. Dry-run previews list files that would be created, updated, preserved, skipped, or removed — nothing is written until you confirm on the Apply step." }));
+  renderWizardReviewGroups(panel, assessment);
+  if (!wizardReviewStepCanAdvance(assessment)) {
+    panel.appendChild(el("p", { className: "muted", text: "Preview dry-run plans for each selected action, or clear selections to continue without applying anything." }));
+  }
+}
+
+function renderWizardApplyPanel(panel) {
+  const assessment = wizardAssessment;
+  if (!assessment || assessment.error) {
+    panel.appendChild(el("p", { className: "empty", text: "Load recommendations on the Review step first." }));
+    return;
+  }
+  const selected = wizardSelectedRecommendationIDs(assessment);
+  if (!selected.length) {
+    panel.appendChild(el("p", { className: "empty", text: "No actions selected. You can finish setup and apply recommendations later from the Discover tab." }));
+    return;
+  }
+  const installsByID = wizardInstallationsByID(assessment);
+  const byID = {};
+  (assessment.recommendations || []).forEach((r) => { byID[r.recommendation_id] = r; });
+  panel.appendChild(el("p", { className: "advisory-note", text: "Applying selected actions with confirmation ships separately (FLO-411). Below are the dry-run previews you reviewed — no files have been changed." }));
+  selected.forEach((id) => {
+    const rec = byID[id];
+    const entry = wizardReviewEntry(id);
+    if (!rec) return;
+    const block = el("section", { className: "wizard-apply-item" });
+    block.appendChild(el("div", { className: "row-title", text: rec.title || rec.skill_name || id }));
+    if (entry.plan) block.appendChild(renderActionPlanPreview(entry.plan, installsByID));
+    else block.appendChild(el("p", { className: "error", text: "Missing dry-run preview — return to Review and preview this action." }));
+    panel.appendChild(block);
+  });
+}
 
 async function refreshSetupStatus() {
   try {
@@ -1256,6 +1540,8 @@ async function renderSetupWizard(content) {
   const resolved = operationStepResolved(step, setupStatus);
   if (step.id === "scope") renderWizardScopePanel(panel);
   else if (step.id === "discover") renderWizardDiscoverPanel(panel, resolved);
+  else if (step.id === "review") await renderWizardReviewPanel(panel);
+  else if (step.id === "apply") renderWizardApplyPanel(panel);
   // Re-read setup status after external CLI discovery (FLO-406 "Refresh").
   if (step.refreshable && !resolved) {
     panel.appendChild(el("button", { className: "btn", type: "button", text: "Check again",
@@ -1276,13 +1562,21 @@ async function renderSetupWizard(content) {
   const isLast = wizardStep >= WIZARD_STEPS.length;
   const blocked = step.operation && !resolved;
   const exitInstead = blocked && !step.refreshable;
-  const next = el("button", { className: "btn confirm", type: "button", text: exitInstead ? "Finish setup later" : step.primary });
+  const nextLabel = exitInstead ? "Finish setup later" : step.primary;
+  const next = el("button", { className: "btn confirm", type: "button", text: nextLabel });
   if (step.id === "scope") {
     next.disabled = !wizardScanScope || wizardDiscoverPhase === "running";
     next.onclick = async () => {
       wizardGoTo(2);
       await startWizardDiscovery();
     };
+  } else if (step.id === "review") {
+    const assessment = wizardAssessment && !wizardAssessment.error ? wizardAssessment : await loadWizardAssessment();
+    next.disabled = assessment.error || !wizardReviewStepCanAdvance(assessment);
+    next.onclick = () => wizardGoTo(wizardStep + 1);
+  } else if (step.id === "apply") {
+    next.disabled = false;
+    next.onclick = () => { if (isLast) exitSetupWizard(); else wizardGoTo(wizardStep + 1); };
   } else {
     next.disabled = (blocked && !exitInstead) || wizardDiscoverPhase === "running";
     next.onclick = exitInstead ? exitSetupWizard : () => { if (isLast) exitSetupWizard(); else wizardGoTo(wizardStep + 1); };
