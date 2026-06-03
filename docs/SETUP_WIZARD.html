@@ -1,0 +1,601 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>First-run setup wizard — skills-manager</title>
+<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/styles/atom-one-dark.min.css">
+<script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/highlight.min.js"></script>
+<script>document.addEventListener('DOMContentLoaded', () => {
+  // Pandoc emits class="sourceCode <lang>"; normalize to language-<lang> for hljs.
+  document.querySelectorAll('pre code.sourceCode').forEach(el => {
+    const lang = [...el.classList].find(c => c !== 'sourceCode');
+    if (lang) {
+      el.classList.add('language-' + lang);
+      hljs.highlightElement(el);
+    }
+  });
+});</script>
+</head>
+<body>
+<div class="app">
+  <nav class="sidebar">
+    <a href="index.html" class="brand">
+      <span class="brand-logo">s</span>
+      <span class="brand-name">skills-manager</span>
+    </a>
+    <div class="nav-section">Foundation</div>
+    <a href="VISION.html" class="nav-item">Vision</a>
+    <a href="ARCHITECTURE.html" class="nav-item">Architecture</a>
+    <a href="ROADMAP.html" class="nav-item">Roadmap</a>
+    <a href="DATA_MODEL.html" class="nav-item">Data model</a>
+    <div class="nav-section">Surface</div>
+    <a href="CLI_REFERENCE.html" class="nav-item">CLI reference</a>
+    <a href="TAXONOMY.html" class="nav-item">Taxonomy</a>
+    <div class="nav-section">Subsystems</div>
+    <a href="COMPATIBILITY.html" class="nav-item">Compatibility</a>
+    <a href="INGEST_FLOW.html" class="nav-item">Ingest flow</a>
+    <a href="UPDATE_FLOW.html" class="nav-item">Update flow</a>
+    <a href="BUNDLED_SKILLS.html" class="nav-item">Bundled skills</a>
+    <a href="SCHEDULING.html" class="nav-item">Scheduling</a>
+    <a href="CROSS_MACHINE.html" class="nav-item">Cross-machine sync</a>
+    <div class="nav-section">Out-of-band</div>
+    <a href="../mockup.html" class="nav-item">UI mockup ↗</a>
+    <a href="../README.html" class="nav-item">README</a>
+  </nav>
+  <main class="content">
+    <div class="doc-meta">
+      <span class="crumb"><a href="index.html">docs</a></span>
+      <span class="sep">/</span>
+      <span class="crumb">SETUP_WIZARD.md</span>
+    </div>
+<h1 id="first-run-setup-wizard-ux-contract">First-run setup wizard UX
+contract</h1>
+<p>This document defines the guided first-run setup experience for
+<code>skills-manager serve</code> before implementation. It is the
+source of truth for the follow-up work: setup status API (FLO-407),
+wizard shell and routing (FLO-408), scan-scope and discovery step
+(FLO-409), recommendation review and dry-run preview (FLO-410),
+confirmation/apply/completion (FLO-411), onboarding docs and terminology
+(FLO-412), and end-to-end QA (FLO-413).</p>
+<p>It builds on <a href="DISCOVERY.html">DISCOVERY.md</a>, which defines
+the discover-first inventory model, consent scopes, and entity schema.
+This contract adds the <strong>first-run setup layer</strong> on top of
+that model: the state machine, where users land, the step sequence, and
+a shared vocabulary.</p>
+<h2 id="scope">Scope</h2>
+<p>In scope (this is a contract, not an implementation):</p>
+<ul>
+<li>The setup <strong>states</strong> the UI must recognize.</li>
+<li>The <strong>default landing</strong> decision for each state.</li>
+<li>The wizard <strong>step sequence</strong>, primary actions,
+progress, back/next, and exit behavior.</li>
+<li>A consistent <strong>user-facing vocabulary</strong>.</li>
+<li>A <strong>decision record</strong> for where setup lives in the
+app.</li>
+</ul>
+<p>Out of scope (deferred to the implementation issues):</p>
+<ul>
+<li>Implementing any UI or API change.</li>
+<li>Changing CLI command names. The contract reuses existing commands
+(<code>discover</code>, <code>scan</code>, <code>assess</code>,
+<code>plan</code>, <code>add</code>, <code>install</code>) and existing
+dashboard endpoints; it does not propose new command names.</li>
+</ul>
+<h2 id="what-exists-today-and-the-gap">What exists today, and the
+gap</h2>
+<p>Grounded against the live <code>skills-manager serve</code>
+experience on <code>main</code> and the prior first-time-user critique
+(FLO-399 Impeccable review).</p>
+<ul>
+<li>The dashboard opens on <strong>Overview</strong>
+(<code>currentView = "overview"</code>): stat cards (Library skills,
+Projects, Pending updates, Unregistered), watcher alerts, and recent
+activity. For a fresh user this screen is almost entirely empty.</li>
+<li>The discover-first assessment lives in the <strong>Discover</strong>
+tab, fed by <code>/api/v1/assessment</code>, with tabs Inventory, Drift,
+Global vs Project, Tool Coverage, Recommendations, Actions (per the <a
+href="DISCOVERY.html">DISCOVERY.md</a> dashboard contract).</li>
+<li>The dashboard reads a <strong>persisted</strong> inventory. It does
+not run <code>discover</code> itself; a user must first run
+<code>skills-manager discover --global</code> from the CLI.</li>
+<li>Write-capable actions already require a precomputed dry-run plan
+plus explicit confirmation (<code>/api/v1/actions/</code>
+<code>plan</code> → <code>apply</code> with <code>confirm: true</code>,
+with an audit entry).</li>
+</ul>
+<p>The prior first-time-user critique (FLO-399) found that <strong>empty
+states under-explain how a user gets from zero to a useful
+state</strong>, and that a fresh user's first meaningful screen is an
+empty Overview. Nothing routes a first-run user through discover →
+review → apply.</p>
+<p><strong>The gap this wizard closes:</strong> a first-run user should
+never land on an empty Overview. They should be guided, in order, to
+inspect what they already have, review what is recommended, and apply
+only what they explicitly confirm.</p>
+<h2 id="terminology">Terminology</h2>
+<p>Canonical user-facing terms. Use these consistently across the web
+UI, README, tutorial, and CLI help (FLO-412). Each term lists what it is
+and, where it is easily confused, what it is <strong>not</strong>.</p>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>Meaning</th>
+<th>Surface</th>
+<th>Not</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Discover</strong></td>
+<td>The read-only, consented inspection that builds your inventory:
+which skills you have, where, their ownership, drift, duplicates, and
+coverage gaps. Writes only to <code>~/.skills-manager</code>.</td>
+<td><code>skills-manager discover</code>; the Discover tab /
+<code>/api/v1/assessment</code></td>
+<td>Not a write operation; does not install or modify skills.</td>
+</tr>
+<tr>
+<td><strong>Scan</strong></td>
+<td>The ingest-oriented pass that finds candidate skills to add to your
+library.</td>
+<td><code>skills-manager scan</code>,
+<code>scan --auto-ingest</code></td>
+<td>Not a synonym for <em>discover</em>. First-run copy says "discover"
+for read-only inspection; "scan" is reserved for the ingest path.</td>
+</tr>
+<tr>
+<td><strong>Assess</strong></td>
+<td>Optional AI advisory commentary on a skill, run only on explicit
+request. Never automatic, never required to finish setup.</td>
+<td><code>skills-manager assess … --handoff</code> or
+<code>--auto</code></td>
+<td>Not part of deterministic inventory or recommendations; always
+labeled separately.</td>
+</tr>
+<tr>
+<td><strong>Recommendations</strong></td>
+<td>Deterministic proposals derived from inventory facts. Kinds:
+<code>ingest</code>, <code>install_global</code>,
+<code>install_project</code>, <code>review_drift</code>,
+<code>ignore</code>, <code>remove</code>, <code>needs_port</code>. They
+feed dry-run plans; they never write.</td>
+<td>Recommendations tab; recommendation engine</td>
+<td>Not AI output. AI advisory is shown in a separate, labeled
+area.</td>
+</tr>
+<tr>
+<td><strong>Managed</strong></td>
+<td>A skill the manager created and owns (manifest evidence). Ownership
+<code>manager</code>. Only managed paths are removed on uninstall.</td>
+<td>Inventory "managed" badge; manifests</td>
+<td>Not every skill on disk — most discovered skills start
+unmanaged.</td>
+</tr>
+<tr>
+<td><strong>Unmanaged</strong></td>
+<td>A skill found on disk that the manager did not create. Ownership
+<code>unmanaged</code> or <code>unknown</code>. A candidate to
+<strong>ingest</strong>, never modified or removed without an explicit
+dry-run plan and confirmation.</td>
+<td>Inventory "unmanaged" badge</td>
+<td>Not "unknown to the app"; it is discovered, just not owned.</td>
+</tr>
+<tr>
+<td><strong>Dry-run</strong></td>
+<td>A previewed action plan listing the exact files to create, update,
+preserve, skip, or remove, with <strong>no</strong> filesystem writes.
+Required before any write-capable action.</td>
+<td><code>skills-manager plan</code>; Actions "Preview plan"</td>
+<td>Not a partial apply; nothing is written.</td>
+</tr>
+<tr>
+<td><strong>Apply</strong></td>
+<td>Executing a previously previewed dry-run plan <strong>after explicit
+confirmation</strong> — the only step that writes to disk for a
+recommendation.</td>
+<td>Actions "Apply" (<code>/api/v1/actions/</code> <code>apply</code>,
+<code>confirm: true</code>); on the CLI, the underlying write commands
+(<code>add</code>, <code>install</code>) after <code>plan</code></td>
+<td>Not a CLI command named <code>apply</code>. "Apply" is the
+conceptual/UI verb for committing a confirmed plan.</td>
+</tr>
+</tbody>
+</table>
+<p>Supporting terms reused from <a href="DISCOVERY.html">DISCOVERY.md</a>:
+<strong>ingest</strong> (<code>add</code>, copy an unmanaged skill into
+your managed library), <strong>library</strong> (your managed
+collection), <strong>scope</strong> (<code>global</code> vs
+project-local), <strong>drift</strong> (same name, different content),
+<strong>duplicate content</strong> (same content, different name),
+<strong>overlap</strong> (the same skill global and project-local),
+<strong>coverage gap</strong> (a detected tool missing a skill it could
+load).</p>
+<p><strong>Review state</strong> of a recommended action (persisted in
+<code>dashboard_action_reviews</code>, surfaced as badges):
+<code>new</code> → <code>accepted</code> | <code>ignored</code> →
+<code>applied</code> | <code>failed</code>.</p>
+<h2 id="setup-states">Setup states</h2>
+<p>The UI recognizes four setup states. They are derived
+<strong>read-only</strong> from already-persisted state — discovery
+snapshots, managed library/install counts, and action review state — and
+computing them must never write to disk or run an action (the FLO-407
+contract).</p>
+<p>Three signals drive the state:</p>
+<ul>
+<li><strong>A — Inventory exists:</strong> a discovery snapshot is
+persisted (<code>discover</code> has completed at least once;
+<code>/api/v1/assessment</code> has a <code>generated_at</code> and ≥1
+installation).</li>
+<li><strong>B — Managed library exists:</strong> the manager owns ≥1
+skill (a non-empty managed library and/or ≥1 manager-owned
+install).</li>
+<li><strong>C — Open actions remain:</strong> ≥1 actionable
+recommendation is still in review state <code>new</code> (not yet
+accepted, ignored, or applied).</li>
+</ul>
+<table>
+<thead>
+<tr>
+<th>State</th>
+<th style="text-align: center;">A</th>
+<th style="text-align: center;">B</th>
+<th style="text-align: center;">C</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong><code>no_discovery</code></strong></td>
+<td style="text-align: center;">✗</td>
+<td style="text-align: center;">—</td>
+<td style="text-align: center;">—</td>
+<td>Discovery has never run. We cannot yet say what the user has.</td>
+</tr>
+<tr>
+<td><strong><code>discovered_unmanaged</code></strong></td>
+<td style="text-align: center;">✓</td>
+<td style="text-align: center;">✗</td>
+<td style="text-align: center;">✓</td>
+<td>Inventory exists and surfaces actionable recommendations, but the
+manager owns nothing yet.</td>
+</tr>
+<tr>
+<td><strong><code>partially_managed</code></strong></td>
+<td style="text-align: center;">✓</td>
+<td style="text-align: center;">✓</td>
+<td style="text-align: center;">✓</td>
+<td>The manager owns some skills, but open recommendations remain
+unreviewed. Setup began but is not finished.</td>
+</tr>
+<tr>
+<td><strong><code>completed</code></strong></td>
+<td style="text-align: center;">✓</td>
+<td style="text-align: center;">—</td>
+<td style="text-align: center;">✗</td>
+<td>Inventory exists and no actionable recommendation is left in
+<code>new</code>. Nothing requires first-run attention.</td>
+</tr>
+</tbody>
+</table>
+<p>Notes:</p>
+<ul>
+<li><code>completed</code> does not strictly require a managed library:
+if discovery surfaced no actionable recommendations (everything already
+covered, or only ignorable), the user is effectively done. B is
+therefore "don't care" for <code>completed</code>.</li>
+<li>A user who managed skills via the CLI without ever running
+<code>discover</code> reads as <code>no_discovery</code> for the
+assessment surface; routing still sends them to build an inventory
+first, because the assessment cannot guide review without it.</li>
+<li>Error/empty cases must be explicit enough for the UI to show a
+helpful next step rather than a blank screen (the FLO-407 contract). An
+assessment that fails to load is treated as <code>no_discovery</code>
+with an error banner, not as an empty success.</li>
+</ul>
+<h2 id="default-landing-and-routing">Default landing and routing</h2>
+<p>The core invariant, from the first-time-user critique:</p>
+<blockquote>
+<p><strong>Fresh users — <code>no_discovery</code> and
+<code>discovered_unmanaged</code> — never land on an empty dashboard.
+They enter the setup wizard. Returning users with a useful, non-empty
+dashboard (<code>partially_managed</code>, <code>completed</code>) land
+on the dashboard.</strong></p>
+</blockquote>
+<p>Overview and Discover are status-driven entry points: on load they
+read setup status and either render normally or hand off to the
+wizard.</p>
+<table>
+<thead>
+<tr>
+<th>State</th>
+<th>Default landing</th>
+<th>Setup surfacing</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>no_discovery</code></td>
+<td><strong>Wizard — Step 1 (Scope)</strong></td>
+<td>Wizard is the first screen.</td>
+</tr>
+<tr>
+<td><code>discovered_unmanaged</code></td>
+<td><strong>Wizard — Step 3 (Review)</strong></td>
+<td>Skip scope/discover; resume at review.</td>
+</tr>
+<tr>
+<td><code>partially_managed</code></td>
+<td><strong>Dashboard (Overview)</strong></td>
+<td>Persistent, dismissible "Resume setup" affordance; wizard resumes at
+the first incomplete step.</td>
+</tr>
+<tr>
+<td><code>completed</code></td>
+<td><strong>Dashboard (Overview)</strong></td>
+<td>No first-run surfacing. Discovery is re-runnable from the Discover
+tab.</td>
+</tr>
+</tbody>
+</table>
+<p>Rationale for <code>partially_managed</code> landing on the dashboard
+rather than trapping the user in the wizard: once the manager owns
+skills, the dashboard is meaningful and the user has signaled they know
+what they are doing. Finishing must stay one click away, but it should
+not block the dashboard.</p>
+<h2 id="wizard-flow">Wizard flow</h2>
+<p>A linear five-step flow with a persistent stepper. Steps 2 (Discover)
+and 4 (Apply) are <strong>operation</strong> steps that can be in
+progress; the others are <strong>review</strong> steps.</p>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>Step</th>
+<th>Primary action</th>
+<th>Advance when</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td><strong>Scope</strong></td>
+<td>Choose what to inspect: global skills, the current project, or both.
+Disclose that scanning is local-only and which paths may be read. →
+<strong>Start discovery</strong></td>
+<td>A scope is chosen and discovery is started.</td>
+</tr>
+<tr>
+<td>2</td>
+<td><strong>Discover</strong></td>
+<td>Run read-only discovery (or guide the user to
+<code>skills-manager discover</code> and offer Refresh). Show progress,
+then a summary: detected tools, global/project skills, unmanaged count,
+drift, duplicates, coverage gaps. → <strong>Review
+recommendations</strong></td>
+<td>A discovery snapshot exists.</td>
+</tr>
+<tr>
+<td>3</td>
+<td><strong>Review</strong></td>
+<td>Show recommendations grouped by kind (<code>ingest</code>,
+<code>install_global</code>, <code>install_project</code>,
+<code>review_drift</code>, <code>ignore</code>, no-action). Each
+explains <em>why</em> and whether the skill is discovered, unmanaged, or
+managed. Select actions and preview their dry-run plans (exact files). →
+<strong>Continue to apply</strong></td>
+<td>Selected actions have a previewed dry-run plan, or the user selects
+none.</td>
+</tr>
+<tr>
+<td>4</td>
+<td><strong>Apply</strong></td>
+<td>Require explicit confirmation after dry-run. Apply only selected
+actions, showing each plan's exact file changes. Report per-action
+success/failure. → <strong>Apply selected</strong></td>
+<td>The apply pass resolves (partial success allowed).</td>
+</tr>
+<tr>
+<td>5</td>
+<td><strong>Done</strong></td>
+<td>Summarize what was applied, ignored, and failed; record completion.
+→ <strong>Go to dashboard</strong></td>
+<td>— (terminal)</td>
+</tr>
+</tbody>
+</table>
+<h3 id="progress-behavior">Progress behavior</h3>
+<ul>
+<li>The stepper shows all five steps; the current step is highlighted
+and completed steps are checked.</li>
+<li>Operation steps (Discover, Apply) show an in-progress state and
+<strong>block forward navigation until the operation resolves</strong>.
+Progress never advances past an unfinished discovery or apply.</li>
+<li>On entry the wizard maps setup status to a starting step (see
+routing table) and marks earlier steps complete.</li>
+</ul>
+<h3 id="back--next-behavior">Back / Next behavior</h3>
+<ul>
+<li><strong>Back</strong> is always available on steps 2–5 and is
+<strong>non-destructive</strong>: it preserves the chosen scope, the
+inventory snapshot, action selections, and any already-applied
+state.</li>
+<li><strong>Next</strong> is contextual (its label is the step's primary
+action). Forward navigation past an unrun operation step is disabled
+until that operation runs.</li>
+<li>Re-running discovery is explicit (a button on Step 2); it is never
+triggered automatically by navigation.</li>
+<li>Navigation is keyboard-accessible with visible focus (carry over the
+FLO-399 accessibility fixes: focusable controls, arrow/Home/End where a
+tablist is used, visible focus states).</li>
+</ul>
+<h3 id="exit--cancel-behavior">Exit / cancel behavior</h3>
+<ul>
+<li><strong>Cancel / Exit</strong> is available on every step and
+returns the user to the dashboard (Overview).</li>
+<li>Exit is <strong>safe and non-destructive</strong>: it never rolls
+back already-applied changes (they are real, audited filesystem writes)
+and never discards the persisted inventory snapshot. Only ephemeral,
+un-applied selections are dropped.</li>
+<li>Exiting mid-flow leaves the user in whatever state their persisted
+data implies (<code>discovered_unmanaged</code> or
+<code>partially_managed</code>); re-entry recomputes status and resumes
+at the right step.</li>
+<li>If an apply is in progress, the wizard lets it settle before exiting
+so the audit trail stays consistent.</li>
+</ul>
+<h3 id="reload-and-resume">Reload and resume</h3>
+<ul>
+<li>On reload, recompute setup status from persisted state and resume at
+the first incomplete step. Never auto-run discovery and never
+auto-apply.</li>
+<li>Ephemeral selections reset to the persisted review state; applied
+and ignored statuses survive because they are persisted (the FLO-408
+"reloads without corrupting saved discovery/action data"
+requirement).</li>
+</ul>
+<h3 id="error-handling">Error handling</h3>
+<ul>
+<li><strong>Discovery error:</strong> show the error with a Retry; stay
+on Step 2; do not fabricate inventory or advance.</li>
+<li><strong>Plan (dry-run) error:</strong> show the error on that
+action; do not advance to Apply for it.</li>
+<li><strong>Apply failure:</strong> record review state
+<code>failed</code> with the error detail, show an actionable message,
+and <strong>do not mark setup complete</strong>. Other selected actions
+may still succeed; failures are retryable or repairable manually.</li>
+</ul>
+<h2 id="decision-records">Decision records</h2>
+<h3
+id="dr-1--setup-is-its-own-wizard-state-with-overview-and-discover-as-entry-points">DR-1
+— Setup is its own wizard state, with Overview and Discover as entry
+points</h3>
+<p><strong>Decision.</strong> First-run setup is a dedicated wizard
+surface (its own view/state), not content embedded in the Overview or
+Discover tabs. Overview and Discover act as <strong>status-driven entry
+points</strong>: on load they read setup status and either render
+normally or route into the wizard.</p>
+<p><strong>Alternatives considered.</strong></p>
+<ul>
+<li><em>Inline in Overview.</em> Make Overview adaptive: render the
+guided flow when the dashboard is empty. Rejected: a multi-step flow
+with a progress indicator, back/next, and exit semantics conflicts with
+a persistent dashboard surface; it muddies focus management and makes
+"where am I" ambiguous.</li>
+<li><em>Inline in Discover.</em> Add a guided mode to the assessment
+tab. Rejected for the same reason, and because Discover is also the
+steady-state assessment view a returning user needs unobstructed.</li>
+</ul>
+<p><strong>Consequences.</strong></p>
+<ul>
+<li>A stable wizard shell owns step layout, progress, back/next, and
+exit (FLO-408).</li>
+<li>The wizard <strong>reuses</strong> existing discover/assessment data
+and the <code>/api/v1/actions/</code> plan/apply endpoints — it does not
+duplicate that logic.</li>
+<li>The dashboard remains the destination after completion; the wizard
+is a transient, resumable overlay/route, not a fourth data surface.</li>
+<li>Routing is read-only and client-driven off the FLO-407 setup status;
+no new CLI command and no write occurs to decide where a user
+lands.</li>
+</ul>
+<h3 id="dr-2--name-it-setup-distinct-from-the-cli-wizards">DR-2 — Name
+it "Setup," distinct from the CLI wizards</h3>
+<p>The first-run web flow is <strong>Setup</strong> / <strong>first-run
+setup</strong>. Do not call it <code>init</code>:
+<code>skills-manager init</code> is the CLI project-categorization
+wizard and <code>skills-manager setup-schedule</code> is the OS
+scheduling wizard. Keeping the names distinct avoids conflating three
+different "wizards."</p>
+<h3
+id="dr-3--read-only-status-never-act-without-explicit-confirmation">DR-3
+— Read-only status; never act without explicit confirmation</h3>
+<p>Setup status is computed read-only from persisted state (FLO-407: no
+filesystem writes, no action execution while computing status). The
+wizard never runs <code>discover</code> or <code>assess</code>, and
+never applies a recommendation, without an explicit user action, a
+dry-run preview, and confirmation. This preserves the local-first,
+safety-first framing.</p>
+<h3
+id="dr-4--discover-for-read-only-inspection-scan-stays-ingest-only-assess-stays-optional">DR-4
+— "Discover" for read-only inspection; "scan" stays ingest-only;
+"assess" stays optional</h3>
+<p>First-run copy uses <strong>discover</strong> for the read-only
+inventory step and reserves <strong>scan</strong> for the
+ingest-oriented <code>scan</code> command, so users are not told to
+"scan" when the safe, read-only action is <code>discover</code>.
+<strong>Assess</strong> (AI advisory) is always optional and labeled
+separately; it is never on the critical path to completing setup.</p>
+<h2 id="traceability">Traceability</h2>
+<table>
+<thead>
+<tr>
+<th>Issue</th>
+<th>Consumes from this contract</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>FLO-407</td>
+<td>The four states and their read-only derivation signals (A/B/C).</td>
+</tr>
+<tr>
+<td>FLO-408</td>
+<td>Wizard shell, stepper, back/next, exit, and the routing table /
+fresh-user invariant.</td>
+</tr>
+<tr>
+<td>FLO-409</td>
+<td>Step 1 (Scope) and Step 2 (Discover): scan-scope choices and
+local-only disclosure.</td>
+</tr>
+<tr>
+<td>FLO-410</td>
+<td>Step 3 (Review): recommendation grouping by kind and dry-run
+preview.</td>
+</tr>
+<tr>
+<td>FLO-411</td>
+<td>Step 4 (Apply) and Step 5 (Done): confirm-after-dry-run, partial
+success, completion recording, failure handling.</td>
+</tr>
+<tr>
+<td>FLO-412</td>
+<td>The terminology table and DR-4 wording rules.</td>
+</tr>
+<tr>
+<td>FLO-413</td>
+<td>The four states as the QA fixture matrix and the fresh-user
+invariant as the headline assertion.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="verification">Verification</h2>
+<p>This contract was reviewed against:</p>
+<ul>
+<li><strong>The live <code>skills-manager serve</code>
+experience</strong> on <code>main</code>: default landing (Overview),
+the eight sidebar views, the Discover/assessment tabs and their
+empty-state copy, and the existing <code>/api/v1/actions/</code>
+dry-run/apply/audit flow and <code>dashboard_action_reviews</code>
+status vocabulary.</li>
+<li><strong>The prior first-time-user critique</strong> (FLO-399
+Impeccable review): the empty-Overview first screen and under-explained
+empty states, which this contract's fresh-user invariant and guided step
+sequence directly address.</li>
+<li><strong><a href="DISCOVERY.html">DISCOVERY.md</a></strong>: the
+discover-first model, consent scopes, recommendation kinds, and
+ownership semantics, reused verbatim here.</li>
+</ul>
+<p>No code or API was changed; the implementation lands in FLO-407
+through FLO-413.</p>
+    <footer class="doc-footer">
+      <span>skills-manager · design doc</span>
+      <span><a href="SETUP_WIZARD.md">view source (.md)</a></span>
+    </footer>
+  </main>
+</div>
+</body>
+</html>

@@ -27,6 +27,7 @@ configured.
 - ★ [DATA_MODEL.md](DATA_MODEL.md) — file formats, schemas, on-disk layout
 - ★ [DISCOVERY.md](DISCOVERY.md) — discover-first UX, consent scopes, and inventory schema
 - ★ [LOADING_COSTS.md](LOADING_COSTS.md) — global vs project-local recommendation cost model
+- ★ [SETUP_WIZARD.md](SETUP_WIZARD.md) — first-run setup wizard states, routing, terminology, and flow
 
 ## Surface
 
