@@ -177,6 +177,18 @@ type triageUpdateView struct {
 	AffectedProjects []string         `json:"affected_projects"`
 }
 
+// openTriageStateForRead opens persisted state for dashboard GET handlers. It
+// never creates a new database: missing state.db means a fresh home
+// (os.ErrNotExist). When state.db exists, Open applies pending migrations so
+// reads stay compatible with older on-disk schemas without a separate write
+// path first. Setup status uses state.OpenForRead instead and must not migrate.
+func openTriageStateForRead(home string) (*state.DB, error) {
+	if _, err := os.Stat(filepath.Join(home, "state.db")); err != nil {
+		return nil, err
+	}
+	return state.Open(home)
+}
+
 func loadTriageCatalog(home string) (catalog, string, error) {
 	libraryPath := filepath.Join(home, "library")
 	if _, err := os.Stat(libraryPath); err != nil {
@@ -216,8 +228,8 @@ func loadTriageOverview(home string) (triageOverview, error) {
 		}
 	}
 
-	// Read-only: never create home, state.db, or library (FLO-423 / FLO-407 contract).
-	db, err := state.OpenForRead(home)
+	// Never create state.db on a fresh home (FLO-423); migrate when db exists.
+	db, err := openTriageStateForRead(home)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			out.ScheduledCheck = "not configured"
@@ -268,7 +280,7 @@ func loadTriageSkills(home string) ([]triageSkill, error) {
 }
 
 func loadTriageAssessment(home string) (triageAssessment, error) {
-	db, err := state.OpenForRead(home)
+	db, err := openTriageStateForRead(home)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return triageAssessment{GeneratedAt: time.Now().UTC().Format(time.RFC3339)}, nil
@@ -436,7 +448,7 @@ FROM dashboard_action_reviews ORDER BY recommendation_id`)
 }
 
 func loadTriageDriftGroups(home string) ([]triageDriftGroup, error) {
-	db, err := state.OpenForRead(home)
+	db, err := openTriageStateForRead(home)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return []triageDriftGroup{}, nil
@@ -793,7 +805,7 @@ func loadTriageProjectDetail(home, slug string) (triageProjectDetail, error) {
 }
 
 func loadTriageUpdates(home string) ([]triageUpdateView, error) {
-	stateDB, err := state.OpenForRead(home)
+	stateDB, err := openTriageStateForRead(home)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return []triageUpdateView{}, nil
@@ -886,7 +898,7 @@ func loadTriageMatrix(home string) (triageMatrix, error) {
 	// Per-skill×project usage counts and per-skill totals / last activity.
 	usageTotals := map[string]int{}
 	lastActivity := map[string]string{}
-	if db, err := state.OpenForRead(home); err == nil {
+	if db, err := openTriageStateForRead(home); err == nil {
 		if cells, err := db.UsageMatrix(); err == nil {
 			for _, c := range cells {
 				usageTotals[c.SkillName] += c.Count
