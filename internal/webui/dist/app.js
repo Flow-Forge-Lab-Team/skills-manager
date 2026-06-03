@@ -1082,9 +1082,15 @@ async function render() {
   // read setup status on load and hand fresh users off to the wizard, so a
   // first-run user never lands on an empty dashboard. Returning users with a
   // useful dashboard (partially_managed, completed) render normally.
+  //
+  // Discover is purely an inventory surface — empty for a fresh user — so it
+  // always hands them to the wizard. Overview is also the Cancel/Exit
+  // destination, so it honors a one-session exit and stays viewable (with the
+  // "Start setup" affordance) rather than trapping the user back in the wizard.
   if (currentView === "overview" || currentView === "discover") {
     await refreshSetupStatus();
-    if (!setupExited && isFreshSetupState(setupStatus.state)) {
+    const honorExit = currentView === "overview" && setupExited;
+    if (!honorExit && isFreshSetupState(setupStatus.state)) {
       wizardStep = setupStartStep(setupStatus.state);
       currentView = "setup";
     }
