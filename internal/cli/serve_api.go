@@ -36,6 +36,7 @@ func newServeServer(home string) *serveServer {
 	s.mux.HandleFunc("/api/v1/session", s.handleSession)
 	s.mux.HandleFunc("/api/v1/overview", s.handleOverview)
 	s.mux.HandleFunc("/api/v1/assessment", s.handleAssessment)
+	s.mux.HandleFunc("/api/v1/setup", s.handleSetup)
 	s.mux.HandleFunc("/api/v1/skills", s.handleSkills)
 	s.mux.HandleFunc("/api/v1/skills/", s.handleSkillDetail)
 	s.mux.HandleFunc("/api/v1/projects", s.handleProjects)
