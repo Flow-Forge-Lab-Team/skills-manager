@@ -1037,7 +1037,7 @@ function wizardRecommendationIsRisky(rec) {
 
 function wizardRecommendationSelectable(rec, persistedReview) {
   if (wizardRecommendationIsRisky(rec)) return false;
-  if (persistedReview && (persistedReview.status === "ignored" || persistedReview.status === "applied")) return false;
+  if (persistedReview && ["ignored", "applied", "accepted"].includes(persistedReview.status)) return false;
   return true;
 }
 
