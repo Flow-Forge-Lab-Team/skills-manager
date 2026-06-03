@@ -258,14 +258,26 @@ func loadTriageSkills(home string) ([]triageSkill, error) {
 }
 
 func loadTriageAssessment(home string) (triageAssessment, error) {
-	out, err := loadDiscoverOutputFromState(home)
+	db, err := state.Open(home)
 	if err != nil {
 		return triageAssessment{}, err
 	}
-	out.DriftGroups = annotateDiscoverDriftGroups(home, out.DriftGroups, out.Installations)
+	defer db.Close()
+	return loadTriageAssessmentFromDB(db)
+}
+
+// loadTriageAssessmentFromDB builds the assessment using an already-open
+// database connection. Read-only callers (setup status) supply a read-only
+// connection so computing the assessment never mutates persisted state.
+func loadTriageAssessmentFromDB(db *state.DB) (triageAssessment, error) {
+	out, err := loadDiscoverOutputFromDB(db)
+	if err != nil {
+		return triageAssessment{}, err
+	}
+	out.DriftGroups = annotateDiscoverDriftGroupsWithReviews(out.DriftGroups, out.Installations, loadDiscoverDriftReviewsFromDB(db))
 	out.Summary = summarizeDiscovery(out)
 	out.Report = buildDiscoverReport(out)
-	reviews, err := loadTriageActionReviews(home)
+	reviews, err := loadTriageActionReviewsFromDB(db)
 	if err != nil {
 		return triageAssessment{}, err
 	}
@@ -285,17 +297,24 @@ func loadTriageAssessment(home string) (triageAssessment, error) {
 }
 
 func loadDiscoverOutputFromState(home string) (discoverOutput, error) {
+	db, err := state.Open(home)
+	if err != nil {
+		return discoverOutput{}, err
+	}
+	defer db.Close()
+	return loadDiscoverOutputFromDB(db)
+}
+
+// loadDiscoverOutputFromDB loads the persisted discovery snapshot using an
+// already-open database connection, so read-only callers can supply a read-only
+// connection.
+func loadDiscoverOutputFromDB(db *state.DB) (discoverOutput, error) {
 	out := discoverOutput{
 		Tools:         []discoverTool{},
 		Projects:      []discoverProject{},
 		Installations: []discoverInstallation{},
 		DriftGroups:   []discoverDriftGroup{},
 	}
-	db, err := state.Open(home)
-	if err != nil {
-		return discoverOutput{}, err
-	}
-	defer db.Close()
 
 	toolRows, err := db.Query(`SELECT tool_id, display_name, detected, status, COALESCE(global_roots, '[]'), COALESCE(project_patterns, '[]')
 FROM discovery_tools ORDER BY tool_id`)
@@ -382,6 +401,10 @@ func loadTriageActionReviews(home string) ([]triageActionReview, error) {
 		return nil, err
 	}
 	defer db.Close()
+	return loadTriageActionReviewsFromDB(db)
+}
+
+func loadTriageActionReviewsFromDB(db *state.DB) ([]triageActionReview, error) {
 	rows, err := db.Query(`SELECT recommendation_id, status, COALESCE(reason, ''), COALESCE(error_detail, ''), updated_at
 FROM dashboard_action_reviews ORDER BY recommendation_id`)
 	if err != nil {

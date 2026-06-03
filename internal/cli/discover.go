@@ -1314,7 +1314,13 @@ type driftReviewRecord struct {
 }
 
 func annotateDiscoverDriftGroups(home string, groups []discoverDriftGroup, installs []discoverInstallation) []discoverDriftGroup {
-	reviews := loadDiscoverDriftReviews(home)
+	return annotateDiscoverDriftGroupsWithReviews(groups, installs, loadDiscoverDriftReviews(home))
+}
+
+// annotateDiscoverDriftGroupsWithReviews applies drift classification and
+// persisted review state without opening the database, so read-only callers can
+// supply reviews loaded from a read-only connection.
+func annotateDiscoverDriftGroupsWithReviews(groups []discoverDriftGroup, installs []discoverInstallation, reviews map[string]driftReviewRecord) []discoverDriftGroup {
 	installsByID := map[string]discoverInstallation{}
 	for _, inst := range installs {
 		installsByID[inst.InstallationID] = inst
@@ -1334,12 +1340,16 @@ func annotateDiscoverDriftGroups(home string, groups []discoverDriftGroup, insta
 }
 
 func loadDiscoverDriftReviews(home string) map[string]driftReviewRecord {
-	out := map[string]driftReviewRecord{}
 	db, err := state.Open(home)
 	if err != nil {
-		return out
+		return map[string]driftReviewRecord{}
 	}
 	defer db.Close()
+	return loadDiscoverDriftReviewsFromDB(db)
+}
+
+func loadDiscoverDriftReviewsFromDB(db *state.DB) map[string]driftReviewRecord {
+	out := map[string]driftReviewRecord{}
 	rows, err := db.Query(`SELECT group_id, COALESCE(status, ''), COALESCE(reason, ''), COALESCE(canonical_installation_id, '')
 FROM discovery_drift_reviews`)
 	if err != nil {
