@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FLO-413 setup wizard QA — skills-manager</title>
+<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/styles/atom-one-dark.min.css">
+<script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/highlight.min.js"></script>
+<script>document.addEventListener('DOMContentLoaded', () => {
+  // Pandoc emits class="sourceCode <lang>"; normalize to language-<lang> for hljs.
+  document.querySelectorAll('pre code.sourceCode').forEach(el => {
+    const lang = [...el.classList].find(c => c !== 'sourceCode');
+    if (lang) {
+      el.classList.add('language-' + lang);
+      hljs.highlightElement(el);
+    }
+  });
+});</script>
+</head>
+<body>
+<div class="app">
+  <nav class="sidebar">
+    <a href="index.html" class="brand">
+      <span class="brand-logo">s</span>
+      <span class="brand-name">skills-manager</span>
+    </a>
+    <div class="nav-section">Foundation</div>
+    <a href="VISION.html" class="nav-item">Vision</a>
+    <a href="ARCHITECTURE.html" class="nav-item">Architecture</a>
+    <a href="ROADMAP.html" class="nav-item">Roadmap</a>
+    <a href="DATA_MODEL.html" class="nav-item">Data model</a>
+    <div class="nav-section">Surface</div>
+    <a href="CLI_REFERENCE.html" class="nav-item">CLI reference</a>
+    <a href="TAXONOMY.html" class="nav-item">Taxonomy</a>
+    <div class="nav-section">Subsystems</div>
+    <a href="COMPATIBILITY.html" class="nav-item">Compatibility</a>
+    <a href="INGEST_FLOW.html" class="nav-item">Ingest flow</a>
+    <a href="UPDATE_FLOW.html" class="nav-item">Update flow</a>
+    <a href="BUNDLED_SKILLS.html" class="nav-item">Bundled skills</a>
+    <a href="SCHEDULING.html" class="nav-item">Scheduling</a>
+    <a href="CROSS_MACHINE.html" class="nav-item">Cross-machine sync</a>
+    <div class="nav-section">Out-of-band</div>
+    <a href="../mockup.html" class="nav-item">UI mockup ↗</a>
+    <a href="../README.html" class="nav-item">README</a>
+  </nav>
+  <main class="content">
+    <div class="doc-meta">
+      <span class="crumb"><a href="index.html">docs</a></span>
+      <span class="sep">/</span>
+      <span class="crumb">ACCEPTANCE_FLO_413.md</span>
+    </div>
+<h1 id="flo-413-first-run-setup-wizard-end-to-end-qa">FLO-413 First-run
+setup wizard end-to-end QA</h1>
+<p>Date: 2026-06-03</p>
+<h2 id="scope">Scope</h2>
+<p>This QA validates that the first-run setup wizard in
+<code>skills-manager serve</code> is intuitive and safe across the
+states that caused the earlier first-time-user confusion (FLO-399). It
+exercises the wizard release slice built in FLO-407 through FLO-411
+against the <a href="SETUP_WIZARD.html">setup wizard UX contract</a>.</p>
+<p>The headline assertion, from the contract's fresh-user invariant:
+<strong>fresh users never land on an empty Overview</strong> — they
+enter the guided wizard, while returning users land on the
+dashboard.</p>
+<p>Out of scope (matches the Linear issue): new product behavior beyond
+validating the release slice.</p>
+<h2 id="fixture-matrix">Fixture matrix</h2>
+<p>All fixtures use isolated <code>HOME</code> /
+<code>SKILLS_MANAGER_HOME</code> temp directories and the binary built
+from this branch. The four <a href="SETUP_WIZARD.html">FLO-406 setup
+states</a> plus a load-error case were built read-only from
+already-persisted state:</p>
+<table>
+<thead>
+<tr>
+<th>State</th>
+<th>How it is built</th>
+<th>Signals (A inventory / B managed / C open)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>no_discovery</code></td>
+<td>Empty manager home, discovery never run</td>
+<td>✗ / — / —</td>
+</tr>
+<tr>
+<td><code>discovered_unmanaged</code></td>
+<td><code>discover --global</code> over one unmanaged skill</td>
+<td>✓ / ✗ / ✓</td>
+</tr>
+<tr>
+<td><code>partially_managed</code></td>
+<td>Discovered inventory <strong>plus</strong> a seeded managed-library
+skill, with an open recommendation</td>
+<td>✓ / ✓ / ✓</td>
+</tr>
+<tr>
+<td><code>completed</code></td>
+<td>Discovered inventory with every actionable recommendation
+reviewed</td>
+<td>✓ / — / ✗</td>
+</tr>
+<tr>
+<td>load error</td>
+<td>A corrupt <code>state.db</code> (read fails)</td>
+<td>treated as <code>no_discovery</code> + error banner</td>
+</tr>
+</tbody>
+</table>
+<h2 id="automated-results">Automated results</h2>
+<h3 id="fixture-matrix--landing-invariant">Fixture-matrix + landing
+invariant</h3>
+<p>New end-to-end test ties all four states into one matrix and asserts,
+over the real <code>/api/v1/setup</code> endpoint, the derived state per
+fixture. It then checks the fresh-user landing against the <strong>real
+client routing predicate</strong> (<code>isFreshSetupState</code> parsed
+from the app.js served by the test server) rather than a table
+duplicated in the test, so a routing change in app.js that left
+<code>/api/v1/setup</code> unchanged still fails the invariant. It adds
+the <code>partially_managed</code> endpoint case that no prior test
+exercised.</p>
+<div class="sourceCode" id="cb1"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="ex">go</span> test ./internal/cli/ <span class="at">-run</span> TestSetupWizardFixtureMatrixAndLandingInvariant <span class="at">-v</span></span></code></pre></div>
+<p>Result: pass (4 subtests — one per state).</p>
+<ul>
+<li><code>no_discovery</code> → wizard, and computing the status creates
+no <code>state.db</code> (read-only contract, FLO-407).</li>
+<li><code>discovered_unmanaged</code> → wizard.</li>
+<li><code>partially_managed</code> → dashboard.</li>
+<li><code>completed</code> → dashboard.</li>
+</ul>
+<h3 id="full-setup-wizard-suite">Full setup-wizard suite</h3>
+<div class="sourceCode" id="cb2"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="ex">go</span> test ./internal/cli/ <span class="at">-run</span> <span class="st">&#39;Setup|Wizard|DashboardAction|DashboardApply|DashboardBatch|Overview|Assessment|Projects|Matrix&#39;</span> <span class="at">-count</span><span class="op">=</span>1</span></code></pre></div>
+<p>Result: pass. Coverage confirmed across the wizard slice:</p>
+<ul>
+<li><strong>No writes before confirmation.</strong> Read-only GETs
+(<code>/setup</code>, <code>/overview</code>, <code>/assessment</code>,
+<code>/projects</code>, <code>/matrix</code>) never create the manager
+home or <code>state.db</code> on a fresh home; dry-run preview writes no
+skill files; <code>apply</code> without <code>confirm: true</code> is
+rejected (400) and writes nothing
+(<code>TestServeWizardReviewFixtureDryRunNoApply</code>,
+<code>TestDashboardActionsRequirePreviewConfirmAndRecordState</code>).</li>
+<li><strong>Apply tracking.</strong> A confirmed apply of a selected
+action records review status <code>applied</code> plus an audit entry
+and writes the expected manifest/library/install; deferred actions are
+not applied
+(<code>TestDashboardApplySelectedActionCompletesSetup</code>,
+<code>TestDashboardApplySelectedIngestCompletesSetup</code>).</li>
+<li><strong>Failed actions do not complete setup.</strong> A failed
+apply records review status <code>failed</code> with error detail and
+stays "open", so setup is not marked complete
+(<code>TestDashboardActionsRequirePreviewConfirmAndRecordState</code>,
+<code>TestSetupStatusFromAssessment</code> "a failed action stays
+open").</li>
+<li><strong>Tamper safety.</strong> An apply whose submitted plan no
+longer matches the current dry-run plan is rejected (409).</li>
+</ul>
+<h2 id="browser-verification">Browser verification</h2>
+<p>Verified against <code>skills-manager serve</code> driven headless
+(Playwright) with the fixtures above. No console errors or warnings were
+observed on any page.</p>
+<ul>
+<li><strong><code>no_discovery</code> (headline).</strong> Lands on the
+<strong>Setup wizard, step 1 of 5 (Scope)</strong> — not an empty
+Overview. Shows the scan-scope choices and the local-only disclosure
+("Discovery is local-only … never changes skills on disk … Nothing is
+uploaded").</li>
+<li><strong><code>discovered_unmanaged</code>.</strong> Resumes the
+wizard at <strong>step 3 of 5 (Review)</strong> with Scope and Discover
+marked complete; recommendations are grouped by kind and the "nothing is
+written until you confirm on the Apply step" copy is shown.</li>
+<li><strong><code>partially_managed</code>.</strong> Lands on the
+<strong>Overview dashboard</strong> with a persistent "Resume setup"
+affordance, per the routing table.</li>
+<li><strong>Keyboard navigation &amp; focus states.</strong> The scope
+radios are keyboard focusable with a visible 2px focus outline;
+selecting a scope with the keyboard (Space) enables the
+previously-disabled "Start discovery" action.</li>
+<li><strong>Mobile layout.</strong> At 390×844 there is no horizontal
+overflow; the sidebar collapses to a top bar and the main column is full
+width.</li>
+<li><strong>Empty state.</strong> The fresh-user empty case is the
+guided wizard itself — a helpful next step, never a blank screen.</li>
+<li><strong>Error state.</strong> A corrupt <code>state.db</code>
+returns <code>state: no_discovery</code> with
+<code>error: "file is not a database (26)"</code>; the UI shows the
+banner "Could not load setup status: … Showing first-run setup." and
+falls back to the safe first-run wizard rather than a blank screen.</li>
+</ul>
+<h2 id="acceptance-criteria">Acceptance criteria</h2>
+<table>
+<thead>
+<tr>
+<th>Criterion</th>
+<th>Evidence</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Isolated HOME fixtures for the four states</td>
+<td>Fixture matrix +
+<code>TestSetupWizardFixtureMatrixAndLandingInvariant</code></td>
+</tr>
+<tr>
+<td>App does not open to a confusing empty Overview for fresh users</td>
+<td>Browser: <code>no_discovery</code> → wizard step 1; routing
+invariant asserted in the matrix test</td>
+</tr>
+<tr>
+<td>Keyboard nav, focus, mobile, loading, empty, error states</td>
+<td>Browser verification section</td>
+</tr>
+<tr>
+<td>No writes before explicit confirmation</td>
+<td>Read-only GET tests + dry-run/no-apply + apply-requires-confirm
+tests</td>
+</tr>
+<tr>
+<td>Apply tracking; failed actions do not mark setup complete</td>
+<td>Apply-completion tests + failed-apply test + failed-stays-open
+derivation</td>
+</tr>
+<tr>
+<td>Capture release command / browser verification notes</td>
+<td>This document</td>
+</tr>
+</tbody>
+</table>
+<h2 id="recommended-release-validation-command">Recommended release
+validation command</h2>
+<p>Run from a clean checkout of the merged branch:</p>
+<div class="sourceCode" id="cb3"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="fu">make</span> check</span></code></pre></div>
+<p>This runs <code>gofmt</code>, <code>go vet</code>, the full
+<code>go test ./...</code> suite (including the setup wizard fixture
+matrix and apply-flow tests above), and a release build. For a fast
+wizard-only re-check:</p>
+<div class="sourceCode" id="cb4"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a><span class="ex">go</span> test ./internal/cli/ <span class="at">-run</span> <span class="st">&#39;Setup|Wizard|DashboardApply|DashboardAction&#39;</span> <span class="at">-count</span><span class="op">=</span>1</span></code></pre></div>
+    <footer class="doc-footer">
+      <span>skills-manager · design doc</span>
+      <span><a href="ACCEPTANCE_FLO_413.md">view source (.md)</a></span>
+    </footer>
+  </main>
+</div>
+</body>
+</html>
