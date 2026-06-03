@@ -1000,6 +1000,20 @@ function wizardInstallationsByID(assessment) {
   return map;
 }
 
+function wizardInstallationsByPath(assessment) {
+  const map = {};
+  (assessment.installations || []).forEach((i) => {
+    if (i.source_path) map[i.source_path] = i;
+  });
+  return map;
+}
+
+function resetWizardReviewAfterDiscovery() {
+  wizardAssessment = null;
+  wizardReviewState = {};
+  sessionStorage.removeItem("skills-manager-wizard-review");
+}
+
 function wizardRecommendationSkillState(rec, installsByID) {
   const ids = rec.source_installation_ids || [];
   if (!ids.length) return { label: "discovered", tone: "" };
@@ -1120,12 +1134,12 @@ function renderWizardReviewGroups(panel, assessment) {
     const section = el("section", { className: "wizard-review-group", "data-kind": kind });
     section.appendChild(el("div", { className: "subhead", text: wizardRecommendationGroupLabel(kind) }));
     grouped[kind].sort((a, b) => (a.title || a.skill_name || "").localeCompare(b.title || b.skill_name || ""))
-      .forEach((rec) => section.appendChild(renderWizardRecommendationCard(rec, reviews[rec.recommendation_id], installsByID)));
+      .forEach((rec) => section.appendChild(renderWizardRecommendationCard(rec, reviews[rec.recommendation_id], installsByID, assessment)));
     panel.appendChild(section);
   });
 }
 
-function renderWizardRecommendationCard(rec, persistedReview, installsByID) {
+function renderWizardRecommendationCard(rec, persistedReview, installsByID, assessment) {
   const id = rec.recommendation_id;
   const entry = wizardReviewEntry(id);
   const selectable = wizardRecommendationSelectable(rec, persistedReview);
@@ -1189,7 +1203,7 @@ function renderWizardRecommendationCard(rec, persistedReview, installsByID) {
   }));
   card.appendChild(actions);
   if (entry.previewError) card.appendChild(el("p", { className: "error", text: entry.previewError }));
-  if (entry.plan) card.appendChild(renderActionPlanPreview(entry.plan, installsByID));
+  if (entry.plan) card.appendChild(renderActionPlanPreview(entry.plan, wizardInstallationsByPath(assessment)));
   else if (selectable && selected && !entry.previewing) {
     card.appendChild(el("p", { className: "muted", text: "Preview the dry-run plan to see exact files before continuing." }));
   }
@@ -1220,7 +1234,7 @@ function renderWizardApplyPanel(panel) {
     panel.appendChild(el("p", { className: "empty", text: "No actions selected. You can finish setup and apply recommendations later from the Discover tab." }));
     return;
   }
-  const installsByID = wizardInstallationsByID(assessment);
+  const installsByPath = wizardInstallationsByPath(assessment);
   const byID = {};
   (assessment.recommendations || []).forEach((r) => { byID[r.recommendation_id] = r; });
   panel.appendChild(el("p", { className: "advisory-note", text: "Applying selected actions with confirmation ships separately (FLO-411). Below are the dry-run previews you reviewed — no files have been changed." }));
@@ -1230,7 +1244,7 @@ function renderWizardApplyPanel(panel) {
     if (!rec) return;
     const block = el("section", { className: "wizard-apply-item" });
     block.appendChild(el("div", { className: "row-title", text: rec.title || rec.skill_name || id }));
-    if (entry.plan) block.appendChild(renderActionPlanPreview(entry.plan, installsByID));
+    if (entry.plan) block.appendChild(renderActionPlanPreview(entry.plan, installsByPath));
     else block.appendChild(el("p", { className: "error", text: "Missing dry-run preview — return to Review and preview this action." }));
     panel.appendChild(block);
   });
@@ -1402,6 +1416,7 @@ async function startWizardDiscovery() {
   wizardDiscoverPhase = "running";
   wizardDiscoverError = "";
   wizardDiscoverSummary = null;
+  resetWizardReviewAfterDiscovery();
   render();
   try {
     const r = await runCLI(args);
@@ -1549,6 +1564,7 @@ async function renderSetupWizard(content) {
         await refreshSetupStatus();
         if (setupStatus && setupStatus.inventory_exists) {
           wizardDiscoverPhase = "done";
+          resetWizardReviewAfterDiscovery();
           await loadWizardDiscoverSummary();
         }
         render();
