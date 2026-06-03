@@ -919,6 +919,8 @@ const WIZARD_STEPS = [
     id: "discover", label: "Discover", title: "Discover your skills",
     body: "Run a read-only discovery to build your inventory: detected tools, global and project skills, unmanaged skills, drift, duplicates, and coverage gaps.",
     primary: "Review recommendations",
+    operation: true,
+    hint: "Build your inventory by running `skills-manager discover --global` in your terminal, then reopen setup to continue.",
   },
   {
     id: "review", label: "Review", title: "Review recommendations",
@@ -929,6 +931,8 @@ const WIZARD_STEPS = [
     id: "apply", label: "Apply", title: "Apply selected actions",
     body: "Apply only the actions you selected, and only after you confirm the previewed changes. Each plan's exact file changes are shown, and results are reported per action.",
     primary: "Apply selected",
+    operation: true,
+    hint: "Applying changes happens here, only after you review and confirm each action.",
   },
   {
     id: "done", label: "Done", title: "Setup complete",
@@ -1050,15 +1054,23 @@ async function renderSetupWizard(content) {
   }
 
   const heading = el("h2", { className: "panel-title wizard-title", tabindex: "-1", text: step.title });
-  wizard.appendChild(el("section", { className: "panel wizard-panel" }, [
+  const panel = el("section", { className: "panel wizard-panel" }, [
     heading,
     el("p", { className: "muted", text: step.body }),
-  ]));
+  ]);
+  if (step.hint) panel.appendChild(el("p", { className: "advisory-note", text: step.hint }));
+  wizard.appendChild(panel);
 
   const back = el("button", { className: "btn", type: "button", text: "Back" });
   back.disabled = wizardStep <= 1;
   back.onclick = () => wizardGoTo(wizardStep - 1);
   const next = el("button", { className: "btn confirm", type: "button", text: step.primary });
+  // Operation steps (Discover, Apply) block forward navigation until the
+  // operation resolves (FLO-406 progress behavior), so the wizard never
+  // presents setup as complete without a discovery snapshot or apply result.
+  // The operations themselves land in FLO-409/411; until then Next stays
+  // disabled and the step hint points to the working CLI path.
+  next.disabled = !!step.operation;
   next.onclick = () => { if (wizardStep >= WIZARD_STEPS.length) exitSetupWizard(); else wizardGoTo(wizardStep + 1); };
   wizard.appendChild(el("div", { className: "wizard-nav" }, [
     back,
