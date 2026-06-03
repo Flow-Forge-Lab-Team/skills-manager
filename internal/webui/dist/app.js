@@ -933,7 +933,7 @@ const WIZARD_STEPS = [
     body: "Apply only the actions you selected, and only after you confirm the previewed changes. Each plan's exact file changes are shown, and results are reported per action.",
     primary: "Apply selected",
     operation: true,
-    hint: "Applying changes happens here, only after you review and confirm each action.",
+    hint: "Applying changes happens here, after you review and confirm each action. You can finish setup later and resume from the dashboard.",
   },
   {
     id: "done", label: "Done", title: "Setup complete",
@@ -1087,17 +1087,22 @@ async function renderSetupWizard(content) {
   const back = el("button", { className: "btn", type: "button", text: "Back" });
   back.disabled = wizardStep <= 1;
   back.onclick = () => wizardGoTo(wizardStep - 1);
-  const next = el("button", { className: "btn confirm", type: "button", text: step.primary });
   // Operation steps (Discover, Apply) block forward navigation until their
-  // operation has resolved (FLO-406 progress behavior), so the wizard never
-  // advances to Done without a discovery snapshot or apply result. The gate is
-  // on whether the operation is actually unresolved per persisted status — not
-  // the static step type — so returning to an already-resolved step (e.g.
-  // Discover when an inventory exists) never strands the user with a disabled
-  // Next. The operations themselves land in FLO-409/411; until then an
-  // unresolved operation step's hint points to the working CLI path.
-  next.disabled = !resolved;
-  next.onclick = () => { if (wizardStep >= WIZARD_STEPS.length) exitSetupWizard(); else wizardGoTo(wizardStep + 1); };
+  // operation resolves (FLO-406 progress behavior), so the wizard never advances
+  // to Done without a discovery snapshot or apply result. Resolution is read
+  // from persisted status, so returning to an already-resolved step never
+  // strands the user. The operations themselves land in FLO-409/411, so until
+  // then an unresolved operation step keeps a non-dead-end forward action:
+  //   - self-serviceable steps (Discover) keep the advancing primary disabled
+  //     and offer "Check again" after the user runs the hinted CLI discovery;
+  //   - steps with no in-build path to resolve (Apply) convert the primary to a
+  //     "Finish setup later" exit, since setup stays resumable from the dashboard.
+  const isLast = wizardStep >= WIZARD_STEPS.length;
+  const blocked = step.operation && !resolved;
+  const exitInstead = blocked && !step.refreshable;
+  const next = el("button", { className: "btn confirm", type: "button", text: exitInstead ? "Finish setup later" : step.primary });
+  next.disabled = blocked && !exitInstead;
+  next.onclick = exitInstead ? exitSetupWizard : () => { if (isLast) exitSetupWizard(); else wizardGoTo(wizardStep + 1); };
   wizard.appendChild(el("div", { className: "wizard-nav" }, [
     back,
     el("button", { className: "btn", type: "button", text: "Cancel setup", onClick: exitSetupWizard }),
