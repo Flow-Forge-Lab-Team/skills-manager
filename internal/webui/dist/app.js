@@ -1546,10 +1546,17 @@ async function renderSetupWizard(content) {
     wizard.appendChild(el("div", { className: "safety-banner", text: "Could not load setup status: " + setupStatus.error + ". Showing first-run setup." }));
   }
 
-  const heading = el("h2", { className: "panel-title wizard-title", tabindex: "-1", text: step.title });
+  const donePending = step.id === "done" && setupStatus && setupStatus.open_actions;
+  const heading = el("h2", {
+    className: "panel-title wizard-title",
+    tabindex: "-1",
+    text: donePending ? "Review saved — apply when ready" : step.title,
+  });
   const panel = el("section", { className: "panel wizard-panel" }, [
     heading,
-    el("p", { className: "muted", text: step.body }),
+    el("p", { className: "muted", text: donePending
+      ? "Dry-run previews are saved in your session. Applying still requires explicit confirmation in a follow-up step; resume setup from the dashboard when you are ready."
+      : step.body }),
   ]);
   if (step.hint) panel.appendChild(el("p", { className: "advisory-note", text: step.hint }));
   const resolved = operationStepResolved(step, setupStatus);
@@ -1557,9 +1564,7 @@ async function renderSetupWizard(content) {
   else if (step.id === "discover") renderWizardDiscoverPanel(panel, resolved);
   else if (step.id === "review") await renderWizardReviewPanel(panel);
   else if (step.id === "apply") renderWizardApplyPanel(panel);
-  else if (step.id === "done" && setupStatus && setupStatus.open_actions) {
-    panel.appendChild(el("p", { className: "advisory-note", text: "You previewed recommendations but have not applied them yet. Resume setup from the dashboard when you are ready to confirm changes." }));
-  }
+
   // Re-read setup status after external CLI discovery (FLO-406 "Refresh").
   if (step.refreshable && !resolved) {
     panel.appendChild(el("button", { className: "btn", type: "button", text: "Check again",
