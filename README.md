@@ -51,7 +51,8 @@ skills-manager serve
 
 On first run — before the manager owns any skills — the dashboard does not drop
 you on an empty screen. It routes you into a five-step **setup** wizard: choose a
-**scope** (global skills, a project, or both), run a read-only **discover**,
+**scope** (global skills, your saved project roots, or both), run a read-only
+**discover**,
 **review** the deterministic recommendations, preview each change as a
 **dry-run**, and **apply** only the actions you confirm. Discover and dry-run
 never write to your tool directories, so nothing changes until that final apply,

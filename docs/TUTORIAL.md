@@ -37,9 +37,10 @@ skills-manager serve
 On a fresh machine the dashboard does not drop you on an empty screen — it routes
 you into the five-step **setup** wizard:
 
-1. **Scope** — choose what to inspect: global skills, the current project, or
-   both. Inspection is local-only, and the wizard discloses which paths it may
-   read.
+1. **Scope** — choose what to inspect: **Global skills** (known tool skill
+   folders under your home directory), **Saved project roots** (git repos under
+   roots you previously approved with `discover --save-project-roots`), or both.
+   Inspection is local-only, and the wizard discloses which paths it may read.
 2. **Discover** — run the read-only **discover** pass. It builds your inventory
    (detected tools, global and project skills, drift, duplicate content, coverage
    gaps) and writes only manager-local state under `~/.skills-manager`.
