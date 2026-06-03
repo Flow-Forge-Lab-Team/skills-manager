@@ -304,8 +304,9 @@ func planIngest(plan *actionPlan, sources []discoverInstallation) {
 		if blocked {
 			continue
 		}
-		plan.addCreate(target, skillSource, "manager", "library copy for ingested skill")
+		plan.addIngestLibraryFiles(libraryTarget, source.SourcePath, skillSource)
 		plan.addCreate(metaTarget, source.SourcePath, "manager", "metadata for ingested skill")
+		plan.addLibraryCatalogWrite()
 	}
 }
 
@@ -480,6 +481,67 @@ func existingLibraryTargetBlocksIngest(plan *actionPlan, target, source string) 
 		return true
 	}
 	return false
+}
+
+func (plan *actionPlan) addIngestLibraryFiles(libraryTarget, sourcePath, skillSource string) {
+	err := filepath.WalkDir(sourcePath, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		rel, err := filepath.Rel(sourcePath, path)
+		if err != nil {
+			return err
+		}
+		if rel == ".git" && entry.IsDir() {
+			return filepath.SkipDir
+		}
+		if rel == "." || entry.IsDir() {
+			return nil
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return nil
+		}
+		if filepath.ToSlash(rel) == ".skill-meta.yaml" {
+			return nil
+		}
+		source := path
+		if samePlanPath(path, skillSource) {
+			source = skillSource
+		}
+		plan.addCreate(filepath.Join(libraryTarget, rel), source, "manager", "library copy for ingested skill")
+		return nil
+	})
+	if err != nil {
+		plan.addBlocker("failed to inspect ingest source files: " + err.Error())
+	}
+}
+
+func (plan *actionPlan) addLibraryCatalogWrite() {
+	home, err := managerHome()
+	if err != nil {
+		plan.addBlocker("failed to resolve manager home: " + err.Error())
+		return
+	}
+	path := filepath.Join(home, "library", "catalog.yaml")
+	info, err := os.Stat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		plan.addCreate(path, "", "manager", "catalog rebuild after ingest")
+		return
+	}
+	if err != nil {
+		plan.addBlocker("failed to inspect catalog target: " + err.Error())
+		return
+	}
+	if info.IsDir() {
+		plan.addBlocker("catalog target exists as a directory: " + path)
+		plan.addPreserve(path, path, "unknown", "catalog target is not writable")
+		return
+	}
+	plan.addUpdate(path, "", "manager", "catalog rebuild after ingest")
 }
 
 func validatePlanTargetSkillName(plan *actionPlan, skillName string, sources []discoverInstallation) bool {
@@ -769,6 +831,10 @@ func applyActionPlans(inventory discoverOutput, plans []actionPlan, stdout io.Wr
 			return fmt.Errorf("%s is not ready", plan.RecommendationID)
 		}
 		switch plan.Kind {
+		case "ingest":
+			if err := applyIngestPlan(installsByID, plan, stdout); err != nil {
+				return err
+			}
 		case "install_global":
 			if err := applyGlobalInstallPlan(inventory, installsByID, plan, stdout); err != nil {
 				return err
@@ -786,6 +852,74 @@ func applyActionPlans(inventory discoverOutput, plans []actionPlan, stdout io.Wr
 		}
 	}
 	return nil
+}
+
+func applyIngestPlan(installsByID map[string]discoverInstallation, plan actionPlan, stdout io.Writer) error {
+	source, err := singlePlanSource(installsByID, plan)
+	if err != nil {
+		return err
+	}
+	if source.Managed {
+		return fmt.Errorf("%s source is already manager-owned", plan.RecommendationID)
+	}
+	if source.Format != "skill_md" {
+		return fmt.Errorf("%s ingest only supports skill_md sources", plan.RecommendationID)
+	}
+	home, err := managerHome()
+	if err != nil {
+		return err
+	}
+	libraryTarget := filepath.Join(home, "library", plan.SkillName)
+	catalogPath := filepath.Join(home, "library", "catalog.yaml")
+	for _, path := range append(plannedIngestCopyTargets(libraryTarget, source.SourcePath), filepath.Join(libraryTarget, ".skill-meta.yaml"), catalogPath) {
+		if err := ensurePlanAllowsWrite(plan, path); err != nil {
+			return err
+		}
+	}
+	result := ingestFromSource(ingestSource{
+		kind:  "local",
+		raw:   source.SourcePath,
+		path:  source.SourcePath,
+		label: source.SourcePath,
+	}, ingestOptions{yes: true, interactive: false, name: plan.SkillName}, home, stdout)
+	if result.Skipped {
+		return fmt.Errorf("%s ingest skipped: %s", plan.RecommendationID, result.Reason)
+	}
+	fmt.Fprintf(stdout, "applied %s: ingested %s to %s\n", plan.RecommendationID, result.Name, result.LibraryPath)
+	return nil
+}
+
+func plannedIngestCopyTargets(libraryTarget, sourcePath string) []string {
+	var targets []string
+	_ = filepath.WalkDir(sourcePath, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		rel, err := filepath.Rel(sourcePath, path)
+		if err != nil {
+			return err
+		}
+		if rel == ".git" && entry.IsDir() {
+			return filepath.SkipDir
+		}
+		if rel == "." || entry.IsDir() {
+			return nil
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return nil
+		}
+		if filepath.ToSlash(rel) == ".skill-meta.yaml" {
+			return nil
+		}
+		targets = append(targets, filepath.Join(libraryTarget, rel))
+		return nil
+	})
+	sort.Strings(targets)
+	return targets
 }
 
 func applyGlobalInstallPlan(inventory discoverOutput, installsByID map[string]discoverInstallation, plan actionPlan, stdout io.Writer) error {

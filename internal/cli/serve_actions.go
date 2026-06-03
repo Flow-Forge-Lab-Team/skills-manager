@@ -28,6 +28,16 @@ type triageActionPlanResponse struct {
 	Stdout       string              `json:"stdout,omitempty"`
 }
 
+type triageActionBatchApplyRequest struct {
+	Actions []triageActionPlanRequest `json:"actions"`
+	Confirm bool                      `json:"confirm,omitempty"`
+	Reason  string                    `json:"reason,omitempty"`
+}
+
+type triageActionBatchApplyResponse struct {
+	Results []triageActionPlanResponse `json:"results"`
+}
+
 type triageActionAudit struct {
 	AuditID          int64  `json:"audit_id"`
 	RecommendationID string `json:"recommendation_id"`
@@ -55,6 +65,12 @@ func (s *serveServer) handleActions(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.handleActionApply(w, r)
+	case "apply-batch":
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		s.handleActionApplyBatch(w, r)
 	case "review":
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -183,6 +199,109 @@ func (s *serveServer) handleActionApply(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	writeJSONResponse(w, triageActionPlanResponse{Plan: current, Review: review, AuditEntries: audit, Stdout: stdout.String()})
+}
+
+func (s *serveServer) handleActionApplyBatch(w http.ResponseWriter, r *http.Request) {
+	var req triageActionBatchApplyRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeAPIError(w, http.StatusBadRequest, fmt.Errorf("invalid JSON body: %w", err))
+		return
+	}
+	if !req.Confirm {
+		writeAPIError(w, http.StatusBadRequest, fmt.Errorf("confirm=true is required before applying action plans"))
+		return
+	}
+	if len(req.Actions) == 0 {
+		writeAPIError(w, http.StatusBadRequest, fmt.Errorf("at least one action plan is required"))
+		return
+	}
+
+	s.runMu.Lock()
+	restore := setSkillsManagerHome(s.home)
+	defer restore()
+	defer s.runMu.Unlock()
+
+	inventory, err := loadDiscoverOutputFromState(s.home)
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, err)
+		return
+	}
+	currents := make([]actionPlan, 0, len(req.Actions))
+	seen := map[string]bool{}
+	for _, action := range req.Actions {
+		id := strings.TrimSpace(action.RecommendationID)
+		if id == "" {
+			writeAPIError(w, http.StatusBadRequest, fmt.Errorf("recommendation_id required"))
+			return
+		}
+		if seen[id] {
+			writeAPIError(w, http.StatusBadRequest, fmt.Errorf("duplicate recommendation_id: %s", id))
+			return
+		}
+		seen[id] = true
+		if len(action.Plan) == 0 {
+			writeAPIError(w, http.StatusBadRequest, fmt.Errorf("precomputed dry-run plan is required for %s", id))
+			return
+		}
+		var submitted actionPlan
+		if err := json.Unmarshal(action.Plan, &submitted); err != nil {
+			writeAPIError(w, http.StatusBadRequest, fmt.Errorf("invalid action plan for %s: %w", id, err))
+			return
+		}
+		plans, err := buildActionPlans(inventory, planOptions{inventory: "persisted-state", recommendation: id})
+		if err != nil {
+			writeAPIError(w, http.StatusBadRequest, err)
+			return
+		}
+		if len(plans) != 1 {
+			writeAPIError(w, http.StatusBadRequest, fmt.Errorf("expected one plan for %s", id))
+			return
+		}
+		current := plans[0]
+		if !sameActionPlan(submitted, current) {
+			writeAPIError(w, http.StatusConflict, fmt.Errorf("submitted plan no longer matches the current dry-run plan for %s", id))
+			return
+		}
+		if current.Status != "ready" || len(current.Blockers) > 0 {
+			writeAPIError(w, http.StatusBadRequest, fmt.Errorf("plan is not ready for %s: %s", id, strings.Join(current.Blockers, "; ")))
+			return
+		}
+		currents = append(currents, current)
+	}
+
+	results := make([]triageActionPlanResponse, 0, len(currents))
+	for _, current := range currents {
+		var stdout bytes.Buffer
+		err := applyActionPlans(inventory, []actionPlan{current}, &stdout)
+		reason := firstActionDetail(req.Reason, "confirmed in setup wizard")
+		if err != nil {
+			review, saveErr := saveTriageActionReview(s.home, current.RecommendationID, "failed", reason, err.Error())
+			if saveErr != nil {
+				writeAPIError(w, http.StatusInternalServerError, saveErr)
+				return
+			}
+			_ = insertTriageActionAudit(s.home, current.RecommendationID, "apply", "failed", err.Error())
+			audit, _ := loadTriageActionAudit(s.home, current.RecommendationID)
+			results = append(results, triageActionPlanResponse{Plan: current, Review: review, AuditEntries: audit, Stdout: stdout.String()})
+			continue
+		}
+		review, err := saveTriageActionReview(s.home, current.RecommendationID, "applied", reason, "")
+		if err != nil {
+			writeAPIError(w, http.StatusInternalServerError, err)
+			return
+		}
+		if err := insertTriageActionAudit(s.home, current.RecommendationID, "apply", "applied", stdout.String()); err != nil {
+			writeAPIError(w, http.StatusInternalServerError, err)
+			return
+		}
+		audit, err := loadTriageActionAudit(s.home, current.RecommendationID)
+		if err != nil {
+			writeAPIError(w, http.StatusInternalServerError, err)
+			return
+		}
+		results = append(results, triageActionPlanResponse{Plan: current, Review: review, AuditEntries: audit, Stdout: stdout.String()})
+	}
+	writeJSONResponse(w, triageActionBatchApplyResponse{Results: results})
 }
 
 func (s *serveServer) actionPlanForRecommendation(recommendationID string) (discoverOutput, actionPlan, error) {

@@ -360,6 +360,67 @@ func TestPlanIngestUsesSkillMarkdownSource(t *testing.T) {
 	}
 }
 
+func TestPlanApplyIngestCreatesLibraryAndCatalog(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	managerHome := filepath.Join(home, ".skills-manager")
+	t.Setenv("SKILLS_MANAGER_HOME", managerHome)
+	sourcePath := filepath.Join(home, ".claude", "skills", "review")
+	writeScanSkill(t, filepath.Dir(sourcePath), "review", "---\nname: review\n---\n# Review\n")
+	writeFile(t, filepath.Join(sourcePath, "notes.md"), "# Notes\n")
+	inventory := writePlanInventoryFixture(t, home, `{
+  "installations": [{
+    "installation_id": "source-1",
+    "skill_name": "review",
+    "tool_id": "claude",
+    "scope": "global",
+    "source_path": %q,
+    "content_path": %q,
+    "content_sha256": "abc",
+    "managed": false,
+    "ownership": "unmanaged",
+    "format": "skill_md",
+    "present": true
+  }],
+  "report": {"recommendations": [{
+    "recommendation_id": "rec-ingest",
+    "kind": "ingest",
+    "title": "Ingest unmanaged skill",
+    "reason": "inventory",
+    "confidence": "medium",
+    "skill_name": "review",
+    "source_installation_ids": ["source-1"],
+    "requires_plan": true
+  }]}
+}`, sourcePath, filepath.Join(sourcePath, "SKILL.md"))
+
+	out := runPlanJSON(t, inventory, "rec-ingest")
+	plan := onlyPlan(t, out)
+	if !containsPlanFile(plan.Files.Create, filepath.Join(managerHome, "library", "review", "notes.md")) {
+		t.Fatalf("create files = %#v, want sibling file in ingest preview", plan.Files.Create)
+	}
+	if !containsPlanFile(plan.Files.Create, filepath.Join(managerHome, "library", "catalog.yaml")) {
+		t.Fatalf("create files = %#v, want catalog rebuild in ingest preview", plan.Files.Create)
+	}
+
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{"plan", "--inventory", inventory, "--recommendation", "rec-ingest", "--apply", "--confirm"}, &stdout, &stderr)
+	if code != ExitSuccess {
+		t.Fatalf("plan apply exit = %d\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+	}
+	for _, path := range []string{
+		filepath.Join(managerHome, "library", "review", "SKILL.md"),
+		filepath.Join(managerHome, "library", "review", "notes.md"),
+		filepath.Join(managerHome, "library", "review", ".skill-meta.yaml"),
+		filepath.Join(managerHome, "library", "catalog.yaml"),
+		filepath.Join(sourcePath, "SKILL.md"),
+	} {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("expected %s after ingest apply: %v", path, err)
+		}
+	}
+}
+
 func TestPlanIngestBlocksExistingLibraryTarget(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
