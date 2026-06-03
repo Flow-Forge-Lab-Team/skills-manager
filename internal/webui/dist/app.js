@@ -1557,6 +1557,9 @@ async function renderSetupWizard(content) {
   else if (step.id === "discover") renderWizardDiscoverPanel(panel, resolved);
   else if (step.id === "review") await renderWizardReviewPanel(panel);
   else if (step.id === "apply") renderWizardApplyPanel(panel);
+  else if (step.id === "done" && setupStatus && setupStatus.open_actions) {
+    panel.appendChild(el("p", { className: "advisory-note", text: "You previewed recommendations but have not applied them yet. Resume setup from the dashboard when you are ready to confirm changes." }));
+  }
   // Re-read setup status after external CLI discovery (FLO-406 "Refresh").
   if (step.refreshable && !resolved) {
     panel.appendChild(el("button", { className: "btn", type: "button", text: "Check again",
@@ -1591,8 +1594,16 @@ async function renderSetupWizard(content) {
     next.disabled = assessment.error || !wizardReviewStepCanAdvance(assessment);
     next.onclick = () => wizardGoTo(wizardStep + 1);
   } else if (step.id === "apply") {
-    next.disabled = false;
-    next.onclick = () => { if (isLast) exitSetupWizard(); else wizardGoTo(wizardStep + 1); };
+    const assessment = wizardAssessment && !wizardAssessment.error ? wizardAssessment : await loadWizardAssessment();
+    const pendingSelected = !assessment.error ? wizardSelectedRecommendationIDs(assessment) : [];
+    if (pendingSelected.length) {
+      next.textContent = "Finish setup later";
+      next.onclick = exitSetupWizard;
+    } else {
+      next.onclick = () => wizardGoTo(wizardStep + 1);
+    }
+  } else if (step.id === "done") {
+    next.onclick = exitSetupWizard;
   } else {
     next.disabled = (blocked && !exitInstead) || wizardDiscoverPhase === "running";
     next.onclick = exitInstead ? exitSetupWizard : () => { if (isLast) exitSetupWizard(); else wizardGoTo(wizardStep + 1); };
