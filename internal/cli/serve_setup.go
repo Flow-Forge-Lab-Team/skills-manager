@@ -1,10 +1,13 @@
 package cli
 
 import (
+	"errors"
 	"net/http"
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/Flow-Forge-Lab-Team/skills-manager/internal/state"
 )
 
 // Setup states for the first-run onboarding wizard, per the FLO-406 UX contract
@@ -65,18 +68,25 @@ func loadTriageSetupStatus(home string) triageSetupStatus {
 	generatedAt := time.Now().UTC().Format(time.RFC3339)
 	managedLibrarySkills := countLibrarySkills(filepath.Join(home, "library"))
 
-	// Read-only short-circuit: opening the state DB would create it (and its
-	// schema) on a fresh home, which the FLO-407 contract forbids. With no
-	// persisted state there is nothing discovered yet.
-	if !stateDatabaseExists(home) {
-		return triageSetupStatus{
+	// Read-only: open the persisted state without creating, migrating, or
+	// changing the database (the FLO-407 contract forbids any write here).
+	db, err := state.OpenForRead(home)
+	if err != nil {
+		status := triageSetupStatus{
 			State:                setupStateNoDiscovery,
 			GeneratedAt:          generatedAt,
 			ManagedLibrarySkills: managedLibrarySkills,
 		}
+		// A missing database is a fresh user with nothing discovered yet; any
+		// other open error is surfaced so the UI can show a helpful next step.
+		if !errors.Is(err, os.ErrNotExist) {
+			status.Error = err.Error()
+		}
+		return status
 	}
+	defer db.Close()
 
-	assessment, err := loadTriageAssessment(home)
+	assessment, err := loadTriageAssessmentFromDB(db)
 	if err != nil {
 		return triageSetupStatus{
 			State:                setupStateNoDiscovery,
@@ -89,13 +99,6 @@ func loadTriageSetupStatus(home string) triageSetupStatus {
 	status := setupStatusFromAssessment(assessment, managedLibrarySkills)
 	status.GeneratedAt = generatedAt
 	return status
-}
-
-// stateDatabaseExists reports whether the persisted state database is present,
-// without opening it (opening would create it on a fresh home).
-func stateDatabaseExists(home string) bool {
-	_, err := os.Stat(filepath.Join(home, "state.db"))
-	return err == nil
 }
 
 // setupStatusFromAssessment is the pure derivation of setup status from a loaded

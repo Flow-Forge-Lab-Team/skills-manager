@@ -2,7 +2,10 @@ package cli
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -233,6 +236,11 @@ func TestSetupStatusDiscoveredUnmanaged(t *testing.T) {
 		t.Fatalf("discover exit = %d\nstderr:\n%s", code, stderr.String())
 	}
 
+	// The read-only contract also applies to an existing database: computing
+	// setup status must not write to state.db.
+	dbPath := filepath.Join(managerHome, "state.db")
+	dbHashBefore := fileSHA256(t, dbPath)
+
 	ts := httptest.NewServer(newServeServer(managerHome))
 	defer ts.Close()
 	resp, err := http.Get(ts.URL + "/api/v1/setup")
@@ -247,6 +255,9 @@ func TestSetupStatusDiscoveredUnmanaged(t *testing.T) {
 	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
 		t.Fatalf("decode setup status: %v", err)
 	}
+	if dbHashAfter := fileSHA256(t, dbPath); dbHashAfter != dbHashBefore {
+		t.Fatalf("computing setup status modified state.db; the read must be read-only")
+	}
 	if !got.InventoryExists || got.DiscoveredInstallations == 0 {
 		t.Fatalf("inventory should exist after discover: %#v", got)
 	}
@@ -256,4 +267,18 @@ func TestSetupStatusDiscoveredUnmanaged(t *testing.T) {
 	if got.State != setupStateDiscoveredUnmanaged {
 		t.Fatalf("state = %q, want %q (%#v)", got.State, setupStateDiscoveredUnmanaged, got)
 	}
+}
+
+func fileSHA256(t *testing.T, path string) string {
+	t.Helper()
+	f, err := os.Open(path)
+	if err != nil {
+		t.Fatalf("open %s: %v", path, err)
+	}
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		t.Fatalf("hash %s: %v", path, err)
+	}
+	return hex.EncodeToString(h.Sum(nil))
 }
