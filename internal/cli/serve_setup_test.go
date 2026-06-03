@@ -214,6 +214,9 @@ func TestSetupStatusFreshHomeIsNoDiscoveryWithoutWrites(t *testing.T) {
 	if got.GeneratedAt == "" {
 		t.Fatalf("generated_at should be set so the UI can show a next step")
 	}
+	if got.Home != managerHome {
+		t.Fatalf("home = %q, want %q so the first-run wizard can show it", got.Home, managerHome)
+	}
 	// No filesystem write may occur while computing setup status.
 	if _, err := os.Stat(filepath.Join(managerHome, "state.db")); !os.IsNotExist(err) {
 		t.Fatalf("computing setup status created state.db (stat err=%v); it must be read-only", err)

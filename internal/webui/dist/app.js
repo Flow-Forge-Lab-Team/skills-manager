@@ -940,6 +940,10 @@ const WIZARD_STEPS = [
 async function refreshSetupStatus() {
   try {
     setupStatus = await api("/api/v1/setup");
+    // The home pill lives in the app shell but is otherwise only populated by
+    // the Overview view; set it here so it is correct on the first-run wizard,
+    // which Overview-skipping fresh users see first.
+    if (setupStatus && setupStatus.home) setHomePill(setupStatus.home);
   } catch (e) {
     // A status that cannot load is treated as no_discovery with an error banner
     // (the FLO-406/407 contract) so the UI shows a helpful next step, not a
