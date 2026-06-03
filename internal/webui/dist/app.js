@@ -1035,6 +1035,20 @@ function renderSetupStepper() {
   return list;
 }
 
+// operationStepResolved reports whether an operation step's work is already done
+// per persisted setup status (FLO-406 advance conditions): Discover resolves
+// once an inventory snapshot exists; Apply resolves once no actionable
+// recommendation is left open. Non-operation steps are always "resolved".
+// Forward navigation is blocked only on operations that have NOT resolved, so
+// returning to an already-resolved step does not strand the user.
+function operationStepResolved(step, status) {
+  if (!step.operation) return true;
+  if (!status) return false;
+  if (step.id === "discover") return !!status.inventory_exists;
+  if (step.id === "apply") return !status.open_actions;
+  return false;
+}
+
 // renderSetupWizard renders the wizard shell: stepper progress, the current
 // step's description, and Back / Cancel / primary controls. Focus moves to the
 // step heading on each render so keyboard and screen-reader users land at the
@@ -1065,12 +1079,15 @@ async function renderSetupWizard(content) {
   back.disabled = wizardStep <= 1;
   back.onclick = () => wizardGoTo(wizardStep - 1);
   const next = el("button", { className: "btn confirm", type: "button", text: step.primary });
-  // Operation steps (Discover, Apply) block forward navigation until the
-  // operation resolves (FLO-406 progress behavior), so the wizard never
-  // presents setup as complete without a discovery snapshot or apply result.
-  // The operations themselves land in FLO-409/411; until then Next stays
-  // disabled and the step hint points to the working CLI path.
-  next.disabled = !!step.operation;
+  // Operation steps (Discover, Apply) block forward navigation until their
+  // operation has resolved (FLO-406 progress behavior), so the wizard never
+  // advances to Done without a discovery snapshot or apply result. The gate is
+  // on whether the operation is actually unresolved per persisted status — not
+  // the static step type — so returning to an already-resolved step (e.g.
+  // Discover when an inventory exists) never strands the user with a disabled
+  // Next. The operations themselves land in FLO-409/411; until then an
+  // unresolved operation step's hint points to the working CLI path.
+  next.disabled = !operationStepResolved(step, setupStatus);
   next.onclick = () => { if (wizardStep >= WIZARD_STEPS.length) exitSetupWizard(); else wizardGoTo(wizardStep + 1); };
   wizard.appendChild(el("div", { className: "wizard-nav" }, [
     back,
