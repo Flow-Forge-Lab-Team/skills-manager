@@ -987,17 +987,25 @@ function wizardGoTo(step) {
 }
 
 // renderSetupResumeBanner shows a persistent, dismissible affordance on the
-// dashboard for partially_managed users, who land on the dashboard but can
-// resume setup at the first incomplete step (FLO-406 routing table).
+// dashboard whenever first-run setup is incomplete. partially_managed users
+// land on the dashboard and resume here; a fresh user who cancels the wizard
+// also lands here, so this is their one-click way back in — never only a reload
+// (FLO-406 routing table; keeps Cancel honest about "returns to the dashboard"
+// without trapping the user back in the wizard on every navigation).
 function renderSetupResumeBanner(content) {
-  if (!setupStatus || setupStatus.state !== "partially_managed" || setupResumeDismissed) return;
+  if (!setupStatus || setupResumeDismissed || setupStatus.state === "completed") return;
+  // no_discovery has nothing discovered yet, so frame it as starting setup;
+  // the other incomplete states already have an inventory to resume from.
+  const fresh = !setupStatus.inventory_exists;
   content.appendChild(el("section", { className: "panel setup-resume" }, [
     el("div", null, [
-      el("div", { className: "row-title", text: "Finish setting up" }),
-      el("p", { className: "muted", text: "Some recommendations are still unreviewed. Resume setup to review and apply what's left." }),
+      el("div", { className: "row-title", text: fresh ? "Set up skills-manager" : "Finish setting up" }),
+      el("p", { className: "muted", text: fresh
+        ? "Discover the skills you already have and review what's recommended. Nothing changes without your confirmation."
+        : "Some recommendations are still unreviewed. Resume setup to review and apply what's left." }),
     ]),
     el("div", { className: "update-actions" }, [
-      el("button", { className: "btn confirm", type: "button", text: "Resume setup", onClick: () => enterSetupWizard(setupStartStep(setupStatus.state)) }),
+      el("button", { className: "btn confirm", type: "button", text: fresh ? "Start setup" : "Resume setup", onClick: () => enterSetupWizard(setupStartStep(setupStatus.state)) }),
       el("button", { className: "btn", type: "button", text: "Dismiss", onClick: () => { setupResumeDismissed = true; render(); } }),
     ]),
   ]));
