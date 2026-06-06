@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -191,6 +192,43 @@ func TestUsageRecordFlags(t *testing.T) {
 	if len(cells) != 1 || cells[0].SkillName != "linear-feature" || cells[0].Harness != "grok" {
 		t.Fatalf("cells = %+v", cells)
 	}
+}
+
+func TestUsageRecordRelativeCwd(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("SKILLS_MANAGER_HOME", home)
+	t.Chdir(t.TempDir())
+
+	var stdout, stderr bytes.Buffer
+	if code := runUsageRecord([]string{"--harness", "grok", "--skill", "linear-feature", "--cwd", "."}, &stdout, &stderr, globalFlags{}); code != ExitSuccess {
+		t.Fatalf("exit = %d, stderr=%s", code, stderr.String())
+	}
+
+	db, err := state.Open(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	cells, err := db.UsageMatrix()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cells) != 1 {
+		t.Fatalf("cells = %+v", cells)
+	}
+	want := projectSlug(mustAbs(t, "."))
+	if cells[0].ProjectSlug != want {
+		t.Fatalf("project slug = %q, want %q", cells[0].ProjectSlug, want)
+	}
+}
+
+func mustAbs(t *testing.T, path string) string {
+	t.Helper()
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return abs
 }
 
 func TestUsageRecordStdinJSON(t *testing.T) {

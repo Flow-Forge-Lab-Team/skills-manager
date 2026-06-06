@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -277,7 +278,7 @@ type recordPayload struct {
 // runUsageRecord records one invocation from any harness. Flags take precedence
 // over stdin JSON. Best-effort: always exits 0.
 func runUsageRecord(args []string, stdout, stderr io.Writer, gf globalFlags) int {
-	var harness, skill, cwd, trigger, source, toolUseID string
+	var harness, skill, cwd, projectSlugValue, trigger, source, toolUseID string
 	var remaining []string
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
@@ -366,8 +367,8 @@ func runUsageRecord(args []string, stdout, stderr io.Writer, gf globalFlags) int
 			if toolUseID == "" {
 				toolUseID = payload.ToolUseID
 			}
-			if payload.ProjectSlug != "" && cwd == "" {
-				cwd = payload.ProjectSlug
+			if projectSlugValue == "" {
+				projectSlugValue = payload.ProjectSlug
 			}
 		}
 	}
@@ -392,14 +393,7 @@ func runUsageRecord(args []string, stdout, stderr io.Writer, gf globalFlags) int
 	}
 	defer db.Close()
 
-	project := ""
-	if cwd != "" {
-		if strings.Contains(cwd, "/") {
-			project = projectSlug(cwd)
-		} else {
-			project = cwd
-		}
-	}
+	project := usageProjectSlug(cwd, projectSlugValue)
 	if err := db.RecordInvocation(state.Invocation{
 		SkillName:   skill,
 		ProjectSlug: project,
@@ -444,6 +438,20 @@ func usageSinceCutoff(since string) (string, error) {
 		return "", err
 	}
 	return time.Now().UTC().AddDate(0, 0, -days).Format(time.RFC3339), nil
+}
+
+func usageProjectSlug(cwd, explicit string) string {
+	if explicit != "" {
+		return explicit
+	}
+	if cwd == "" {
+		return ""
+	}
+	abs, err := filepath.Abs(cwd)
+	if err != nil {
+		abs = cwd
+	}
+	return projectSlug(filepath.Clean(abs))
 }
 
 func parseUsageSinceDays(since string) (int, error) {
