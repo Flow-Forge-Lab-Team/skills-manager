@@ -45,9 +45,7 @@ func recordOne(e execer, inv Invocation) error {
 	if inv.SkillName == "" {
 		return fmt.Errorf("record invocation: skill name required")
 	}
-	if inv.InvokedAt == "" {
-		inv.InvokedAt = time.Now().UTC().Format(time.RFC3339)
-	}
+	inv.InvokedAt = normalizeInvokedAt(inv.InvokedAt)
 	if _, err := e.Exec(insertInvocationSQL,
 		inv.SkillName, inv.ProjectSlug, inv.Harness, inv.Trigger, inv.InvokedAt, inv.Source, inv.ToolUseID); err != nil {
 		return fmt.Errorf("record invocation: %w", err)
@@ -101,16 +99,30 @@ type UsageCell struct {
 // ordered deterministically so callers and tests see stable output. This backs
 // the Matrix view (skill × project × harness × count).
 func (db *DB) UsageMatrix() ([]UsageCell, error) {
-	rows, err := db.Query(`
+	return db.UsageMatrixSince("")
+}
+
+// UsageMatrixSince is like UsageMatrix but only counts invocations at or after
+// sinceRFC3339. An empty since includes all rows.
+func (db *DB) UsageMatrixSince(sinceRFC3339 string) ([]UsageCell, error) {
+	query := `
 		SELECT
 			COALESCE(skill_name, '') AS skill_name,
 			COALESCE(project_slug, '') AS project_slug,
 			COALESCE(harness, '') AS harness,
 			COUNT(*) AS count
-		FROM invocations
+		FROM invocations`
+	args := []any{}
+	if sinceRFC3339 != "" {
+		query += `
+		WHERE invoked_at >= ?`
+		args = append(args, sinceRFC3339)
+	}
+	query += `
 		GROUP BY skill_name, project_slug, harness
 		ORDER BY skill_name, project_slug, harness
-	`)
+	`
+	rows, err := db.Query(query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("usage matrix: %w", err)
 	}
@@ -125,4 +137,18 @@ func (db *DB) UsageMatrix() ([]UsageCell, error) {
 		cells = append(cells, c)
 	}
 	return cells, rows.Err()
+}
+
+// normalizeInvokedAt stores invocation timestamps as UTC RFC3339 so since
+// filters compare chronologically. Unparseable values are preserved as-is.
+func normalizeInvokedAt(ts string) string {
+	if ts == "" {
+		return time.Now().UTC().Format(time.RFC3339)
+	}
+	for _, layout := range []string{time.RFC3339Nano, time.RFC3339} {
+		if t, err := time.Parse(layout, ts); err == nil {
+			return t.UTC().Format(time.RFC3339)
+		}
+	}
+	return ts
 }

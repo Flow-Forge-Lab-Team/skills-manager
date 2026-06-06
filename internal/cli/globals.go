@@ -453,11 +453,17 @@ Track and view skill usage (skill × project × harness × count).
 
 Subcommands:
   (none) | matrix   show the aggregated usage matrix (--json for structured output)
+                      --since <7d|30d|90d>  limit matrix to a recent window
   receiver          run an OTLP/HTTP log receiver for Claude Code telemetry
                       --port <n>    listen port (default: 4318)
                       --host <addr> bind address (default: 127.0.0.1)
   hook              record one invocation from a PreToolUse hook payload on stdin
                       --print-config  print the settings.json hook snippet
+  record            record one invocation from any harness (best-effort, exit 0)
+                      --harness <name>  required unless stdin JSON supplies it
+                      --skill <name>    required unless stdin JSON supplies it
+                      --cwd <path>      optional project attribution
+                      --trigger <name>  optional trigger taxonomy
   setup             print OTEL + PreToolUse hook setup instructions
 
 ` + globalFlagHelp()

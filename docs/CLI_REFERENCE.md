@@ -525,13 +525,15 @@ skills-manager serve --host 0.0.0.0      # for Tailscale / cross-device access
 
 ## Usage tracking
 
-### `skills-manager usage [matrix]`
+### `skills-manager usage [matrix] [--since <window>]`
 
 Show recorded skill usage aggregated by skill × project × harness × count.
 
 ```
-skills-manager usage                     # human-readable matrix
+skills-manager usage                     # human-readable matrix (all time)
+skills-manager usage --since 30d         # 7d, 30d, or 90d
 skills-manager --json usage              # structured matrix for the UI
+skills-manager --json usage --since 30d
 ```
 
 ### `skills-manager usage receiver [--port <n>] [--host <addr>]`
@@ -547,6 +549,11 @@ Reads a PreToolUse hook payload on stdin and records one invocation when the
 hooked tool is the `Skill` tool, attributing the project from the hook's `cwd`.
 Best-effort: it always exits 0 so it can never block a tool call. Use
 `--print-config` to print the `settings.json` hook snippet.
+
+### `skills-manager usage record --harness <name> --skill <name> [--cwd <path>]`
+
+Record one skill activation from any harness. Accepts the same fields as JSON on
+stdin. Best-effort: always exits 0.
 
 ### `skills-manager usage setup`
 
