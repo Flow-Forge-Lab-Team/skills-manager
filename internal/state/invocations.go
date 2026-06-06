@@ -45,9 +45,7 @@ func recordOne(e execer, inv Invocation) error {
 	if inv.SkillName == "" {
 		return fmt.Errorf("record invocation: skill name required")
 	}
-	if inv.InvokedAt == "" {
-		inv.InvokedAt = time.Now().UTC().Format(time.RFC3339)
-	}
+	inv.InvokedAt = normalizeInvokedAt(inv.InvokedAt)
 	if _, err := e.Exec(insertInvocationSQL,
 		inv.SkillName, inv.ProjectSlug, inv.Harness, inv.Trigger, inv.InvokedAt, inv.Source, inv.ToolUseID); err != nil {
 		return fmt.Errorf("record invocation: %w", err)
@@ -139,4 +137,18 @@ func (db *DB) UsageMatrixSince(sinceRFC3339 string) ([]UsageCell, error) {
 		cells = append(cells, c)
 	}
 	return cells, rows.Err()
+}
+
+// normalizeInvokedAt stores invocation timestamps as UTC RFC3339 so since
+// filters compare chronologically. Unparseable values are preserved as-is.
+func normalizeInvokedAt(ts string) string {
+	if ts == "" {
+		return time.Now().UTC().Format(time.RFC3339)
+	}
+	for _, layout := range []string{time.RFC3339Nano, time.RFC3339} {
+		if t, err := time.Parse(layout, ts); err == nil {
+			return t.UTC().Format(time.RFC3339)
+		}
+	}
+	return ts
 }

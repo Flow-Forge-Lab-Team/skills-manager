@@ -151,6 +151,39 @@ func TestUsageMatrixSince(t *testing.T) {
 	}
 }
 
+func TestNormalizeInvokedAtOffset(t *testing.T) {
+	got := normalizeInvokedAt("2026-05-06T23:30:00-01:00")
+	want := "2026-05-07T00:30:00Z"
+	if got != want {
+		t.Fatalf("normalizeInvokedAt = %q, want %q", got, want)
+	}
+}
+
+func TestUsageMatrixSinceOffsetTimestamp(t *testing.T) {
+	db, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	if err := db.RecordInvocation(Invocation{
+		SkillName: "a",
+		Harness:   "claude",
+		Source:    "otel",
+		InvokedAt: "2026-05-06T23:30:00-01:00", // 2026-05-07T00:30:00Z
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	cells, err := db.UsageMatrixSince("2026-05-07T00:00:00Z")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cells) != 1 || cells[0].Count != 1 {
+		t.Fatalf("since cells = %+v, want one recent row", cells)
+	}
+}
+
 func TestRecordInvocationDefaultsTimestamp(t *testing.T) {
 	db, err := Open(t.TempDir())
 	if err != nil {
