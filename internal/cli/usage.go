@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/Flow-Forge-Lab-Team/skills-manager/internal/state"
 )
@@ -19,6 +20,7 @@ var stdinReader io.Reader = os.Stdin
 //	skills-manager usage              show the aggregated usage matrix
 //	skills-manager usage receiver     run the OTLP/HTTP log receiver
 //	skills-manager usage hook         record one invocation from a PreToolUse hook (stdin)
+//	skills-manager usage record       record one invocation from any harness (flags or stdin JSON)
 //	skills-manager usage setup        print OTEL + hook setup instructions
 func runUsage(args []string, stdout, stderr io.Writer, gf globalFlags) int {
 	sub := ""
@@ -33,11 +35,13 @@ func runUsage(args []string, stdout, stderr io.Writer, gf globalFlags) int {
 		return runOTELReceiver(args, stdout, stderr, gf)
 	case "hook":
 		return runUsageHook(args, stdout, stderr, gf)
+	case "record":
+		return runUsageRecord(args, stdout, stderr, gf)
 	case "setup":
 		return runUsageSetup(args, stdout, stderr, gf)
 	default:
 		fmt.Fprintf(stderr, "unknown usage subcommand: %s\n", sub)
-		fmt.Fprintln(stderr, "Usage: skills-manager usage [matrix|receiver|hook|setup]")
+		fmt.Fprintln(stderr, "Usage: skills-manager usage [matrix|receiver|hook|record|setup]")
 		return ExitUsageError
 	}
 }
@@ -52,8 +56,9 @@ type usageMatrixView struct {
 }
 
 func runUsageMatrix(args []string, stdout, stderr io.Writer, gf globalFlags) int {
-	if len(args) > 0 {
-		fmt.Fprintf(stderr, "unexpected argument: %s\n", args[0])
+	since, err := parseUsageSinceFlag(args)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
 		return ExitUsageError
 	}
 	home, err := managerHome()
@@ -61,7 +66,7 @@ func runUsageMatrix(args []string, stdout, stderr io.Writer, gf globalFlags) int
 		fmt.Fprintf(stderr, "manager home: %v\n", err)
 		return ExitOpError
 	}
-	view, err := loadUsageMatrix(home)
+	view, err := loadUsageMatrix(home, since)
 	if err != nil {
 		fmt.Fprintf(stderr, "usage matrix: %v\n", err)
 		return ExitOpError
@@ -77,12 +82,20 @@ func runUsageMatrix(args []string, stdout, stderr io.Writer, gf globalFlags) int
 
 	out := gf.outWriter(stdout)
 	if view.Total == 0 {
-		fmt.Fprintln(out, "No skill invocations recorded yet.")
+		if since != "" {
+			fmt.Fprintf(out, "No skill invocations recorded in the last %s.\n", since)
+		} else {
+			fmt.Fprintln(out, "No skill invocations recorded yet.")
+		}
 		fmt.Fprintln(out, "Run `skills-manager usage setup` to start capturing usage.")
 		return ExitSuccess
 	}
-	fmt.Fprintf(out, "Skill usage (%d invocations across %d skills, %d projects)\n\n",
-		view.Total, len(view.Skills), len(view.Projects))
+	window := "all time"
+	if since != "" {
+		window = "last " + since
+	}
+	fmt.Fprintf(out, "Skill usage (%d invocations across %d skills, %d projects, %s)\n\n",
+		view.Total, len(view.Skills), len(view.Projects), window)
 	for _, c := range view.Cells {
 		project := c.ProjectSlug
 		if project == "" {
@@ -98,15 +111,20 @@ func runUsageMatrix(args []string, stdout, stderr io.Writer, gf globalFlags) int
 }
 
 // loadUsageMatrix reads the invocations table and shapes it into the matrix
-// view consumed by the CLI and the serve API.
-func loadUsageMatrix(home string) (usageMatrixView, error) {
+// view consumed by the CLI and the serve API. since is a window label such as
+// 30d; empty means all time.
+func loadUsageMatrix(home string, since string) (usageMatrixView, error) {
 	db, err := state.Open(home)
 	if err != nil {
 		return usageMatrixView{}, err
 	}
 	defer db.Close()
 
-	cells, err := db.UsageMatrix()
+	cutoff, err := usageSinceCutoff(since)
+	if err != nil {
+		return usageMatrixView{}, err
+	}
+	cells, err := db.UsageMatrixSince(cutoff)
 	if err != nil {
 		return usageMatrixView{}, err
 	}
@@ -243,4 +261,200 @@ func indentLines(s, prefix string) string {
 		}
 	}
 	return strings.Join(lines, "\n")
+}
+
+type recordPayload struct {
+	SkillName   string `json:"skill"`
+	Skill       string `json:"skill_name"`
+	Harness     string `json:"harness"`
+	Cwd         string `json:"cwd"`
+	ProjectSlug string `json:"project_slug"`
+	Trigger     string `json:"trigger"`
+	Source      string `json:"source"`
+	ToolUseID   string `json:"tool_use_id"`
+}
+
+// runUsageRecord records one invocation from any harness. Flags take precedence
+// over stdin JSON. Best-effort: always exits 0.
+func runUsageRecord(args []string, stdout, stderr io.Writer, gf globalFlags) int {
+	var harness, skill, cwd, trigger, source, toolUseID string
+	var remaining []string
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--harness":
+			if i+1 >= len(args) {
+				fmt.Fprintln(stderr, "usage record: --harness requires a value")
+				return ExitSuccess
+			}
+			harness = args[i+1]
+			i++
+		case "--skill":
+			if i+1 >= len(args) {
+				fmt.Fprintln(stderr, "usage record: --skill requires a value")
+				return ExitSuccess
+			}
+			skill = args[i+1]
+			i++
+		case "--cwd":
+			if i+1 >= len(args) {
+				fmt.Fprintln(stderr, "usage record: --cwd requires a value")
+				return ExitSuccess
+			}
+			cwd = args[i+1]
+			i++
+		case "--trigger":
+			if i+1 >= len(args) {
+				fmt.Fprintln(stderr, "usage record: --trigger requires a value")
+				return ExitSuccess
+			}
+			trigger = args[i+1]
+			i++
+		case "--source":
+			if i+1 >= len(args) {
+				fmt.Fprintln(stderr, "usage record: --source requires a value")
+				return ExitSuccess
+			}
+			source = args[i+1]
+			i++
+		case "--tool-use-id":
+			if i+1 >= len(args) {
+				fmt.Fprintln(stderr, "usage record: --tool-use-id requires a value")
+				return ExitSuccess
+			}
+			toolUseID = args[i+1]
+			i++
+		default:
+			remaining = args[i:]
+			i = len(args)
+		}
+	}
+	if len(remaining) > 0 {
+		fmt.Fprintf(stderr, "usage record: unexpected argument: %s\n", remaining[0])
+		return ExitSuccess
+	}
+
+	if skill == "" || harness == "" {
+		data, err := io.ReadAll(io.LimitReader(stdinReader, 1<<20))
+		if err != nil {
+			fmt.Fprintf(stderr, "usage record: read stdin: %v\n", err)
+			return ExitSuccess
+		}
+		if len(strings.TrimSpace(string(data))) > 0 {
+			var payload recordPayload
+			if err := json.Unmarshal(data, &payload); err != nil {
+				fmt.Fprintf(stderr, "usage record: parse payload: %v\n", err)
+				return ExitSuccess
+			}
+			if skill == "" {
+				skill = payload.SkillName
+				if skill == "" {
+					skill = payload.Skill
+				}
+			}
+			if harness == "" {
+				harness = payload.Harness
+			}
+			if cwd == "" {
+				cwd = payload.Cwd
+			}
+			if trigger == "" {
+				trigger = payload.Trigger
+			}
+			if source == "" {
+				source = payload.Source
+			}
+			if toolUseID == "" {
+				toolUseID = payload.ToolUseID
+			}
+			if payload.ProjectSlug != "" && cwd == "" {
+				cwd = payload.ProjectSlug
+			}
+		}
+	}
+
+	if skill == "" || harness == "" {
+		fmt.Fprintln(stderr, "usage record: --skill and --harness required (or stdin JSON with skill + harness)")
+		return ExitSuccess
+	}
+	if source == "" {
+		source = "record"
+	}
+
+	home, err := managerHome()
+	if err != nil {
+		fmt.Fprintf(stderr, "usage record: manager home: %v\n", err)
+		return ExitSuccess
+	}
+	db, err := state.Open(home)
+	if err != nil {
+		fmt.Fprintf(stderr, "usage record: open state: %v\n", err)
+		return ExitSuccess
+	}
+	defer db.Close()
+
+	project := ""
+	if cwd != "" {
+		if strings.Contains(cwd, "/") {
+			project = projectSlug(cwd)
+		} else {
+			project = cwd
+		}
+	}
+	if err := db.RecordInvocation(state.Invocation{
+		SkillName:   skill,
+		ProjectSlug: project,
+		Harness:     harness,
+		Trigger:     trigger,
+		Source:      source,
+		ToolUseID:   toolUseID,
+	}); err != nil {
+		fmt.Fprintf(stderr, "usage record: record: %v\n", err)
+	}
+	return ExitSuccess
+}
+
+func parseUsageSinceFlag(args []string) (string, error) {
+	since := ""
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--since":
+			if i+1 >= len(args) {
+				return "", fmt.Errorf("--since requires a value (7d, 30d, 90d)")
+			}
+			since = args[i+1]
+			i++
+		default:
+			return "", fmt.Errorf("unexpected argument: %s", args[i])
+		}
+	}
+	if since != "" {
+		if _, err := usageSinceCutoff(since); err != nil {
+			return "", err
+		}
+	}
+	return since, nil
+}
+
+func usageSinceCutoff(since string) (string, error) {
+	if since == "" {
+		return "", nil
+	}
+	days, err := parseUsageSinceDays(since)
+	if err != nil {
+		return "", err
+	}
+	return time.Now().UTC().AddDate(0, 0, -days).Format(time.RFC3339), nil
+}
+
+func parseUsageSinceDays(since string) (int, error) {
+	switch strings.ToLower(strings.TrimSpace(since)) {
+	case "7d":
+		return 7, nil
+	case "30d":
+		return 30, nil
+	case "90d":
+		return 90, nil
+	default:
+		return 0, fmt.Errorf("invalid --since value %q (use 7d, 30d, or 90d)", since)
+	}
 }

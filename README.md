@@ -11,22 +11,24 @@ directories you choose.
 
 ## Install
 
-The verified path today is to install from the public Go module:
+If you have Go 1.26 or newer, install from the public Go module:
 
 ```sh
 go install github.com/Flow-Forge-Lab-Team/skills-manager/cmd/skills-manager@v0.1.0
 ```
 
-This requires Go 1.26 or newer and puts the binary in `$(go env GOPATH)/bin`.
-Add that directory to `PATH` if needed, then run:
+This puts the binary in `$(go env GOPATH)/bin`. Add that directory to `PATH` if
+needed, then run:
 
 ```sh
 skills-manager --help
 ```
 
-Release assets are checksum-verified by the installer. The checksum protects
-artifact integrity after download; it is not a signed authenticity guarantee
-unless you separately verify the signed checksum artifact from the release.
+On a system without Go, use one of the release-backed install paths below.
+Release assets are checksum-verified by the shell installer and npm wrapper. The
+checksum protects artifact integrity after download; it is not a signed
+authenticity guarantee unless you separately verify the signed checksum artifact
+from the release.
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/Flow-Forge-Lab-Team/skills-manager/main/install.sh | sh
@@ -201,8 +203,8 @@ Read in this order:
 ## Naming
 
 - GitHub org/repo and Go module: `Flow-Forge-Lab-Team/skills-manager`
-- npm package name, when published: `@flowforgelab/skills-manager`
-- Homebrew tap, when created: `Flow-Forge-Lab-Team/tap`
+- npm package name: `@flowforgelab/skills-manager`
+- Homebrew tap: `Flow-Forge-Lab-Team/tap`
 - Legal/license display name: `Flow Forge Lab`
 
 These names differ because GitHub, npm, Homebrew, Go modules, and legal notices

@@ -403,7 +403,14 @@ func (s *serveServer) handleUsage(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	view, err := loadUsageMatrix(s.home)
+	since := r.URL.Query().Get("since")
+	if since != "" {
+		if _, err := usageSinceCutoff(since); err != nil {
+			writeAPIError(w, http.StatusBadRequest, err)
+			return
+		}
+	}
+	view, err := loadUsageMatrix(s.home, since)
 	if err != nil {
 		writeAPIError(w, http.StatusInternalServerError, err)
 		return

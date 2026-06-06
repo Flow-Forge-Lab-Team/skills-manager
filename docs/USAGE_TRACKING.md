@@ -101,8 +101,23 @@ error is logged to stderr and it still exits 0, so it can never block a skill.
 ## Viewing usage
 
 ```
-skills-manager usage            # human table
+skills-manager usage            # human table (all time)
+skills-manager usage --since 30d
 skills-manager --json usage     # structured matrix (also served at /api/v1/usage)
+skills-manager --json usage --since 30d
 ```
+
+The serve API accepts the same window: `GET /api/v1/usage?since=30d`.
+
+## Cross-harness record (non-Claude harnesses)
+
+Other harnesses can log activations into the same `invocations` table:
+
+```
+skills-manager usage record --harness grok --skill linear-feature --cwd /path/to/project
+echo '{"skill":"linear-feature","harness":"codex","cwd":"/path/to/project"}' | skills-manager usage record
+```
+
+`record` is best-effort and always exits 0, like the Claude hook.
 
 `skills-manager usage setup` prints both setup paths in one place.

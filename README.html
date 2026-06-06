@@ -63,16 +63,16 @@ here? Start with the discover-first <a href="docs/TUTORIAL.html">5-minute
 tutorial</a>.</p>
 </blockquote>
 <h2 id="install">Install</h2>
-<p>The verified path today is to install from the public Go module:</p>
+<p>If you have Go 1.26 or newer, install from the public Go module:</p>
 <div class="sourceCode" id="cb1"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="ex">go</span> install github.com/Flow-Forge-Lab-Team/skills-manager/cmd/skills-manager@v0.1.0</span></code></pre></div>
-<p>This requires Go 1.26 or newer and puts the binary in
-<code>$(go env GOPATH)/bin</code>. Add that directory to
-<code>PATH</code> if needed, then run:</p>
+<p>This puts the binary in <code>$(go env GOPATH)/bin</code>. Add that
+directory to <code>PATH</code> if needed, then run:</p>
 <div class="sourceCode" id="cb2"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="ex">skills-manager</span> <span class="at">--help</span></span></code></pre></div>
-<p>Release assets are checksum-verified by the installer. The checksum
-protects artifact integrity after download; it is not a signed
-authenticity guarantee unless you separately verify the signed checksum
-artifact from the release.</p>
+<p>On a system without Go, use one of the release-backed install paths
+below. Release assets are checksum-verified by the shell installer and
+npm wrapper. The checksum protects artifact integrity after download; it
+is not a signed authenticity guarantee unless you separately verify the
+signed checksum artifact from the release.</p>
 <div class="sourceCode" id="cb3"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="ex">curl</span> <span class="at">-fsSL</span> https://raw.githubusercontent.com/Flow-Forge-Lab-Team/skills-manager/main/install.sh <span class="kw">|</span> <span class="fu">sh</span></span>
 <span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a><span class="co"># Inspect first, then run. The installer verifies the release tarball against</span></span>
@@ -263,10 +263,8 @@ install and release trust boundaries</li>
 <ul>
 <li>GitHub org/repo and Go module:
 <code>Flow-Forge-Lab-Team/skills-manager</code></li>
-<li>npm package name, when published:
-<code>@flowforgelab/skills-manager</code></li>
-<li>Homebrew tap, when created:
-<code>Flow-Forge-Lab-Team/tap</code></li>
+<li>npm package name: <code>@flowforgelab/skills-manager</code></li>
+<li>Homebrew tap: <code>Flow-Forge-Lab-Team/tap</code></li>
 <li>Legal/license display name: <code>Flow Forge Lab</code></li>
 </ul>
 <p>These names differ because GitHub, npm, Homebrew, Go modules, and
